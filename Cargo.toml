@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/peasy-core",
+  "crates/peasy-engine",
+  "crates/peasy-engine-host",
+  "crates/peasy-system",
+  "crates/peasy-client",
+  "crates/peasy-cli",
+  "crates/peasy-ui",
+  "crates/peasy-tray",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/peasy-nixos/peasy"
+rust-version = "1.95"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive"] }
+hex = "0.4.3"
+libc = "0.2.176"
+nix = { version = "0.30.1", features = ["socket", "user"] }
+rand = "0.9.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

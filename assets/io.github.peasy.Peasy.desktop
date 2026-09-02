@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Peasy
+Comment=Tell your computer what you want.
+Exec=peasy-ui
+Icon=io.github.peasy.Peasy
+Terminal=false
+Categories=System;Utility;
+StartupNotify=true
+DBusActivatable=false

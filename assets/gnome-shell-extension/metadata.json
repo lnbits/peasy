@@ -1,0 +1,8 @@
+{
+  "uuid": "peasy@peasy-nixos.github.io",
+  "name": "Peasy",
+  "description": "Open Peasy from a compact GNOME panel launcher.",
+  "shell-version": ["49", "50"],
+  "url": "https://github.com/peasy-nixos/peasy",
+  "version": 5
+}

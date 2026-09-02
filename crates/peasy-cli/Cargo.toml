@@ -1,0 +1,20 @@
+[package]
+name = "peasy-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "peasy"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+peasy-client = { path = "../peasy-client" }
+peasy-core = { path = "../peasy-core" }
+rpassword = "7.4.0"
+serde.workspace = true
+serde_json.workspace = true

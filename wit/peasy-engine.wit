@@ -1,0 +1,35 @@
+package peasy:engine@0.1.0;
+
+record package-candidate {
+  attribute: string,
+  name: string,
+  description: string,
+}
+
+variant model-action {
+  search-package(string),
+  install-package(string),
+  remove-package(string),
+  explain(string),
+  cancel,
+}
+
+record engine-input {
+  action: model-action,
+  candidates: list<package-candidate>,
+  installed: list<string>,
+}
+
+variant decision {
+  search(string),
+  install(string),
+  remove(string),
+  explain(string),
+  cancel,
+  reject(string),
+}
+
+world peasy-engine {
+  export resolve: func(input: engine-input) -> decision;
+}
+

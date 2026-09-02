@@ -1,0 +1,16 @@
+[package]
+name = "peasy-engine-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+peasy-core = { path = "../peasy-core" }
+serde_json.workspace = true
+wasmtime = { version = "48.0.1", default-features = false, features = ["anyhow", "cranelift", "runtime", "std"] }
+
+[dev-dependencies]
+wat = "1.239.0"
