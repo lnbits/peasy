@@ -1,5 +1,5 @@
 <h1>
-  <a href="askpeasy.com">
+  <a href="https://askpeasy.com">
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
   </a>
 </h1>
