@@ -575,6 +575,9 @@ fn copy_configuration_directory(
         } else if metadata.file_type().is_symlink() {
             let target = fs::read_link(&source_path)?;
             if target.is_absolute() {
+                if is_nix_build_result_link(&source_path, &target) {
+                    continue;
+                }
                 anyhow::bail!(
                     "{} is an absolute symlink and cannot be exported portably",
                     source_path.display()
@@ -589,6 +592,12 @@ fn copy_configuration_directory(
         }
     }
     Ok(())
+}
+
+fn is_nix_build_result_link(path: &Path, target: &Path) -> bool {
+    let name = path.file_name().and_then(|name| name.to_str());
+    target.starts_with("/nix/store")
+        && name.is_some_and(|name| name == "result" || name.starts_with("result-"))
 }
 
 fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
@@ -1318,6 +1327,11 @@ mod tests {
         );
         fs::write(&source, &contents).unwrap();
         fs::write(host.join("hardware-configuration.nix"), b"{ ... }: {}\n").unwrap();
+        std::os::unix::fs::symlink(
+            "/nix/store/00000000000000000000000000000000-build-result",
+            host.join("result"),
+        )
+        .unwrap();
         fs::create_dir(host.join(".peasy")).unwrap();
         fs::write(
             host.join(".peasy/peasy-managed.nix"),
@@ -1361,6 +1375,7 @@ mod tests {
         );
         assert!(destination.join("README.txt").is_file());
         assert!(destination.join("peasy/nix/module.nix").is_file());
+        assert!(!destination.join("host/result").exists());
     }
 
     #[test]

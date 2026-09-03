@@ -15,7 +15,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/peasy-nixos/peasy"
+repository = "https://github.com/lnbits/peasy"
 rust-version = "1.95"
 
 [workspace.dependencies]

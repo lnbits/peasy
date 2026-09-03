@@ -21,7 +21,7 @@ And because NixOS has excellent rollback support, if anything goes wrong, you ca
 Clone Peasy beside your NixOS configuration:
 
 ```console
-sudo git clone https://github.com/peasy-nixos/peasy /etc/nixos/peasy
+sudo git clone https://github.com/lnbits/peasy /etc/nixos/peasy
 ```
 
 Add `lib`, the Peasy module, and the optional managed file to

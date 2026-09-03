@@ -8,7 +8,7 @@ flake-based host and supports x86-64 and AArch64 Linux.
 Clone Peasy under `/etc/nixos`:
 
 ```console
-sudo git clone https://github.com/peasy-nixos/peasy /etc/nixos/peasy
+sudo git clone https://github.com/lnbits/peasy /etc/nixos/peasy
 ```
 
 Update `/etc/nixos/configuration.nix`. Add `lib` to the function arguments and
@@ -77,7 +77,7 @@ Add Peasy as an input and include its module in the host:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    peasy.url = "github:peasy-nixos/peasy";
+    peasy.url = "github:lnbits/peasy";
   };
 
   outputs = { nixpkgs, peasy, ... }: {

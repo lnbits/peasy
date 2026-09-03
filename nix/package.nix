@@ -142,7 +142,7 @@ rustPlatform.buildRustPackage {
         "Typed natural-language assistant for NixOS, GNOME, and Hyprland"
       else
         "Headless typed natural-language assistant and service for NixOS";
-    homepage = "https://github.com/peasy-nixos/peasy";
+    homepage = "https://github.com/lnbits/peasy";
     license = lib.licenses.mit;
     mainProgram = "peasy";
     platforms = lib.platforms.linux;
