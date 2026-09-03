@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="270" height="76" viewBox="0 0 270 76" role="img" aria-labelledby="title">
+  <title id="title">Peasy.</title>
+  <style>
+    .word { fill: #111111; }
+    @media (prefers-color-scheme: dark) {
+      .word { fill: #f7f7f3; }
+    }
+  </style>
+  <text class="word" x="6" y="62" font-family="ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="70" font-weight="900" letter-spacing="-5">Peasy</text>
+  <circle cx="251" cy="55" r="8" fill="#bfffd4"/>
+</svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="438" height="250" viewBox="0 0 438 250" role="img" aria-labelledby="title description">
+  <title id="title">Peasy request window</title>
+  <desc id="description">Peasy prompting the user to tell their computer what they want.</desc>
+  <defs>
+    <clipPath id="window">
+      <rect x="1" y="1" width="436" height="248" rx="13"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#window)">
+    <rect x="1" y="1" width="436" height="248" fill="#202024"/>
+    <rect x="1" y="1" width="436" height="39" fill="#2c2b30"/>
+    <path d="M1 40h436" stroke="#36343b"/>
+  </g>
+  <rect x="1" y="1" width="436" height="248" rx="13" fill="none" stroke="#343239"/>
+
+  <g fill="#f6f5f4" font-family="system-ui, sans-serif">
+    <text x="219" y="26" text-anchor="middle" font-size="15">Peasy</text>
+    <text x="29" y="85" font-size="21" font-weight="700">Tell your computer what you want.</text>
+  </g>
+
+  <g transform="translate(376 20)" fill="none" stroke="#f6f5f4" stroke-width="2">
+    <circle r="5.5"/>
+    <path d="M0-9v3M0 6v3M-9 0h3M6 0h3M-6.4-6.4l2.2 2.2M4.2 4.2l2.2 2.2M6.4-6.4L4.2-4.2M-4.2 4.2l-2.2 2.2"/>
+  </g>
+  <circle cx="417" cy="20" r="11" fill="#45444a"/>
+  <path d="m413 16 8 8m0-8-8 8" stroke="#f6f5f4" stroke-width="1.6"/>
+
+  <rect x="29" y="113" width="384" height="34" rx="8" fill="#343337" stroke="#3584e4" stroke-width="2"/>
+  <text x="38" y="135" fill="#9a9996" font-family="system-ui, sans-serif" font-size="15">install telegram...</text>
+
+  <rect x="343" y="193" width="70" height="34" rx="9" fill="#3584e4"/>
+  <text x="378" y="215" fill="#fff" font-family="system-ui, sans-serif" font-size="15" font-weight="700" text-anchor="middle">Send</text>
+</svg>
