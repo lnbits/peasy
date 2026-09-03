@@ -7,7 +7,7 @@
 Tell your NixOS computer what you want in plain language.
 
 <p>
-  <img src="assets/peasy-window.svg" alt="Peasy request window" width="350">
+  <img src="assets/peasy-demo.gif" alt="Peasy reviewing example requests" width="600">
 </p>
 
 NixOS is one of the most powerful Linux operating systems because it is declarative and reproducible, but its configuration language can be difficult to learn. Peasy removes that complexity. Using normal language, you can install and remove packages, find AppImages, customise GNOME and Hyprland, connect Wi-Fi and Bluetooth, and prepare calendar events.
