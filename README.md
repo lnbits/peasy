@@ -1,10 +1,10 @@
-<h1 align="center">
+<h1>
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
 </h1>
 
 Tell your NixOS computer what you want in plain language.
 
-<p align="center">
+<p>
   <img src="assets/peasy-window.svg" alt="Peasy request window" width="350">
 </p>
 
