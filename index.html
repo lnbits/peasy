@@ -177,10 +177,32 @@
 
     .hero-intro {
       max-width: 650px;
-      margin-bottom: 48px;
+      margin-bottom: 20px;
       color: #c6c6c0;
       font-size: clamp(1.05rem, 2vw, 1.35rem);
       line-height: 1.55;
+    }
+
+    .hero-cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 48px;
+      padding: 12px 22px;
+      border-radius: 10px;
+      background: var(--mint);
+      color: #07120b;
+      font-size: 0.95rem;
+      font-weight: 800;
+      line-height: 1;
+      text-decoration: none;
+      transition: box-shadow 160ms ease, transform 160ms ease;
+    }
+
+    .hero-cta:hover,
+    .hero-cta:focus-visible {
+      box-shadow: 0 0 0 4px rgba(191, 255, 212, 0.16);
+      transform: translateY(-1px);
     }
 
     .prompt {
@@ -562,6 +584,7 @@
           NixOS, being declarative, is the perfect OS to use with an LLM.
           <br>You ask. Peasy prepares a safe change. Includes rollbacks.
         </p>
+        <a class="hero-cta" href="https://github.com/lnbits/peasy#install-on-nixos">Get Peasy</a>
 
         <div class="prompt" aria-label="Example Peasy request">
           <div class="prompt-bar">
