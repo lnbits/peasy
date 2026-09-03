@@ -8,7 +8,8 @@ Tell your NixOS computer what you want in plain language.
   <img src="assets/peasy-window.svg" alt="Peasy request window" width="350">
 </p>
 
-Peasy can install and remove packages, find upstream AppImages, change GNOME
+NixOS is one of the greatest Linux systems that exist, yet people complain its declarative paradigm is hard.
+Peasy completely removes this complexity, and through normal language can install and remove packages, find upstream AppImages, change GNOME
 appearance, control common Hyprland settings, connect Wi-Fi and Bluetooth, and
 prepare calendar events. Every system change is shown for review before NixOS
 builds and activates it.
