@@ -14,6 +14,8 @@ Peasy uses an OpenAI model or a local Ollama model to understand the request.
 The model cannot run commands or edit files: it returns a typed action that
 Peasy validates and applies through NixOS.
 
+And because NixOS has excellent rollback support, if anything goes wrong, you can easily restore the system to a previous working state.
+
 ## Install on NixOS
 
 Clone Peasy beside your NixOS configuration:
