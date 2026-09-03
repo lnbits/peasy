@@ -18,6 +18,8 @@ And because NixOS has excellent rollback support, if anything goes wrong, you ca
 
 ## Install on NixOS
 
+> Install NixOS the Linux distribution https://nixos.org/download
+
 Clone Peasy beside your NixOS configuration:
 
 ```console
