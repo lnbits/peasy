@@ -59,6 +59,17 @@ OpenAI or Ollama from the settings screen.
 See the [installation guide](docs/install.md) for flake hosts, development
 checkouts, headless systems, upgrades, and local Ollama setup.
 
+## Security
+
+Peasy does not give the AI a terminal or arbitrary system access. Model output
+must pass a closed, typed policy running in zero-import Wasm with no WASI and
+strict memory, fuel, and output limits. The privileged service uses fixed
+executables and arguments—never a shell—and runs with hidden home directories,
+no Internet or device access, and only its runtime and managed configuration
+directories writable. Building is kept separate from activation: a small root
+helper accepts only a private, root-owned request naming a validated Nix store
+generation. See the full [security model](docs/security.md).
+
 ## Use
 
 Use the desktop application or the `peasy` command:
