@@ -212,6 +212,18 @@ in
       text = "${builtins.unsafeDiscardStringContext (toString ./module.nix)}\n";
     };
 
+    # A Peasy-generated generation embeds its reviewed state in /etc. When an
+    # older generation is activated, make that explicit rollback durable by
+    # restoring the Peasy-owned source module to the selected generation's
+    # state. Normal forward switches simply rewrite the same canonical state.
+    system.activationScripts.peasy-managed-state = lib.stringAfter [ "etc" ] ''
+      if [ -e /etc/peasy/state.json ]; then
+        ${package}/libexec/peasy-system \
+          --reconcile-managed-state /etc/peasy/state.json \
+          --managed-module ${lib.escapeShellArg managedModule}
+      fi
+    '';
+
     networking.networkmanager.enable = lib.mkIf cfg.desktop.enable (lib.mkDefault true);
     hardware.bluetooth.enable = lib.mkIf cfg.desktop.enable (lib.mkDefault true);
     services.ollama.enable = lib.mkIf cfg.ollama.enable true;
@@ -336,8 +348,15 @@ in
 
     systemd.services.peasy-activate = {
       description = "Activate a Peasy-validated NixOS generation";
+      # switch-to-configuration reconciles systemd units while this oneshot is
+      # still running.  Never let that reconciliation terminate the helper
+      # which is performing the switch; the updated unit is used on its next
+      # invocation.
+      restartIfChanged = false;
+      stopIfChanged = false;
       serviceConfig = {
         Type = "oneshot";
+        TimeoutStartSec = "15min";
         ExecStart = "${package}/libexec/peasy-system --activate --runtime-dir /run/peasy --nix-env ${pkgs.nix}/bin/nix-env";
         UMask = "0077";
 

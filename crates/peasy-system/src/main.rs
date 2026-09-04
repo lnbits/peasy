@@ -46,6 +46,8 @@ struct Args {
     render_test_appimage: bool,
     #[arg(long, hide = true)]
     activate: bool,
+    #[arg(long, hide = true)]
+    reconcile_managed_state: Option<PathBuf>,
 }
 
 fn sandbox_self_test() -> Result<()> {
@@ -97,6 +99,14 @@ fn main() -> Result<()> {
         };
         print!("{}", peasy_core::render_packages_module(&state)?);
         return Ok(());
+    }
+    if let Some(active_state) = args.reconcile_managed_state {
+        return state::restore_managed_from_generation(
+            &active_state,
+            args.managed_module
+                .as_deref()
+                .context("--managed-module is required")?,
+        );
     }
     if args.activate {
         return activation::run_helper(

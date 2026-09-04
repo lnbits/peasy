@@ -163,6 +163,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '\"peasy_variant\":\"headless\"' /etc/peasy/system-profile.json")
     machine.succeed("grep -q '\"installed_system_packages\"' /etc/peasy/system-profile.json")
     machine.succeed("grep -q 'socat' /etc/peasy/system-profile.json")
+    activation = machine.succeed("cat /run/current-system/activate")
+    assert "--reconcile-managed-state /etc/peasy/state.json" in activation
+    assert "--managed-module /etc/nixos/.peasy/peasy-managed.nix" in activation
     response = machine.succeed(
       "printf '%s\\n' '{\"request\":\"status\"}' | socat -t 120 STDIO,ignoreeof UNIX-CONNECT:/run/peasy/peasy.sock"
     )
@@ -201,6 +204,9 @@ pkgs.testers.runNixOSTest {
     assert "X-RestartIfChanged=false" in unit
     assert "X-StopIfChanged=false" in unit
     activate_unit = machine.succeed("systemctl cat peasy-activate.service")
+    assert "X-RestartIfChanged=false" in activate_unit
+    assert "X-StopIfChanged=false" in activate_unit
+    assert "TimeoutStartSec=15min" in activate_unit
     assert "ProtectHome=" not in activate_unit
     assert "PrivateDevices=" not in activate_unit
     assert "ProtectKernelTunables=" not in activate_unit

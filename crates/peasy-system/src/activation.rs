@@ -24,8 +24,12 @@ pub struct ActivationResult {
 }
 
 pub fn write_request(runtime_dir: &Path, system: &Path) -> Result<()> {
+    let directory = runtime_dir.join(ACTIVATION_DIRECTORY);
+    // A service-start failure must not leave the caller reading the result of
+    // an earlier activation attempt.
+    let _ = fs::remove_file(directory.join(RESULT_FILE));
     write_private_json(
-        &runtime_dir.join(ACTIVATION_DIRECTORY).join(REQUEST_FILE),
+        &directory.join(REQUEST_FILE),
         &ActivationRequest {
             system: system.to_owned(),
         },
@@ -132,4 +136,25 @@ fn stderr(bytes: &[u8]) -> String {
         .chars()
         .take(1600)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_request_removes_any_stale_activation_result() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().join(ACTIVATION_DIRECTORY);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(RESULT_FILE), b"stale result").unwrap();
+
+        let system = Path::new("/nix/store/example-system");
+        write_request(temporary.path(), system).unwrap();
+
+        assert!(!directory.join(RESULT_FILE).exists());
+        let request: ActivationRequest =
+            serde_json::from_slice(&fs::read(directory.join(REQUEST_FILE)).unwrap()).unwrap();
+        assert_eq!(request.system, system);
+    }
 }

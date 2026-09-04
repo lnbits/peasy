@@ -76,6 +76,7 @@ pub struct NixBackend {
     config: BackendConfig,
     runner: Arc<dyn CommandRunner>,
     search_cache: Mutex<HashMap<String, CachedSearch>>,
+    verified_packages: Mutex<HashMap<String, String>>,
     apply_lock: Mutex<()>,
 }
 
@@ -124,6 +125,7 @@ impl NixBackend {
             config,
             runner,
             search_cache: Mutex::new(HashMap::new()),
+            verified_packages: Mutex::new(HashMap::new()),
             apply_lock: Mutex::new(()),
         })
     }
@@ -228,6 +230,15 @@ impl NixBackend {
         candidates.retain(|candidate| available.contains(&candidate.attribute));
         candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
         candidates.truncate(DISPLAY_CANDIDATE_LIMIT);
+        {
+            let mut verified = self
+                .verified_packages
+                .lock()
+                .expect("verified-packages mutex poisoned");
+            for candidate in &candidates {
+                verified.insert(candidate.attribute.clone(), candidate.name.clone());
+            }
+        }
         self.store_cached_search(cache_key, candidates.clone());
         Ok(candidates)
     }
@@ -319,6 +330,15 @@ in builtins.filter isAvailable names"#
 
     pub fn verify(&self, attribute: &str) -> Result<String> {
         validate_attribute(attribute)?;
+        if let Some(display_name) = self
+            .verified_packages
+            .lock()
+            .expect("verified-packages mutex poisoned")
+            .get(attribute)
+            .cloned()
+        {
+            return Ok(display_name);
+        }
         let installable = format!(
             "path:{}#legacyPackages.{}.{}",
             self.config.nixpkgs.display(),
@@ -350,11 +370,16 @@ in builtins.filter isAvailable names"#
             ],
             None,
         )?;
-        Ok(if pname.status.success() {
+        let display_name = if pname.status.success() {
             human_name(String::from_utf8_lossy(&pname.stdout).trim())
         } else {
             human_name(attribute.rsplit('.').next().unwrap_or(attribute))
-        })
+        };
+        self.verified_packages
+            .lock()
+            .expect("verified-packages mutex poisoned")
+            .insert(attribute.to_owned(), display_name.clone());
+        Ok(display_name)
     }
 
     pub fn preview_package(&self, operation: PackageOperation, package: &str) -> Result<Preview> {
@@ -482,6 +507,10 @@ in builtins.filter isAvailable names"#
                 operation, package, ..
             } => {
                 validate_attribute(package)?;
+                // A normal apply follows `preview_package`, which already
+                // verified this attribute against our immutable Nixpkgs store
+                // path. Keep the check for defense in depth, but avoid running
+                // the same two Nix evaluations twice for one proposal.
                 self.verify(package)?;
                 if *operation == PackageOperation::Remove
                     && !previous.packages.iter().any(|item| item == package)
@@ -650,8 +679,20 @@ in builtins.filter isAvailable names"#
                 &["start".into(), "peasy-activate.service".into()],
                 None,
             )?;
-            let activation_result = activation::read_result(&self.config.runtime_dir)
-                .context("activation helper returned no result")?;
+            let activation_result = match activation::read_result(&self.config.runtime_dir) {
+                Ok(result) => result,
+                Err(error) => {
+                    let command_error = useful_stderr(&activation);
+                    let command_error = if command_error.is_empty() {
+                        format!("systemctl exited with {}", activation.status)
+                    } else {
+                        command_error
+                    };
+                    bail!(
+                        "activation service failed before returning a result: {command_error}; {error:#}"
+                    );
+                }
+            };
             Ok((activation, activation_result))
         })();
         let (activation, activation_result) = match activation_attempt {
@@ -902,17 +943,11 @@ mod tests {
         });
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
-        let before = PackageState::default();
+        let preview = backend
+            .preview_package(PackageOperation::Install, "telegram-desktop")
+            .unwrap();
         let result = backend
-            .apply(
-                &ProposalChange::Package {
-                    operation: PackageOperation::Install,
-                    package: "telegram-desktop".into(),
-                    display_name: "Telegram Desktop".into(),
-                },
-                &before,
-                &"a".repeat(48),
-            )
+            .apply(&preview.change, &preview.before, &"a".repeat(48))
             .unwrap();
         assert!(!result.activated);
         assert!(backend.packages().unwrap().is_empty());
@@ -1138,8 +1173,16 @@ mod tests {
 
         let second = backend.search("WHATSAPP").unwrap();
         assert_eq!(first, second);
+        let preview = backend
+            .preview_package(PackageOperation::Install, "whatsapp-electron")
+            .unwrap();
+        assert_eq!(preview.title, "Install Whatsapp Electron");
         let calls = runner.calls.lock().unwrap();
-        assert_eq!(calls.len(), 2, "the repeated query must use the cache");
+        assert_eq!(
+            calls.len(),
+            2,
+            "repeated searches and proposal verification must use the cache"
+        );
         assert_eq!(calls[0][0], "search");
         assert_eq!(calls[1][0], "eval");
         assert!(calls[1].iter().any(|argument| argument == "--impure"));

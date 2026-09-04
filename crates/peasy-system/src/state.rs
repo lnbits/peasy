@@ -48,3 +48,63 @@ pub fn write_managed_atomic(path: &Path, state: &PackageState) -> Result<()> {
     directory.sync_all()?;
     Ok(())
 }
+
+pub fn restore_managed_from_generation(state_path: &Path, managed_path: &Path) -> Result<()> {
+    if !state_path.is_absolute() {
+        bail!("active Peasy state path must be absolute");
+    }
+    let metadata = fs::metadata(state_path).context("inspecting active Peasy generation state")?;
+    if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+        bail!("active Peasy generation state is not a small regular file");
+    }
+    let mut active: PackageState = serde_json::from_slice(
+        &fs::read(state_path).context("reading active Peasy generation state")?,
+    )
+    .context("parsing active Peasy generation state")?;
+    active
+        .normalize()
+        .context("validating active Peasy generation state")?;
+    write_managed_atomic(managed_path, &active)
+        .context("restoring Peasy managed module from active generation")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use peasy_core::ThemeSettings;
+
+    #[test]
+    fn restoring_a_generation_makes_its_state_the_managed_source() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state_path = temporary.path().join("generation-state.json");
+        let managed_path = temporary.path().join("source/peasy-managed.nix");
+        let active = PackageState {
+            packages: vec!["vlc".into(), "hello".into()],
+            appimages: Vec::new(),
+            theme: ThemeSettings::default(),
+        };
+        fs::write(&state_path, serde_json::to_vec(&active).unwrap()).unwrap();
+
+        restore_managed_from_generation(&state_path, &managed_path).unwrap();
+
+        let restored = load_managed(&managed_path).unwrap();
+        assert_eq!(restored.packages, vec!["hello", "vlc"]);
+    }
+
+    #[test]
+    fn invalid_generation_state_does_not_replace_the_managed_source() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state_path = temporary.path().join("generation-state.json");
+        let managed_path = temporary.path().join("source/peasy-managed.nix");
+        let original = PackageState {
+            packages: vec!["hello".into()],
+            appimages: Vec::new(),
+            theme: ThemeSettings::default(),
+        };
+        write_managed_atomic(&managed_path, &original).unwrap();
+        fs::write(&state_path, b"not JSON").unwrap();
+
+        assert!(restore_managed_from_generation(&state_path, &managed_path).is_err());
+        assert_eq!(load_managed(&managed_path).unwrap(), original);
+    }
+}

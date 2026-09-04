@@ -228,7 +228,13 @@ the requesting UI.
 
 Peasy never rewrites `configuration.nix`, hardware configuration, or
 `flake.lock`; it owns only `.peasy/peasy-managed.nix`. NixOS generation and boot
-rollback behaviour therefore remains standard.
+rollback behaviour therefore remains standard. Each generation built with
+Peasy's rollback reconciliation also restores that managed module from its
+validated `/etc/peasy/state.json` when activated. Selecting one of those older
+generations consequently rolls back both the live packages and Peasy's durable
+desired state, so a later rebuild does not silently reapply the newer package
+set. Generations built before this support still roll back the live system but
+cannot update the managed source automatically.
 
 ## Live desktop actions
 
