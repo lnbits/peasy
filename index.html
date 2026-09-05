@@ -17,7 +17,8 @@
       --muted: #a6a6a0;
       --line: rgba(255, 255, 255, 0.12);
       --line-strong: rgba(255, 255, 255, 0.22);
-      --mint: #bfffd4;
+      --mint: #5cd698;
+      --mint-rgb: 92, 214, 152;
       --lilac: #d9c6ff;
       --coral: #ffb9a8;
       --page: min(1180px, calc(100vw - 40px));
@@ -35,6 +36,7 @@
 
     body {
       margin: 0;
+      isolation: isolate;
       overflow-x: hidden;
       background:
         radial-gradient(circle at 50% -10%, rgba(217, 198, 255, 0.12), transparent 31rem),
@@ -54,6 +56,27 @@
       pointer-events: none;
       content: "";
       background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.15'/%3E%3C/svg%3E");
+    }
+
+    /* Static, soft-edged bokeh: keep the centre quiet and the content clickable. */
+    body::after {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      content: "";
+      background:
+        radial-gradient(circle 74px at 7% 28%, rgba(var(--mint-rgb), 0.17) 0%, rgba(var(--mint-rgb), 0.12) 55%, transparent 76%),
+        radial-gradient(circle 46px at 11% 34%, rgba(var(--mint-rgb), 0.13) 0%, rgba(var(--mint-rgb), 0.08) 52%, transparent 78%),
+        radial-gradient(circle 105px at 2% 65%, rgba(var(--mint-rgb), 0.10) 0%, rgba(var(--mint-rgb), 0.06) 48%, transparent 80%),
+        radial-gradient(circle 54px at 15% 79%, rgba(var(--mint-rgb), 0.10) 0%, rgba(var(--mint-rgb), 0.06) 54%, transparent 78%),
+        radial-gradient(circle 88px at 94% 17%, rgba(var(--mint-rgb), 0.15) 0%, rgba(var(--mint-rgb), 0.09) 54%, transparent 78%),
+        radial-gradient(circle 48px at 89% 24%, rgba(var(--mint-rgb), 0.10) 0%, rgba(var(--mint-rgb), 0.06) 50%, transparent 78%),
+        radial-gradient(circle 112px at 99% 60%, rgba(var(--mint-rgb), 0.12) 0%, rgba(var(--mint-rgb), 0.06) 52%, transparent 80%),
+        radial-gradient(circle 60px at 87% 74%, rgba(var(--mint-rgb), 0.12) 0%, rgba(var(--mint-rgb), 0.07) 54%, transparent 78%),
+        radial-gradient(ellipse at 0% 35%, rgba(var(--mint-rgb), 0.055), transparent 36%),
+        radial-gradient(ellipse at 100% 65%, rgba(var(--mint-rgb), 0.045), transparent 34%);
+      mask-image: linear-gradient(90deg, #000, transparent 36%, transparent 64%, #000);
     }
 
     ::selection {
@@ -201,7 +224,7 @@
 
     .hero-cta:hover,
     .hero-cta:focus-visible {
-      box-shadow: 0 0 0 4px rgba(191, 255, 212, 0.16);
+      box-shadow: 0 0 0 4px rgba(var(--mint-rgb), 0.16);
       transform: translateY(-1px);
     }
 
@@ -325,7 +348,7 @@
       height: 28px;
       place-items: center;
       border-radius: 50%;
-      background: rgba(191, 255, 212, 0.12);
+      background: rgba(var(--mint-rgb), 0.12);
       color: var(--mint);
     }
 
@@ -391,7 +414,7 @@
       position: relative;
       border-block: 1px solid var(--line);
       background:
-        radial-gradient(circle at 85% 20%, rgba(191, 255, 212, 0.08), transparent 24rem),
+        radial-gradient(circle at 85% 20%, rgba(var(--mint-rgb), 0.08), transparent 24rem),
         #090909;
     }
 
@@ -525,6 +548,10 @@
         --page: min(100% - 28px, 1180px);
       }
 
+      body::after {
+        opacity: 0.45;
+      }
+
       .hero {
         min-height: auto;
         padding-top: 38px;
@@ -650,7 +677,7 @@
     <footer class="section closing wrap reveal" id="closing">
       <div class="closing-copy">
         <p class="section-kicker">Built for each other</p>
-        <h2>Not AI bolted onto Linux. <span>An operating system AI can understand.</span></h2>
+        <center><h2>Not AI bolted onto Linux. <br>An operating system AI can understand.</h2></center>
         <p>
           The agent changes the configuration. NixOS builds the result. And because generations are reproducible and reversible, changes don't have to become permanent mistakes.
         </p>

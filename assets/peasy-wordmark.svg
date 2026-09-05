@@ -6,5 +6,5 @@
       .word { fill: #f7f7f3; }
     }
   </style>
-  <text class="word" x="6" y="62" font-family="ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="70" font-weight="900" letter-spacing="-5">Peasy<tspan fill="#bfffd4" font-size="20" letter-spacing="0" dx="4">●</tspan></text>
+  <text class="word" x="6" y="62" font-family="ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="70" font-weight="900" letter-spacing="-5">Peasy<tspan fill="#5cd698" font-size="20" letter-spacing="0" dx="4">●</tspan></text>
 </svg>

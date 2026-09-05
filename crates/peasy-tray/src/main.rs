@@ -88,7 +88,7 @@ fn mint_circle(size: i32) -> ksni::Icon {
             let dx = x as f64 + 0.5 - center;
             let dy = y as f64 + 0.5 - center;
             let coverage = (radius + 0.75 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
-            data.extend_from_slice(&[(coverage * 255.0).round() as u8, 0xbf, 0xff, 0xd4]);
+            data.extend_from_slice(&[(coverage * 255.0).round() as u8, 0x5c, 0xd6, 0x98]);
         }
     }
     ksni::Icon {
@@ -130,13 +130,26 @@ mod tests {
 
     #[test]
     fn mint_circle_has_argb_pixels_and_transparent_corners() {
-        let icon = mint_circle(16);
-        assert_eq!(icon.width, 16);
-        assert_eq!(icon.height, 16);
-        assert_eq!(icon.data.len(), 16 * 16 * 4);
-        assert_eq!(&icon.data[..4], &[0, 0xbf, 0xff, 0xd4]);
+        for size in [16, 22, 32] {
+            let icon = mint_circle(size);
+            assert_eq!(icon.width, size);
+            assert_eq!(icon.height, size);
+            assert_eq!(icon.data.len(), (size * size * 4) as usize);
+            assert_eq!(&icon.data[..4], &[0, 0x5c, 0xd6, 0x98]);
 
-        let centre = (8 * 16 + 8) * 4;
-        assert_eq!(&icon.data[centre..centre + 4], &[255, 0xbf, 0xff, 0xd4]);
+            let centre = ((size / 2 * size + size / 2) * 4) as usize;
+            assert_eq!(&icon.data[centre..centre + 4], &[255, 0x5c, 0xd6, 0x98]);
+        }
+    }
+
+    #[test]
+    fn brand_assets_match_tray_colour() {
+        for asset in [
+            include_str!("../../../assets/io.github.peasy.Peasy.svg"),
+            include_str!("../../../assets/peasy-wordmark.svg"),
+            include_str!("../../../assets/gnome-shell-extension/stylesheet.css"),
+        ] {
+            assert!(asset.contains("#5cd698"));
+        }
     }
 }
