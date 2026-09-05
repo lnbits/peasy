@@ -1,8 +1,8 @@
 <h1>
   <a href="https://askpeasy.com">
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
+    <img src="https://img.shields.io/badge/release-beta-green?style=flat" alt="release">
   </a>
-<img src="https://img.shields.io/badge/release-beta-green?style=flat" alt="release">
 </h1>
 
 Tell your NixOS computer what you want in plain language.
