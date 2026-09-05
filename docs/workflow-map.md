@@ -24,6 +24,7 @@ flowchart TD
         route -->|Session action| review["Local validation and your confirmation"]
         review --> desktop["Fixed desktop-tool calls<br/>Wi-Fi, Bluetooth, calendar, Hyprland"]
     end
+    style local fill:none,stroke:none
     lookup --> answer["Show results to you"]
     lookup -.->|"Nixpkgs candidates only, when needed"| context
 ```
