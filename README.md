@@ -2,7 +2,8 @@
   <a href="https://askpeasy.com">
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
   </a>
-</h1><small><small><small>(beta)</small></small></small>
+  <small><small><small>(beta)</small></small></small>
+</h1>
 
 Tell your NixOS computer what you want in plain language.
 
