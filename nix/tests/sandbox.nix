@@ -5,15 +5,7 @@
 }:
 
 let
-  fakeSwitch = pkgs.writeShellScript "peasy-test-switch-to-configuration" ''
-    exit 0
-  '';
-  fakeSystem = pkgs.runCommand "peasy-test-nixos-system" { } ''
-    mkdir -p $out/bin
-    ln -s ${fakeSwitch} $out/bin/switch-to-configuration
-    mkdir -p $out/etc/peasy
-    echo '{"packages":["hello"],"appimages":[],"theme":{"accent_color":null,"color_scheme":null}}' > $out/etc/peasy/state.json
-  '';
+  fakeSystem = import ./sandbox-system.nix { inherit pkgs; };
   legacyHostConfiguration = pkgs.writeText "peasy-test-host-configuration.nix" ''
     { ... }:
     {
@@ -137,7 +129,7 @@ pkgs.testers.runNixOSTest {
         "flakes"
       ];
       environment.etc."nixos/configuration.nix".text = ''
-        { lib, ... }: {
+        { lib, pkgs, ... }: {
           # Test-only shim: retain NixOS's supporting options, but permit the
           # inert generation to replace its otherwise read-only toplevel.
           disabledModules = [ "system/activation/top-level.nix" ];
@@ -153,7 +145,7 @@ pkgs.testers.runNixOSTest {
           system.stateVersion = "26.05";
           boot.loader.grub.devices = [ "nodev" ];
           fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
-          system.build.toplevel = lib.mkForce (import ${fakeSystem.drvPath});
+          system.build.toplevel = lib.mkForce (import ${./sandbox-system.nix} { inherit pkgs; });
         }
       '';
       environment.etc."peasy-ipc-test.py".text = ''

@@ -85,9 +85,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Keep this before builds: a warm store can hide invalid test dependencies.
           nix flake check --no-build
           nix build --no-link \
             .#checks.x86_64-linux.formatting \
+            .#checks.x86_64-linux.sandbox-fixture \
             .#checks.x86_64-linux.desktop-config \
             .#checks.x86_64-linux.iso-config \
             .#checks.x86_64-linux.installer-target \

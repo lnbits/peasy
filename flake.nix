@@ -80,6 +80,11 @@
           coreClosure = pkgs.closureInfo {
             rootPaths = [ corePackage ];
           };
+          sandboxTest = import ./nix/tests/sandbox.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+            package = corePackage;
+          };
         in
         {
           package = self.packages.${system}.default;
@@ -117,7 +122,9 @@
                   ${./nix/tests/desktop-session.nix} \
                   ${./nix/tests/installer-boot.nix} \
                   ${./nix/tests/installed-instrumentation.nix} \
-                  ${./nix/tests/sandbox.nix}
+                  ${./nix/tests/sandbox.nix} \
+                  ${./nix/tests/sandbox-system.nix} \
+                  ${./nix/tests/sandbox-system-check.nix}
             touch $out
           '';
           wasm-imports = pkgs.runCommand "peasy-wasm-imports" { nativeBuildInputs = [ pkgs.wasm-tools ]; } ''
@@ -128,10 +135,9 @@
             fi
             touch $out
           '';
-          sandbox = import ./nix/tests/sandbox.nix {
-            inherit pkgs;
-            module = self.nixosModules.default;
-            package = corePackage;
+          sandbox = sandboxTest;
+          sandbox-fixture = import ./nix/tests/sandbox-system-check.nix {
+            inherit pkgs sandboxTest;
           };
           gnome-tray = import ./nix/tests/gnome-tray.nix {
             inherit pkgs;
