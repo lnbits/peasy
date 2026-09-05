@@ -38,7 +38,7 @@ struct AppState {
 
 enum ResolveMessage {
     Progress(ResolveStage),
-    Finished(std::result::Result<Resolution, String>),
+    Finished(std::result::Result<Box<Resolution>, String>),
 }
 
 fn main() -> Result<()> {
@@ -745,6 +745,7 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
                 .resolve_with_progress(&request, move |stage| {
                     let _ = progress_tx.send(ResolveMessage::Progress(stage));
                 })
+                .map(Box::new)
                 .map_err(|error| format!("{error:#}"));
             let _ = tx.send(ResolveMessage::Finished(result));
         });
@@ -759,7 +760,7 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
                 glib::ControlFlow::Continue
             }
             Ok(ResolveMessage::Finished(Ok(resolution))) => {
-                show_resolution(&window, state.clone(), resolution);
+                show_resolution(&window, state.clone(), *resolution);
                 glib::ControlFlow::Break
             }
             Ok(ResolveMessage::Finished(Err(error))) => {

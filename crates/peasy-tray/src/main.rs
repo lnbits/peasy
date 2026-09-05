@@ -90,6 +90,22 @@ fn mint_circle(size: i32) -> ksni::Icon {
     }
 }
 
+fn main() -> Result<()> {
+    let args = Args::parse();
+    if let Some(program) = args.gnome_extensions {
+        // A fixed, declarative session integration step. User/model text is never involved.
+        let _ = Command::new(program)
+            .args(["enable", APPINDICATOR_UUID])
+            .status();
+    }
+    let _handle = PeasyTray { ui: args.ui }
+        .assume_sni_available(true)
+        .spawn()?;
+    loop {
+        std::thread::park();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,21 +120,5 @@ mod tests {
 
         let centre = (8 * 16 + 8) * 4;
         assert_eq!(&icon.data[centre..centre + 4], &[255, 0xbf, 0xff, 0xd4]);
-    }
-}
-
-fn main() -> Result<()> {
-    let args = Args::parse();
-    if let Some(program) = args.gnome_extensions {
-        // A fixed, declarative session integration step. User/model text is never involved.
-        let _ = Command::new(program)
-            .args(["enable", APPINDICATOR_UUID])
-            .status();
-    }
-    let _handle = PeasyTray { ui: args.ui }
-        .assume_sni_available(true)
-        .spawn()?;
-    loop {
-        std::thread::park();
     }
 }

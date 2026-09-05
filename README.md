@@ -61,6 +61,9 @@ checkouts, headless systems, upgrades, and local Ollama setup.
 
 ## Security
 
+See the [visual workflow and AI access map](docs/workflow-map.md) for how the
+AI, Wasm policy, administrator authorization and NixOS fit together.
+
 Peasy does not give the AI a terminal or arbitrary system access. Model output
 must pass a closed, typed policy running in zero-import Wasm with no WASI and
 strict memory, fuel, and output limits. The privileged service uses fixed
@@ -69,6 +72,12 @@ no Internet or device access, and only its runtime and managed configuration
 directories writable. Building is kept separate from activation: a small root
 helper accepts only a private, root-owned request naming a validated Nix store
 generation. See the full [security model](docs/security.md).
+
+System changes require administrator authentication after review. External
+AppImages show their GitHub repository, release, download URL and pinned hash
+for review; they are third-party software, not verified safe by Peasy. An optional
+hash allowlist is available in `services.peasy.appImages.trustedHashes`. Enter
+passwords only in the separate local password field, not in an AI request.
 
 ## Use
 
@@ -103,6 +112,10 @@ cargo build -p peasy-engine --target wasm32-unknown-unknown
 
 More detail is available in the [architecture](docs/architecture.md) and
 [security model](docs/security.md).
+
+Before a release, run `bash scripts/check-release.sh` on a Linux host with KVM.
+It checks formatting, strict Clippy, tests, current dependency advisories, both
+packages, the headless closure, Wasm imports, and the NixOS VM regressions.
 
 ## License
 

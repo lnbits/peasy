@@ -70,11 +70,14 @@ fn activate(runtime_dir: &Path, nix_env: &Path) -> Result<()> {
         || metadata.file_type().is_symlink()
         || metadata.uid() != 0
         || metadata.mode() & 0o077 != 0
+        || metadata.len() > 8192
     {
         bail!("activation request is not a private root-owned regular file");
     }
+    let bytes = fs::read(&request_path)?;
+    fs::remove_file(&request_path).context("consuming activation request")?;
     let request: ActivationRequest =
-        serde_json::from_slice(&fs::read(&request_path)?).context("parsing activation request")?;
+        serde_json::from_slice(&bytes).context("parsing activation request")?;
     let system = fs::canonicalize(&request.system).context("resolving proposed system")?;
     let switch = system.join("bin/switch-to-configuration");
     if !system.starts_with("/nix/store/") || !switch.is_file() {

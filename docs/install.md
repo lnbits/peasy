@@ -44,6 +44,18 @@ On GNOME, log out and back in after installing or upgrading so GNOME Shell
 loads the bundled panel extension. On Hyprland, ensure the bar has a
 StatusNotifier tray, such as Waybar's `tray` module.
 
+The user must belong to `wheel`. Every system change now requires administrator
+authentication through Polkit after the diff is accepted. GNOME provides its
+own authentication dialog. For NixOS-configured Hyprland, Peasy enables an agent
+in the systemd graphical session. If you already run one, set
+`services.peasy.hyprland.authenticationAgent.enable = false`. Sessions without
+a systemd graphical target must start their own agent. Without one, use `peasy`
+in an interactive terminal, where Peasy starts a terminal agent. Never run the
+AI-facing UI or CLI with `sudo`, and do not add passwordless Peasy Polkit rules.
+
+After upgrading, explicitly restart `peasy-system` as shown above: its automatic
+restart is intentionally disabled so a switch cannot kill its own active request.
+
 ## Development checkout in a home directory
 
 When importing Peasy from a protected home directory, permit the system service
@@ -131,7 +143,44 @@ services.peasy = {
 This installs the CLI, policy engine, and system service without GTK, GNOME, or
 Hyprland components.
 
+## External AppImage review
+
+Nixpkgs remains the default source. External AppImages are executable code from
+outside Nixpkgs. By default, Peasy shows the GitHub repository and release before
+download, then the download URL, hash and configuration diff before installation.
+Review the source and accept the change; installation still requires administrator
+authentication. No manual hash configuration is required. A pinned hash ensures
+the same bytes are used later, not that the publisher or application is safe.
+
+For stricter deployments, an administrator can restrict installations to exact
+repository/hash pairs after independently verifying their publisher and digest:
+
+```nix
+services.peasy.appImages.trustedHashes = {
+  "owner/project" = [ "sha256-REPLACE_WITH_VERIFIED_BASE64_DIGEST" ];
+};
+```
+
+Use lowercase `owner/project`, replace the placeholder, then rebuild normally.
+A hash calculated from the same untrusted download is not publisher verification.
+With this optional allowlist, new versions need new approval; existing AppImages
+can still be removed after their approval is withdrawn. Set `trustedHashes = { };`
+to disable new AppImage installs, or `trustedHashes = null;` (the default) to use
+source review and administrator authentication without preapproval.
+
+## Resource limits
+
+Cold Nixpkgs searches can consume several GiB. Peasy serializes heavy Nix
+operations, bounds IPC and command output, and defaults to a 6 GiB service
+memory ceiling. For larger trusted host configurations, adjust
+`services.peasy.resourceLimits.memoryMax` (for example `"8G"`). The separately
+managed Nix daemon and its build workers have their own resource policy.
+
 ## Choose an AI provider
+
+Enter Wi-Fi passwords only in the separate local confirmation field, never in
+the natural-language request. Credential-looking requests are refused before
+contacting the model, but arbitrary pasted secrets cannot be reliably detected.
 
 The first launch opens provider setup. OpenAI requires an API key. The key is
 stored for the current user in `~/.config/peasy/openai-key` with mode `0600`.

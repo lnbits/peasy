@@ -90,6 +90,15 @@ in
       '';
     };
 
+    hyprland.authenticationAgent.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.hyprland.enable && (config.programs.hyprland.enable or false);
+      description = ''
+        Start a graphical Polkit authentication agent in Hyprland sessions.
+        Disable this if your session already starts an authentication agent.
+      '';
+    };
+
     ollama.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -107,6 +116,29 @@ in
         Absolute path to the trusted NixOS module that Peasy evaluates together
         with the Peasy-owned managed module.
       '';
+    };
+
+    appImages.trustedHashes = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.listOf lib.types.str));
+      default = null;
+      example = {
+        "owner/project" = [ "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" ];
+      };
+      description = ''
+        Administrator-approved SHA-256 SRI hashes for external AppImages, keyed
+        by lowercase GitHub owner/repository. The default, null, permits external
+        installs after source review and administrator authentication, without
+        preapproved hashes. Set an attribute set to enforce an exact hash
+        allowlist, or an empty set to disable new external installs. Verify
+        allowlisted hashes independently against a trusted publisher. Existing
+        installations can still be rebuilt and removed.
+      '';
+    };
+
+    resourceLimits.memoryMax = lib.mkOption {
+      type = lib.types.str;
+      default = "6G";
+      description = "Memory limit for Peasy and its Nix evaluation children; increase for unusually large host configurations.";
     };
 
     managedModule = lib.mkOption {
@@ -182,7 +214,39 @@ in
       }
     ];
 
-    environment.systemPackages = [ package ];
+    security.polkit.enable = true;
+    environment.systemPackages = [
+      package
+      (pkgs.writeTextDir "share/polkit-1/actions/io.github.peasy.policy" ''
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+        <policyconfig>
+          <vendor>Peasy</vendor>
+          <action id="io.github.peasy.apply">
+            <description>Apply a Peasy system change</description>
+            <message>Authentication is required to apply this Peasy system change</message>
+            <defaults>
+              <allow_any>auth_admin</allow_any>
+              <allow_inactive>auth_admin</allow_inactive>
+              <allow_active>auth_admin</allow_active>
+            </defaults>
+          </action>
+        </policyconfig>
+      '')
+    ];
+    environment.etc."peasy/appimage-policy.json".text = builtins.toJSON cfg.appImages.trustedHashes;
+
+    systemd.user.services.peasy-polkit-agent = lib.mkIf cfg.hyprland.authenticationAgent.enable {
+      description = "Polkit authentication for Peasy in Hyprland";
+      wantedBy = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
+      after = [ "graphical-session-pre.target" ];
+      unitConfig.ConditionEnvironment = "HYPRLAND_INSTANCE_SIGNATURE";
+      serviceConfig = {
+        Type = "simple";
+        ExecStart = "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1";
+      };
+    };
 
     systemd.tmpfiles.rules = [
       "d ${managedModuleDirectory} 0755 root root -"
@@ -306,6 +370,7 @@ in
             "${package}/libexec/peasy-system"
             "--nix ${pkgs.nix}/bin/nix"
             "--systemctl ${pkgs.systemd}/bin/systemctl"
+            "--pkcheck ${pkgs.polkit}/bin/pkcheck"
             "--nixpkgs ${pkgs.path}"
             "--system ${pkgs.stdenv.hostPlatform.system}"
           ]
@@ -317,6 +382,31 @@ in
         RuntimeDirectory = "peasy";
         RuntimeDirectoryMode = "0755";
         UMask = "0077";
+
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@mount"
+          "~@debug"
+          "~@reboot"
+          "~@swap"
+        ];
+        SystemCallErrorNumber = "EPERM";
+        # Nix's garbage collector reads /proc/stat. Hiding non-process proc
+        # entries breaks that runtime assumption; do not use ProcSubset=pid.
+        # /proc/<peer>/stat is needed to bind Polkit to the client's start time.
+        # Empty capabilities prevent ptrace and proc-root sandbox escapes.
+        ProtectHostname = true;
+        MemoryDenyWriteExecute = true;
+        LimitCORE = 0;
+        TasksMax = 256;
+        # Cold Nixpkgs evaluation can exceed 4 GiB. A lower soft threshold
+        # causes reclaim thrashing; keep the configurable hard ceiling only.
+        MemoryMax = cfg.resourceLimits.memoryMax;
+        MemorySwapMax = "1G";
+        CPUWeight = 20;
 
         ProtectHome = if cfg.protectHome then "tmpfs" else "read-only";
         ProtectSystem = "strict";

@@ -12,6 +12,8 @@
   glib,
   coreutils,
   nix,
+  polkit,
+  cacert,
   withGui ? true,
 }:
 
@@ -36,6 +38,9 @@ rustPlatform.buildRustPackage {
   };
 
   cargoLock.lockFile = ../Cargo.lock;
+
+  # Offline provider tests still construct a TLS client, which requires roots.
+  SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
 
   nativeBuildInputs = [
     makeWrapper
@@ -101,6 +106,7 @@ rustPlatform.buildRustPackage {
         ''
             wrapProgram "$out/bin/peasy" \
               --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
+              --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
               --set-default PEASY_NIX "${nix}/bin/nix" \
               --set-default PEASY_DATE "${coreutils}/bin/date" \
           --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \
@@ -114,6 +120,7 @@ rustPlatform.buildRustPackage {
         ''
           wrapProgram "$out/bin/peasy" \
             --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
+            --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
             --set-default PEASY_NIX "${nix}/bin/nix" \
             --set-default PEASY_DATE "${coreutils}/bin/date" \
             --set-default PEASY_VARIANT "core" \

@@ -1,5 +1,8 @@
 # Peasy architecture
 
+Start with the [visual workflow and AI access map](workflow-map.md) for a
+diagram-led overview of the trust boundaries.
+
 Peasy exposes a deliberately closed set of typed NixOS, GNOME, and Hyprland
 capabilities.
 It is not a shell, an agent framework, or an arbitrary NixOS configuration
@@ -11,7 +14,7 @@ flows because they are live session data rather than NixOS generations.
 
 ```text
 person
-  |             constructed, credential-redacted request data
+  |             constructed, credential-guarded request data
   +-- peasy / peasy-ui ------------------------------+--> OpenAI Responses API
   |                                                   +--> local Ollama /api/chat
   |       |
@@ -66,7 +69,7 @@ schema as the `format` value. Peasy discovers installed models through
 Ollama origin is restricted to localhost or a loopback IP and defaults to
 `http://127.0.0.1:11434`.
 
-The constructed boundary includes the credential-redacted request, current
+The constructed boundary includes the credential-guarded request, current
 local time, Peasy's canonical generated managed module, at most one recent
 validated package, and a locally generated system profile. The profile contains
 only the active NixOS release and Nix system, runtime/configured desktop enums,
@@ -126,7 +129,10 @@ There is no stringly command, path, networking, Bluetooth, calendar, or
 credential method. Apply uses a random, short-lived proposal token bound to the
 peer UID that requested it. The pending record contains the exact reviewed
 change and base state; stale proposals are rejected. Search and proposal strings
-have small limits, and package attributes pass a conservative parser.
+have small limits, and package attributes pass a conservative parser. The daemon
+independently checks Polkit administrator authorization for every system apply,
+bound to the peer's UID, PID, and process start time. Connections, request rates,
+and pending proposals are bounded, and heavy Nix operations are serialized.
 
 ## Package lookup
 
@@ -138,6 +144,9 @@ No shell is involved. Search results are normalized to Nixpkgs attribute paths.
 Before a proposal is returned, `peasy-system` evaluates the exact attribute
 against the same Nixpkgs source. Install proposals identify a real derivation;
 removal proposals identify an attribute present in Peasy's own state.
+Verification imports that immutable store source directly rather than
+snapshotting it as a path flake. Successful verification is cached for later
+apply; search retains Nix's native traversal of the package set.
 
 When a request names a GitHub URL, `owner/repository`, or a repository and
 organisation in natural language, the unprivileged client queries it directly
@@ -149,12 +158,19 @@ incompatible architectures, and assets over 1 GiB. An exact requested version
 must match the release tag after an optional leading `v`; `latest` means the
 first stable release containing a compatible AppImage.
 
-Discovery results are suggestions, not trusted packages. Selecting one first
+Discovery results are suggestions, not trusted packages. When an administrator
+configures an optional hash allowlist, discovery is limited to its repositories.
+Otherwise the user reviews the repository and release. Selecting one first
 downloads it through `nix store prefetch-file` to calculate a SHA-256 hash. The
 system proposal then contains a closed `AppImagePackage` record: identifier,
 display name, `owner/repository`, release tag, version, asset name, fixed GitHub
 release URL, hash, architecture, and size. The review shows the publisher,
 release, asset, architecture, size, hash, and generated Nix diff before Apply.
+The review also shows the download URL. Installation requires administrator
+authentication. If an optional hash allowlist is configured, the daemon checks
+the exact repository/hash pair both when proposing and when applying. A downloaded
+hash is an integrity pin, not proof of publisher authenticity. The default policy
+is `null` (review without preapproval); an empty map disables external installs.
 
 ## State, diff, and deterministic Nix
 
@@ -240,8 +256,9 @@ cannot update the managed source automatically.
 
 Live actions execute only after their typed preview is confirmed:
 
-- Wi-Fi SSIDs are resolved against `nmcli` scan output. A password embedded in
-  the sentence is removed before the model request and written to `nmcli --ask`
+- Wi-Fi SSIDs are resolved against `nmcli` scan output. Credential-looking inline
+  requests are rejected before contacting the model. A password entered in the
+  separate local field is written to `nmcli --ask`
   through stdin; it is never an argv value or system IPC field.
 - Bluetooth names are resolved against `bluetoothctl devices` output and reduced
   to a validated hardware address before connect/pair is offered.

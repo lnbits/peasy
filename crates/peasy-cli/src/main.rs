@@ -9,7 +9,53 @@ use peasy_core::{DiffKind, DiffLine, Proposal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, IsTerminal, Write};
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+struct TerminalAgent(Child);
+
+impl TerminalAgent {
+    fn start() -> Result<Option<Self>> {
+        if !io::stdin().is_terminal() {
+            return Ok(None);
+        }
+        let executable = std::env::var_os("PEASY_PKTTYAGENT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/run/current-system/sw/bin/pkttyagent"));
+        let (mut ready, notify) = UnixStream::pair()?;
+        ready.set_read_timeout(Some(Duration::from_secs(10)))?;
+        let child = Command::new(executable)
+            .args([
+                "--process",
+                &std::process::id().to_string(),
+                "--fallback",
+                "--notify-fd",
+                "0",
+            ])
+            .stdin(Stdio::from(OwnedFd::from(notify)))
+            .spawn()
+            .context("starting terminal authorization agent")?;
+        let mut agent = Self(child);
+        // The notification descriptor closes after registration with Polkit.
+        let mut byte = [0];
+        let _ = std::io::Read::read(&mut ready, &mut byte)
+            .context("waiting for terminal authorization agent")?;
+        if agent.0.try_wait()?.is_some() {
+            anyhow::bail!("terminal authorization agent could not start");
+        }
+        Ok(Some(agent))
+    }
+}
+
+impl Drop for TerminalAgent {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "peasy", about = "Tell your computer what you want.")]
@@ -311,7 +357,7 @@ fn finish_panel(
 
 fn read_panel_command(input: &mut impl BufRead) -> Result<PanelCommand> {
     let mut line = String::new();
-    if input.read_line(&mut line)? == 0 || line.len() > 8192 {
+    if std::io::Read::take(input, 8193).read_line(&mut line)? == 0 || line.len() > 8192 {
         anyhow::bail!("invalid panel command");
     }
     serde_json::from_str(&line).context("invalid panel command")
@@ -417,6 +463,7 @@ fn confirm_and_apply(client: &PeasyClient, proposal: Proposal) -> Result<()> {
         return Ok(());
     }
     println!("\nTesting configuration...");
+    let _agent = TerminalAgent::start()?;
     let result = client.apply(&proposal)?;
     if result.configuration_valid {
         println!("✓ Configuration valid");

@@ -23,6 +23,10 @@ pub fn load_managed(path: &Path) -> Result<PackageState> {
 }
 
 pub fn write_managed_atomic(path: &Path, state: &PackageState) -> Result<()> {
+    let source = render_packages_module(state)?;
+    if source.len() > 1024 * 1024 {
+        bail!("Peasy managed module exceeds its 1 MiB limit");
+    }
     if !path.is_absolute() {
         bail!("Peasy managed module path must be absolute");
     }
@@ -41,7 +45,7 @@ pub fn write_managed_atomic(path: &Path, state: &PackageState) -> Result<()> {
         .open(&temporary)
         .context("creating temporary Peasy managed module")?;
     file.set_permissions(fs::Permissions::from_mode(0o644))?;
-    file.write_all(render_packages_module(state)?.as_bytes())?;
+    file.write_all(source.as_bytes())?;
     file.sync_all()?;
     fs::rename(&temporary, path)?;
     let directory = OpenOptions::new().read(true).open(parent)?;

@@ -1,5 +1,7 @@
 mod activation;
+mod authorization;
 mod nix_backend;
+mod process;
 mod server;
 mod state;
 
@@ -29,6 +31,10 @@ struct Args {
     #[arg(long)]
     systemctl: Option<PathBuf>,
     #[arg(long)]
+    pkcheck: Option<PathBuf>,
+    #[arg(long, default_value = "/etc/peasy/appimage-policy.json")]
+    appimage_policy: PathBuf,
+    #[arg(long)]
     nixpkgs: Option<PathBuf>,
     #[arg(long)]
     managed_module: Option<PathBuf>,
@@ -53,7 +59,9 @@ struct Args {
 fn sandbox_self_test() -> Result<()> {
     let home_denied = std::fs::read_to_string("/home/testuser/private.txt").is_err();
     let etc_denied = std::fs::write("/etc/peasy-security-test", "must not be written").is_err();
-    if home_denied && etc_denied {
+    let proc_root_denied =
+        std::fs::read_to_string("/proc/1/root/home/testuser/private.txt").is_err();
+    if home_denied && etc_denied && proc_root_denied {
         println!("home-read=denied etc-write=denied");
         Ok(())
     } else {
@@ -85,7 +93,7 @@ fn main() -> Result<()> {
             packages: Vec::new(),
             appimages: vec![peasy_core::AppImagePackage {
                 id: "appimage.example.nostr-chat".into(),
-                display_name: "Nostr Chat".into(),
+                display_name: "Nostr ${builtins.toString 7} Chat".into(),
                 repository: "example/nostr-chat".into(),
                 version: "1.2".into(),
                 release_tag: "v1.2".into(),
@@ -125,6 +133,7 @@ fn main() -> Result<()> {
         _ => anyhow::bail!("exactly one of --host-configuration or --host-flake is required"),
     };
     let config = BackendConfig {
+        appimage_policy: args.appimage_policy,
         runtime_dir: args.runtime_dir,
         nix: args.nix.context("--nix is required")?,
         systemctl: args.systemctl.context("--systemctl is required")?,
@@ -136,7 +145,10 @@ fn main() -> Result<()> {
         rebuild_target,
     };
     let backend = Arc::new(NixBackend::new(config, Arc::new(ProcessRunner))?);
-    Server::new(args.socket, backend)
+    let authorizer = Arc::new(authorization::PolkitAuthorizer(
+        args.pkcheck.context("--pkcheck is required")?,
+    ));
+    Server::new(args.socket, backend, authorizer)
         .context("starting Peasy system service")?
         .run()
 }

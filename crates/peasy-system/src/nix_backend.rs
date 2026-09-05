@@ -33,6 +33,7 @@ pub enum RebuildTarget {
 
 #[derive(Clone, Debug)]
 pub struct BackendConfig {
+    pub appimage_policy: PathBuf,
     pub runtime_dir: PathBuf,
     pub nix: PathBuf,
     pub systemctl: PathBuf,
@@ -66,8 +67,7 @@ impl CommandRunner for ProcessRunner {
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
-        command
-            .output()
+        crate::process::run(command, Duration::from_secs(60 * 60))
             .with_context(|| format!("running trusted executable {}", program.display()))
     }
 }
@@ -78,6 +78,7 @@ pub struct NixBackend {
     search_cache: Mutex<HashMap<String, CachedSearch>>,
     verified_packages: Mutex<HashMap<String, String>>,
     apply_lock: Mutex<()>,
+    evaluation_lock: Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -127,6 +128,7 @@ impl NixBackend {
             search_cache: Mutex::new(HashMap::new()),
             verified_packages: Mutex::new(HashMap::new()),
             apply_lock: Mutex::new(()),
+            evaluation_lock: Mutex::new(()),
         })
     }
 
@@ -158,6 +160,9 @@ impl NixBackend {
         if let Some(cached) = self.cached_search(&cache_key) {
             return Ok(cached);
         }
+        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A Nix operation is already running; try again shortly")
+        })?;
         let flake = format!("path:{}", self.config.nixpkgs.display());
         let output = self.runner.run(
             &self.config.nix,
@@ -236,6 +241,9 @@ impl NixBackend {
                 .lock()
                 .expect("verified-packages mutex poisoned");
             for candidate in &candidates {
+                if verified.len() >= 512 {
+                    verified.clear();
+                }
                 verified.insert(candidate.attribute.clone(), candidate.name.clone());
             }
         }
@@ -284,10 +292,10 @@ impl NixBackend {
         }
         let names = attributes
             .iter()
-            .map(|attribute| serde_json::to_string(attribute))
+            .map(serde_json::to_string)
             .collect::<std::result::Result<Vec<_>, _>>()?
             .join(" ");
-        let nixpkgs = serde_json::to_string(&self.config.nixpkgs.to_string_lossy())?;
+        let nixpkgs = peasy_core::nix_string(&self.config.nixpkgs.to_string_lossy());
         let system = serde_json::to_string(&self.config.system)?;
         let expression = format!(
             r#"let
@@ -328,6 +336,16 @@ in builtins.filter isAvailable names"#
         Ok(available.into_iter().collect())
     }
 
+    fn package_set_expression(&self) -> String {
+        // The administrator's source is already immutable in the store. A
+        // path flake needlessly snapshots/hashes it again for each lookup.
+        format!(
+            "import (builtins.toPath {}) {{ system = {}; }}",
+            peasy_core::nix_string(&self.config.nixpkgs.to_string_lossy()),
+            peasy_core::nix_string(&self.config.system),
+        )
+    }
+
     pub fn verify(&self, attribute: &str) -> Result<String> {
         validate_attribute(attribute)?;
         if let Some(display_name) = self
@@ -339,19 +357,23 @@ in builtins.filter isAvailable names"#
         {
             return Ok(display_name);
         }
-        let installable = format!(
-            "path:{}#legacyPackages.{}.{}",
-            self.config.nixpkgs.display(),
-            self.config.system,
-            attribute
+        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A Nix operation is already running; try again shortly")
+        })?;
+        let package = format!(
+            "(let pkgs = {}; in pkgs.lib.getAttrFromPath (pkgs.lib.splitString \".\" {}) pkgs)",
+            self.package_set_expression(),
+            peasy_core::nix_string(attribute),
         );
         let output = self.runner.run(
             &self.config.nix,
             &[
                 "eval".into(),
+                "--impure".into(),
                 "--json".into(),
                 "--no-write-lock-file".into(),
-                format!("{installable}.meta").into(),
+                "--expr".into(),
+                format!("{package}.meta").into(),
             ],
             None,
         )?;
@@ -364,9 +386,11 @@ in builtins.filter isAvailable names"#
             &self.config.nix,
             &[
                 "eval".into(),
+                "--impure".into(),
                 "--raw".into(),
                 "--no-write-lock-file".into(),
-                format!("{installable}.pname").into(),
+                "--expr".into(),
+                format!("{package}.pname").into(),
             ],
             None,
         )?;
@@ -375,10 +399,14 @@ in builtins.filter isAvailable names"#
         } else {
             human_name(attribute.rsplit('.').next().unwrap_or(attribute))
         };
-        self.verified_packages
+        let mut verified = self
+            .verified_packages
             .lock()
-            .expect("verified-packages mutex poisoned")
-            .insert(attribute.to_owned(), display_name.clone());
+            .expect("verified-packages mutex poisoned");
+        if verified.len() >= 512 {
+            verified.clear();
+        }
+        verified.insert(attribute.to_owned(), display_name.clone());
         Ok(display_name)
     }
 
@@ -426,6 +454,7 @@ in builtins.filter isAvailable names"#
 
     pub fn preview_appimage_install(&self, package: AppImagePackage) -> Result<Preview> {
         package.validate()?;
+        self.authorize_appimage(&package)?;
         let before = self.current_state()?;
         let after = before.with_appimage_install(&package)?;
         if before == after {
@@ -497,7 +526,10 @@ in builtins.filter isAvailable names"#
         expected: &PackageState,
         proposal_id: &str,
     ) -> Result<ApplyResult> {
-        let _guard = self.apply_lock.lock().expect("apply mutex poisoned");
+        let _guard = self
+            .apply_lock
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("A system change is already running"))?;
         let previous = self.current_state()?;
         if &previous != expected {
             bail!("proposal is stale because Peasy state changed; review a new diff");
@@ -534,7 +566,10 @@ in builtins.filter isAvailable names"#
             ProposalChange::AppImage { operation, package } => {
                 package.validate()?;
                 let proposed = match operation {
-                    PackageOperation::Install => previous.with_appimage_install(package)?,
+                    PackageOperation::Install => {
+                        self.authorize_appimage(package)?;
+                        previous.with_appimage_install(package)?
+                    }
                     PackageOperation::Remove => {
                         if !previous
                             .appimages
@@ -558,6 +593,9 @@ in builtins.filter isAvailable names"#
                 (proposed, message)
             }
         };
+        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A Nix operation is already running; try again shortly")
+        })?;
         let stage = self
             .config
             .runtime_dir
@@ -717,6 +755,21 @@ in builtins.filter isAvailable names"#
             message,
         })
     }
+
+    pub fn is_applying(&self) -> bool {
+        self.apply_lock.try_lock().is_err()
+    }
+
+    fn authorize_appimage(&self, package: &AppImagePackage) -> Result<()> {
+        let policy = peasy_core::AppImagePolicy::load(&self.config.appimage_policy)
+            .context("reading administrator AppImage policy")?;
+        if !policy.allows(package) {
+            bail!(
+                "This AppImage release has not been approved by the administrator. Add its independently verified hash to services.peasy.appImages.trustedHashes before installing."
+            );
+        }
+        Ok(())
+    }
 }
 
 fn verify_built_managed_state(system: &Path, expected: &PackageState) -> Result<()> {
@@ -755,20 +808,20 @@ fn appimage_review_details(package: &AppImagePackage) -> Vec<DiffLine> {
         },
         DiffLine {
             kind: DiffKind::Context,
+            text: format!("Download: {}", package.url),
+        },
+        DiffLine {
+            kind: DiffKind::Context,
             text: format!("SHA-256: {}", package.hash),
         },
     ]
 }
 
 fn useful_stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr)
-        .lines()
-        .take(12)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .chars()
-        .take(1600)
-        .collect()
+    let text = String::from_utf8_lossy(&output.stderr);
+    let mut lines = text.lines().rev().take(12).collect::<Vec<_>>();
+    lines.reverse();
+    lines.join("\n").chars().take(1600).collect()
 }
 
 fn human_name(value: &str) -> String {
@@ -865,6 +918,7 @@ mod tests {
     fn config(runtime_dir: PathBuf) -> BackendConfig {
         let managed_module = runtime_dir.join("source/peasy-managed.nix");
         BackendConfig {
+            appimage_policy: runtime_dir.join("appimage-policy.json"),
             runtime_dir,
             nix: "/trusted/nix".into(),
             systemctl: "/trusted/systemctl".into(),
@@ -902,6 +956,16 @@ mod tests {
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
         let package = appimage();
+        assert!(backend.preview_appimage_install(package.clone()).is_err());
+        let policy = peasy_core::AppImagePolicy(Some(std::collections::BTreeMap::from([(
+            package.repository.clone(),
+            vec![package.hash.clone()],
+        )])));
+        fs::write(
+            &backend.config.appimage_policy,
+            serde_json::to_vec(&policy).unwrap(),
+        )
+        .unwrap();
         let preview = backend.preview_appimage_install(package.clone()).unwrap();
         assert!(preview.title.contains("Install external Nostr Chat 1.2"));
         assert!(
@@ -924,10 +988,57 @@ mod tests {
         );
         assert!(runner.calls.lock().unwrap().is_empty());
 
+        // The default module policy permits review without a preapproved digest.
+        // The privileged daemon still validates the complete record and rechecks
+        // policy at Apply if an administrator tightens it after the preview.
+        fs::write(&backend.config.appimage_policy, "null").unwrap();
+        let preview = backend.preview_appimage_install(package.clone()).unwrap();
+        assert!(
+            preview
+                .diff
+                .iter()
+                .any(|line| line.text == format!("Download: {}", package.url))
+        );
+        fs::write(&backend.config.appimage_policy, "{}").unwrap();
+        assert!(
+            backend
+                .apply(&preview.change, &preview.before, "policy-changed")
+                .is_err()
+        );
+        assert!(backend.packages().unwrap().is_empty());
+        assert!(runner.calls.lock().unwrap().is_empty());
+        fs::write(&backend.config.appimage_policy, "null").unwrap();
         let mut unpinned = package;
         unpinned.hash = "not-a-hash".into();
         assert!(backend.preview_appimage_install(unpinned).is_err());
         assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn verification_uses_the_pinned_import_and_reuses_its_cache() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([
+                output(0, "{}", ""),
+                output(0, "hello", ""),
+            ])),
+            calls: Mutex::new(Vec::new()),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        assert_eq!(
+            backend.verify("hello").unwrap(),
+            backend.verify("hello").unwrap()
+        );
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        for call in calls.iter() {
+            assert!(call.iter().any(|arg| arg == "--expr"));
+            let expression = call.last().unwrap().to_string_lossy();
+            assert!(expression.contains("builtins.toPath"));
+            assert!(expression.contains("getAttrFromPath"));
+            assert!(!expression.contains("path:"));
+        }
     }
 
     #[test]

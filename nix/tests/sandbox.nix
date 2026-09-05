@@ -11,6 +11,8 @@ let
   fakeSystem = pkgs.runCommand "peasy-test-nixos-system" { } ''
     mkdir -p $out/bin
     ln -s ${fakeSwitch} $out/bin/switch-to-configuration
+    mkdir -p $out/etc/peasy
+    echo '{"packages":["hello"],"appimages":[],"theme":{"accent_color":null,"color_scheme":null}}' > $out/etc/peasy/state.json
   '';
   legacyHostConfiguration = pkgs.writeText "peasy-test-host-configuration.nix" ''
     { ... }:
@@ -87,7 +89,7 @@ in
 pkgs.testers.runNixOSTest {
   name = "peasy-sandbox";
   nodes.machine =
-    { lib, ... }:
+    { config, lib, ... }:
     {
       imports = [ module ];
       services.peasy = {
@@ -99,6 +101,7 @@ pkgs.testers.runNixOSTest {
       users.users.testuser = {
         isNormalUser = true;
         password = "test";
+        extraGroups = [ "wheel" ];
       };
       systemd.tmpfiles.rules = [
         "d /home/testuser 0700 testuser users -"
@@ -108,7 +111,7 @@ pkgs.testers.runNixOSTest {
       ];
       systemd.services.peasy-sandbox-probe = {
         description = "Exercise Peasy's production filesystem sandbox";
-        serviceConfig = {
+        serviceConfig = config.systemd.services.peasy-system.serviceConfig // {
           Type = "oneshot";
           ExecStart = lib.concatStringsSep " " [
             "${package}/libexec/peasy-system"
@@ -118,31 +121,70 @@ pkgs.testers.runNixOSTest {
             "--system ${pkgs.stdenv.hostPlatform.system}"
             "--self-test-sandbox"
           ];
-          ProtectHome = "tmpfs";
-          ProtectSystem = "strict";
-          ReadWritePaths = [
-            "/run/peasy"
-            "/etc/nixos/.peasy"
-          ];
-          PrivateTmp = true;
-          PrivateDevices = true;
-          NoNewPrivileges = true;
-          RestrictSUIDSGID = true;
-          LockPersonality = true;
-          RestrictAddressFamilies = [
-            "AF_UNIX"
-            "AF_NETLINK"
-          ];
-          IPAddressDeny = "any";
+          Restart = lib.mkForce "no";
+          RuntimeDirectory = lib.mkForce "peasy-probe";
         };
       };
-      environment.systemPackages = [ pkgs.socat ];
+      environment.systemPackages = [
+        pkgs.socat
+        pkgs.python3
+      ];
+      # The shared store makes the output readable, but Nix also needs it
+      # registered as valid to build/activate it without trying substitutes.
+      system.extraDependencies = [ fakeSystem ];
       nix.settings.experimental-features = [
         "nix-command"
         "flakes"
       ];
       environment.etc."nixos/configuration.nix".text = ''
-        { ... }: { system.stateVersion = "26.05"; }
+        { lib, ... }: {
+          # Test-only shim: retain NixOS's supporting options, but permit the
+          # inert generation to replace its otherwise read-only toplevel.
+          disabledModules = [ "system/activation/top-level.nix" ];
+          imports = [
+            (args@{ config, lib, pkgs, ... }:
+              let original = import ${pkgs.path}/nixos/modules/system/activation/top-level.nix args;
+              in original // {
+                options = lib.recursiveUpdate original.options {
+                  system.build.toplevel.readOnly = false;
+                };
+              })
+          ];
+          system.stateVersion = "26.05";
+          boot.loader.grub.devices = [ "nodev" ];
+          fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
+          system.build.toplevel = lib.mkForce (import ${fakeSystem.drvPath});
+        }
+      '';
+      environment.etc."peasy-ipc-test.py".text = ''
+        import json, socket, sys
+        def request(body):
+            with socket.socket(socket.AF_UNIX) as connection:
+                connection.settimeout(180)
+                connection.connect('/run/peasy/peasy.sock')
+                connection.sendall((json.dumps(body) + '\n').encode())
+                return json.loads(connection.makefile().readline())
+        if sys.argv[1] == 'denied':
+            before = request({'request': 'get_managed_module'})
+            proposal = request({'request': 'propose_theme', 'theme': {'accent_color': 'blue'}})['proposal']
+            result = request({'request': 'apply', 'proposal': proposal['id']})
+            assert result['response'] == 'error', result
+            assert 'not authorized' in result['message'], result
+            assert request({'request': 'get_managed_module'}) == before
+            assert request({'request': 'apply', 'proposal': proposal['id']})['response'] == 'error'
+        elif sys.argv[1] == 'allowed':
+            proposal = request({'request': 'propose_install', 'package': 'hello'})['proposal']
+            result = request({'request': 'apply', 'proposal': proposal['id']})
+            assert result['response'] == 'applied' and result['result']['activated'], result
+            assert 'hello' in request({'request': 'get_packages'})['packages']
+            assert request({'request': 'apply', 'proposal': proposal['id']})['response'] == 'error'
+        elif sys.argv[1] == 'hostile':
+            for body in [
+                {'request': 'shell', 'command': 'touch /etc/peasy-pwned'},
+                {'request': 'propose_install', 'package': 'hello;reboot'},
+                {'request': 'apply', 'proposal': '../../etc/passwd'},
+            ]:
+                assert request(body)['response'] == 'error'
       '';
       # A cold `nix search --json nixpkgs` evaluates the full package set and
       # currently peaks above 4 GiB.  The Peasy daemon itself remains tiny.
@@ -227,5 +269,18 @@ pkgs.testers.runNixOSTest {
     machine.succeed("systemctl start peasy-sandbox-probe.service")
     machine.succeed("journalctl -u peasy-sandbox-probe.service | grep 'home-read=denied etc-write=denied'")
     machine.fail("test -e /etc/peasy-security-test")
+    machine.succeed("test -f /run/current-system/sw/share/polkit-1/actions/io.github.peasy.policy")
+    machine.succeed("pkaction --action-id io.github.peasy.apply --verbose | grep auth_admin")
+    machine.succeed("systemctl show peasy-system -p CapabilityBoundingSet --value | grep '^$'")
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py hostile'")
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py denied'")
+    # The real Polkit path rejects an unapproved wheel process. Only this VM
+    # then grants its test account permission so the same IPC flow can exercise
+    # build + private helper activation without interactive human input.
+    machine.succeed("mkdir -p /etc/polkit-1/rules.d")
+    machine.succeed("printf '%s\\n' 'polkit.addRule(function(action, subject) { if (action.id == \"io.github.peasy.apply\" && subject.user == \"testuser\") return polkit.Result.YES; });' > /etc/polkit-1/rules.d/00-peasy-test.rules")
+    machine.succeed("systemctl restart polkit")
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py allowed'", timeout=300)
+    machine.fail("test -e /etc/peasy-pwned")
   '';
 }

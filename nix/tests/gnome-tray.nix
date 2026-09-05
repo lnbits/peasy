@@ -6,7 +6,7 @@
 
 pkgs.testers.runNixOSTest {
   name = "peasy-gnome-tray";
-  meta.timeout = 300;
+  meta.timeout = 900;
   nodes.machine = {
     imports = [ module ];
     services.displayManager.gdm.enable = true;
@@ -41,12 +41,14 @@ pkgs.testers.runNixOSTest {
     start_all()
     machine.wait_for_unit("graphical.target")
     machine.wait_for_x()
-    extension_info = machine.succeed(
-      "su - alice -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u alice)/bus gnome-extensions info peasy@peasy-nixos.github.io'"
+    # Xwayland can be ready before Shell has enabled its extensions.
+    machine.wait_until_succeeds("test -f /run/user/1000/peasy-user/panel-ready")
+    extension_info = machine.wait_until_succeeds(
+      "su - alice -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u alice)/bus gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.GetExtensionInfo peasy@peasy-nixos.github.io'"
     )
     print(extension_info)
-    assert "ENABLED" in extension_info or "ACTIVE" in extension_info
-    machine.wait_until_succeeds("test -f /run/user/1000/peasy-user/panel-ready")
+    assert "'enabled': <true>" in extension_info
+    assert "'state': <1.0>" in extension_info  # GNOME's active extension state
     machine.succeed(
       "test -f /run/current-system/sw/share/gnome-shell/extensions/peasy@peasy-nixos.github.io/extension.js"
     )
