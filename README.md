@@ -4,7 +4,7 @@
   </a>
 
 </h1>
-<img src="https://img.shields.io/badge/release-beta-green?style=flat" alt="release"><img src="https://img.shields.io/badge/license-MIT-green?style=flat" alt="license">
+<img src="https://img.shields.io/badge/release-beta-green?style=flat" alt="release">
 Tell your NixOS computer what you want in plain language.
 
 <p>
