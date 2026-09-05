@@ -3,9 +3,7 @@
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
   </a>
 </h1>
-<center>
-<img src="https://img.shields.io/badge/release-beta-green?style=flat" alt="release">
-  </center>
+<img align="center" src="https://img.shields.io/badge/phase-beta-green?style=flat" alt="phase">
 Tell your NixOS computer what you want in plain language.
 
 <p>
