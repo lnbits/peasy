@@ -8,7 +8,8 @@
 let
   cfg = config.services.peasy;
   package = cfg.package;
-  peasyExtensionUuid = "peasy@peasy-nixos.github.io";
+  gnomeEnabled = config.services.desktopManager.gnome.enable or false;
+  appindicatorUuid = pkgs.gnomeExtensions.appindicator.extensionUuid;
   hostConfigurationDirectory = builtins.dirOf cfg.hostConfiguration;
   hostFlakeDirectory =
     if cfg.hostFlake == null then null else builtins.head (lib.splitString "#" cfg.hostFlake);
@@ -33,8 +34,11 @@ let
         "--managed-module ${lib.escapeShellArg managedModule}"
       ];
   configuredDesktops =
-    lib.optional (config.services.desktopManager.gnome.enable or false) "gnome"
-    ++ lib.optional (config.programs.hyprland.enable or false) "hyprland";
+    lib.optional gnomeEnabled "gnome"
+    ++ lib.optional (config.services.desktopManager.plasma6.enable or false) "kde_plasma"
+    ++ lib.optional (config.programs.hyprland.enable or false) "hyprland"
+    ++ lib.optional (config.services.xserver.desktopManager.xfce.enable or false) "xfce"
+    ++ lib.optional (config.services.xserver.desktopManager.lxqt.enable or false) "lxqt";
   installedSystemPackages = lib.sort builtins.lessThan (
     lib.unique (map lib.getName config.environment.systemPackages)
   );
@@ -49,7 +53,7 @@ in
       type = lib.types.bool;
       default = true;
       description = ''
-        Install Peasy's GTK application and GNOME/Hyprland integration. Disable
+        Install Peasy's GTK application and graphical-session integration. Disable
         this on minimal or server systems to select the lean peasy-core package
         and omit all desktop/session service defaults.
       '';
@@ -75,7 +79,7 @@ in
       type = lib.types.bool;
       default = cfg.desktop.enable;
       defaultText = lib.literalExpression "config.services.peasy.desktop.enable";
-      description = "Enable the Peasy mint-circle launcher in the GNOME top panel.";
+      description = "Enable Peasy's generic StatusNotifier tray in compatible graphical sessions.";
     };
 
     hyprland.enable = lib.mkOption {
@@ -83,9 +87,9 @@ in
       default = cfg.desktop.enable;
       defaultText = lib.literalExpression "config.services.peasy.desktop.enable";
       description = ''
-        Enable Peasy's Hyprland session integration. This installs an XDG
-        autostart entry for the StatusNotifier tray launcher; a compatible bar
-        such as Waybar must provide a tray host. Typed live control uses the
+        Enable Peasy's Hyprland session integration defaults. The generic
+        tray.enable option controls tray startup; a compatible bar such as
+        Waybar must provide a tray host. Typed live control uses the
         hyprctl belonging to the running Hyprland session.
       '';
     };
@@ -233,7 +237,11 @@ in
           </action>
         </policyconfig>
       '')
-    ];
+    ]
+    ++ lib.optional (cfg.tray.enable && gnomeEnabled) pkgs.gnomeExtensions.appindicator
+    ++ lib.optional (
+      cfg.desktop.enable && config.services.desktopManager.plasma6.enable
+    ) pkgs.kdePackages.kconfig;
     environment.etc."peasy/appimage-policy.json".text = builtins.toJSON cfg.appImages.trustedHashes;
 
     systemd.user.services.peasy-polkit-agent = lib.mkIf cfg.hyprland.authenticationAgent.enable {
@@ -292,22 +300,25 @@ in
     hardware.bluetooth.enable = lib.mkIf cfg.desktop.enable (lib.mkDefault true);
     services.ollama.enable = lib.mkIf cfg.ollama.enable true;
 
-    services.desktopManager.gnome = lib.mkIf cfg.tray.enable {
+    services.desktopManager.gnome = lib.mkIf (cfg.tray.enable && gnomeEnabled) {
       extraGSettingsOverridePackages = [ pkgs.gnome-shell ];
       extraGSettingsOverrides = ''
         [org.gnome.shell]
-        enabled-extensions=['${peasyExtensionUuid}']
+        enabled-extensions=['${appindicatorUuid}']
       '';
     };
 
-    environment.etc."xdg/autostart/peasy-panel.desktop" = lib.mkIf cfg.tray.enable {
+    environment.etc."xdg/autostart/peasy-panel.desktop" = lib.mkIf (cfg.tray.enable && gnomeEnabled) {
       mode = "0444";
       text = ''
         [Desktop Entry]
         Type=Application
-        Name=Enable Peasy panel
-        Comment=Enable the Peasy GNOME panel launcher
-        Exec=${pkgs.gnome-shell}/bin/gnome-extensions enable ${peasyExtensionUuid}
+        Name=Enable StatusNotifier support
+        Comment=Enable GNOME compatibility for the generic Peasy tray
+        Exec=${pkgs.writeShellScript "peasy-gnome-tray-compatibility" ''
+          ${pkgs.gnome-shell}/bin/gnome-extensions disable peasy@peasy-nixos.github.io || true
+          exec ${pkgs.gnome-shell}/bin/gnome-extensions enable ${appindicatorUuid}
+        ''}
         Terminal=false
         OnlyShowIn=GNOME;
         X-GNOME-Autostart-enabled=true
@@ -315,17 +326,15 @@ in
       '';
     };
 
-    environment.etc."xdg/autostart/peasy-hyprland.desktop" = lib.mkIf cfg.hyprland.enable {
+    environment.etc."xdg/autostart/peasy-tray.desktop" = lib.mkIf cfg.tray.enable {
       mode = "0444";
       text = ''
         [Desktop Entry]
         Type=Application
         Name=Peasy
-        Comment=Open Peasy from a Hyprland bar
+        Comment=Open Peasy from your desktop tray
         Exec=${package}/bin/peasy-tray --ui ${package}/bin/peasy-ui
         Terminal=false
-        OnlyShowIn=Hyprland;
-        X-GNOME-Autostart-enabled=false
         NoDisplay=true
       '';
     };
@@ -334,8 +343,10 @@ in
     # session. The service is unprivileged and the CLI accepts only the closed
     # ThemeSettings JSON written into /etc by Peasy's generated module.
     systemd.user.services.peasy-theme-sync = lib.mkIf cfg.desktop.enable {
-      description = "Synchronize the active Peasy GNOME theme";
-      wantedBy = [ "default.target" ];
+      description = "Synchronize Peasy appearance for the current desktop";
+      wantedBy = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
+      after = [ "graphical-session-pre.target" ];
       unitConfig.ConditionPathExists = "/etc/peasy/theme.json";
       serviceConfig = {
         Type = "oneshot";
@@ -348,7 +359,8 @@ in
     # Keep live appearance aligned when switching or rolling back between
     # Peasy-generated NixOS generations without requiring another login.
     systemd.user.paths.peasy-theme-sync = lib.mkIf cfg.desktop.enable {
-      wantedBy = [ "default.target" ];
+      wantedBy = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
       pathConfig.PathChanged = "/etc/peasy/theme.json";
     };
 

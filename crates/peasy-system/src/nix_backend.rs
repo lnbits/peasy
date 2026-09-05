@@ -503,7 +503,7 @@ in builtins.filter isAvailable names"#
         let before = self.current_state()?;
         let after = before.with_theme(&theme)?;
         if before == after {
-            bail!("that GNOME theme is already selected");
+            bail!("that appearance is already selected");
         }
         let mut details = Vec::new();
         if let Some(color) = theme.accent_color {
@@ -516,7 +516,7 @@ in builtins.filter isAvailable names"#
             diff: module_diff(&before, &after)?,
             before,
             change: ProposalChange::Theme { theme },
-            title: format!("Change GNOME theme to {}", details.join(" and ")),
+            title: format!("Change appearance to {}", details.join(" and ")),
         })
     }
 
@@ -560,7 +560,7 @@ in builtins.filter isAvailable names"#
                 let proposed = previous.with_theme(theme)?;
                 (
                     proposed,
-                    "GNOME theme saved in the active NixOS generation.".to_owned(),
+                    "Appearance saved in the active NixOS generation.".to_owned(),
                 )
             }
             ProposalChange::AppImage { operation, package } => {
@@ -1089,7 +1089,7 @@ mod tests {
         assert_eq!(preview.before, PackageState::default());
         assert_eq!(
             preview.title,
-            "Change GNOME theme to blue accent and dark mode"
+            "Change appearance to blue accent and dark mode"
         );
         assert!(preview.diff.iter().any(|line| {
             line.kind == peasy_core::DiffKind::Add && line.text.contains("accent-color = \"blue\"")

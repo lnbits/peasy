@@ -1,0 +1,22 @@
+--- a/modules/nixos/main.py
++++ b/modules/nixos/main.py
+@@ -33,2 +33,3 @@
+       ./hardware-configuration.nix
++      ./peasy.nix
+     ];
+@@ -1047,2 +1048,15 @@
++    # Peasy distribution integration: prepare the declarative target source
++    # before the normal, single nixos-install invocation. Fail closed.
++    try:
++        subprocess.check_output(
++            ["pkexec", "@peasyTargetInstaller@", root_mount_point],
++            stderr=subprocess.STDOUT,
++        )
++    except subprocess.CalledProcessError as e:
++        return (
++            _("Peasy target installation failed"),
++            (e.output or b"").decode("utf-8", errors="replace"),
++        )
++
+     # Write the configuration.nix file
+     libcalamares.utils.host_env_process_output(["cp", "/dev/stdin", config], None, cfg)

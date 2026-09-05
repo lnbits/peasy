@@ -1,0 +1,152 @@
+name: NixOS ISO Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iso-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-tests:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check release packaging and publication safeguards
+        run: python3 -B -m unittest discover -s scripts/tests -v
+
+  build:
+    needs: release-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [gnome, plasma]
+    env:
+      DESKTOP: ${{ matrix.desktop }}
+      EVENT_NAME: ${{ github.event_name }}
+      REF_TYPE: ${{ github.ref_type }}
+      REF_NAME: ${{ github.ref_name }}
+      COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@b85815f71a6de0ddee80b8a80a98d43f4bcc66c7 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.34.7/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            max-jobs = 2
+            cores = 2
+      - uses: DeterminateSystems/magic-nix-cache-action@565684385bcd71bad329742eefe8d12f2e765b39 # v13
+        with:
+          source-revision: 5a7f052c8f0c6511bbef3570eeed4d39242171ef
+          use-gha-cache: enabled
+          use-flakehub: disabled
+          diagnostic-endpoint: ""
+      - name: Verify target persistence before any release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix eval --json .#lib.isoReleaseStatus > iso-status.json
+          cat iso-status.json
+          if [[ "$EVENT_NAME" == push && "$REF_TYPE" == tag ]]; then
+            jq -e '.releaseReady == true and .installedTargetHasPeasy == true and .installedBootVerified == true' iso-status.json || {
+              echo '::error::Release blocked; see iso-status.json for installation validation and distribution requirements.'
+              exit 1
+            }
+          fi
+      - name: Make room on this disposable GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only unused, preinstalled SDKs on the fresh hosted runner; never run on a workstation.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /nix/store
+          available=$(df --output=avail -B1 /nix/store | tail -1)
+          (( available >= 45 * 1024 * 1024 * 1024 )) || {
+            echo '::error::At least 45 GiB free space is required for the ISO and installed-disk tests; use a larger runner.'
+            exit 1
+          }
+      - name: Static checks and this desktop's runtime regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix flake check --no-build
+          nix build --no-link \
+            .#checks.x86_64-linux.formatting \
+            .#checks.x86_64-linux.desktop-config \
+            .#checks.x86_64-linux.iso-config \
+            .#checks.x86_64-linux.installer-target \
+            .#checks.x86_64-linux.wasm-imports \
+            ".#checks.x86_64-linux.${DESKTOP}-tray" \
+            ".#checks.x86_64-linux.installed-${DESKTOP}"
+      - name: Build ISO and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build ".#iso-${DESKTOP}" --out-link result-iso
+          mapfile -t images < <(find -L result-iso/iso -maxdepth 1 -type f -name '*.iso')
+          [[ ${#images[@]} == 1 ]]
+          if [[ "$EVENT_NAME" == push && "$REF_TYPE" == tag ]]; then
+            [[ "$REF_NAME" =~ ^v[A-Za-z0-9._-]+$ ]]
+            version="$REF_NAME"
+          else
+            version="experimental-${COMMIT:0:12}"
+          fi
+          filename="peasy-nixos-${version}-${DESKTOP}-x86_64.iso"
+          mkdir -p artifacts
+          cp -- "${images[0]}" "artifacts/$filename"
+          cp iso-status.json "artifacts/${DESKTOP}-iso-status.json"
+          cd artifacts
+          sha256sum "$filename" > "$filename.sha256"
+          sha256sum --check "$filename.sha256"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: peasy-iso-${{ matrix.desktop }}-${{ github.sha }}
+          path: artifacts/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: peasy-iso-*-${{ github.sha }}
+          path: artifacts
+          merge-multiple: true
+      - name: Package, verify and publish the complete release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release_isos.py \
+            --artifacts artifacts --tag "$TAG" --commit "$COMMIT"

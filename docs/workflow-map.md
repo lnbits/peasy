@@ -55,7 +55,10 @@ Peasy's request boundary, not a guarantee about a provider's internal handling.
 
 ## How an approved change reaches NixOS
 
-This path handles package/AppImage install or removal and saved GNOME themes.
+This path handles package/AppImage install or removal and saved desktop appearance.
+Trusted adapters apply only closed colour/mode values to GNOME or Plasma;
+capabilities vary by desktop. ISO wallpaper defaults are separate build-time
+configuration, not an AI wallpaper/file-editing capability.
 
 ```mermaid
 flowchart TD

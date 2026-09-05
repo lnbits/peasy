@@ -9,4 +9,5 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+peasy-core = { path = "../peasy-core" }
 ksni = { version = "0.3.6", features = ["blocking"] }

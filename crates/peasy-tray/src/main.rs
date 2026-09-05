@@ -29,6 +29,14 @@ impl PeasyTray {
 }
 
 impl ksni::Tray for PeasyTray {
+    fn watcher_offline(&self, _reason: ksni::OfflineReason) -> bool {
+        eprintln!(
+            "Peasy: no StatusNotifier tray host is available yet; you can still open Peasy from the application menu."
+        );
+        // Remain idle and reconnect when the panel starts; never install a host.
+        true
+    }
+
     fn id(&self) -> String {
         "io.github.peasy.Peasy".into()
     }
@@ -92,7 +100,17 @@ fn mint_circle(size: i32) -> ksni::Icon {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    if let Some(program) = args.gnome_extensions {
+    let current = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let session = std::env::var("XDG_SESSION_DESKTOP").ok();
+    let legacy = std::env::var("DESKTOP_SESSION").ok();
+    let desktop = peasy_core::DesktopEnvironment::detect(
+        [current.as_deref(), session.as_deref(), legacy.as_deref()],
+        false,
+        true,
+    );
+    if desktop == peasy_core::DesktopEnvironment::Gnome
+        && let Some(program) = args.gnome_extensions
+    {
         // A fixed, declarative session integration step. User/model text is never involved.
         let _ = Command::new(program)
             .args(["enable", APPINDICATOR_UUID])

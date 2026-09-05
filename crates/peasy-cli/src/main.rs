@@ -94,9 +94,8 @@ fn main() -> Result<()> {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/run/current-system/sw/bin/gsettings"));
         if let Err(error) = sync_live_theme_from_file(&args.theme_state, &gsettings) {
-            // Best-effort on non-GNOME systems and during the one-time
-            // migration away from locked Peasy theme keys.
-            eprintln!("Peasy could not synchronize the live GNOME theme: {error:#}");
+            eprintln!("Peasy could not synchronize this desktop's appearance: {error:#}");
+            return Err(error);
         }
         return Ok(());
     }

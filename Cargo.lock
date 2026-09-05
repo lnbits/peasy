@@ -1729,6 +1729,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ksni",
+ "peasy-core",
 ]
 
 [[package]]

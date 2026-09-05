@@ -40,13 +40,17 @@ The optional import lets the first rebuild succeed before the managed file
 exists. Peasy creates `.peasy/peasy-managed.nix` and uses it as its only durable
 state.
 
-On GNOME, log out and back in after installing or upgrading so GNOME Shell
-loads the bundled panel extension. On Hyprland, ensure the bar has a
-StatusNotifier tray, such as Waybar's `tray` module.
+Log out and back in so the generic XDG autostart entry starts Peasy's single
+StatusNotifierItem tray. GNOME gets the AppIndicator compatibility extension
+only when GNOME is configured; the old Peasy panel extension is disabled on
+upgrade to avoid duplicate launchers. Plasma uses its built-in tray. On Hyprland,
+ensure the bar has a StatusNotifier tray, such as Waybar's `tray` module, and that
+the session runs XDG autostart entries. Peasy remains available in the application
+menu when there is no tray host. See [desktop compatibility](desktop-compatibility.md).
 
 The user must belong to `wheel`. Every system change now requires administrator
-authentication through Polkit after the diff is accepted. GNOME provides its
-own authentication dialog. For NixOS-configured Hyprland, Peasy enables an agent
+authentication through Polkit after the diff is accepted. GNOME and Plasma provide
+their own authentication dialogs. For NixOS-configured Hyprland, Peasy enables an agent
 in the systemd graphical session. If you already run one, set
 `services.peasy.hyprland.authenticationAgent.enable = false`. Sessions without
 a systemd graphical target must start their own agent. Without one, use `peasy`

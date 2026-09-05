@@ -41,6 +41,9 @@ rustPlatform.buildRustPackage {
 
   # Offline provider tests still construct a TLS client, which requires roots.
   SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
+  # Calendar timestamp tests run before installed wrappers exist, including in
+  # the pure build sandbox where /run/current-system is deliberately absent.
+  PEASY_DATE = "${coreutils}/bin/date";
 
   nativeBuildInputs = [
     makeWrapper
@@ -74,6 +77,11 @@ rustPlatform.buildRustPackage {
     "--exclude"
     "peasy-tray"
   ];
+
+  # Tests create executable mock tools while other tests launch subprocesses.
+  # Run test cases serially to avoid transient ETXTBSY from concurrently
+  # inherited writable descriptors. Compilation remains parallel.
+  checkFlags = [ "--test-threads=1" ];
 
   preBuild = ''
     cargo build --release --locked -p peasy-engine --target wasm32-unknown-unknown
@@ -146,7 +154,7 @@ rustPlatform.buildRustPackage {
   meta = {
     description =
       if withGui then
-        "Typed natural-language assistant for NixOS, GNOME, and Hyprland"
+        "Typed natural-language assistant for NixOS and compatible Linux desktops"
       else
         "Headless typed natural-language assistant and service for NixOS";
     homepage = "https://github.com/lnbits/peasy";

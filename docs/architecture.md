@@ -3,7 +3,7 @@
 Start with the [visual workflow and AI access map](workflow-map.md) for a
 diagram-led overview of the trust boundaries.
 
-Peasy exposes a deliberately closed set of typed NixOS, GNOME, and Hyprland
+Peasy exposes a deliberately closed set of typed NixOS and desktop
 capabilities.
 It is not a shell, an agent framework, or an arbitrary NixOS configuration
 editor. Package and appearance changes use a declarative system-generation
@@ -31,10 +31,10 @@ person
   |                         |
   |          nix search / nix eval / fixed NixOS build
   |
-  +-- GNOME/Hyprland mint launcher ---------------------------> peasy-ui
+  +-- generic StatusNotifier mint launcher ------------------> peasy-ui
 ```
 
-`peasy`, `peasy-ui`, and the panel extension are unprivileged session programs.
+`peasy`, `peasy-ui`, and `peasy-tray` are unprivileged session programs.
 `peasy-system` is a system service. It has no model-provider client and never
 receives an API key, Wi-Fi password, calendar event, or Bluetooth request.
 
@@ -47,14 +47,16 @@ in `peasy-system`.
 ## Desktop and headless packages
 
 The full `peasy` derivation adds the GTK/libadwaita UI, tray helper, desktop
-metadata, GNOME Shell extension, and wrappers for desktop integration tools.
+metadata, legacy GNOME extension assets, and wrappers for desktop integration tools.
+The legacy extension is no longer enabled: GNOME uses the standard AppIndicator
+host for the same SNI tray used by Plasma and other compatible desktops.
 The separate `peasy-core` derivation builds and installs only the CLI,
 `peasy-system`, and `peasy-engine.wasm`. Its source and build exclude the UI and
 tray crates as well as all graphical assets, and its runtime wrapper references
 only Nix and coreutils.
 
 `services.peasy.desktop.enable = false` selects `peasy-core`, defaults the tray
-off, omits GNOME user units and autostart data, and does not enable
+off, omits graphical user units and autostart data, and does not enable
 NetworkManager or Bluetooth. Both variants use the identical typed IPC,
 zero-import policy engine, proposal validation, system sandbox, build, and
 activation paths.
@@ -73,7 +75,8 @@ The constructed boundary includes the credential-guarded request, current
 local time, Peasy's canonical generated managed module, at most one recent
 validated package, and a locally generated system profile. The profile contains
 only the active NixOS release and Nix system, runtime/configured desktop enums,
-desktop package version where available, desktop/headless Peasy variant, and a
+desktop package version where available, closed appearance-capability booleans,
+desktop/headless Peasy variant, and a
 bounded list of package names evaluated into the active generation. Package
 search is a bounded agent loop: each search returns only candidate attributes,
 display names, versions, and descriptions to the model so it can select a real
@@ -86,7 +89,7 @@ rejected before they reach the Wasm engine or IPC. The known actions cover
 package search/check/install/remove, theme listing/change, Wi-Fi listing/connect,
 Bluetooth connect, calendar-event creation, explanation, and cancellation.
 
-Read-only decisions can list the static supported GNOME appearance values, ask
+Read-only decisions can list the static appearance values supported by this desktop, ask
 NetworkManager locally for visible SSIDs, or request a real Nixpkgs search. The
 Wi-Fi scan itself is never added to a later model request. The recent-package
 slot permits a follow-up such as “install it”, but the Wasm engine still accepts
@@ -177,12 +180,13 @@ is `null` (review without preapproval); an empty map disables external installs.
 `.peasy/peasy-managed.nix`, beside the host configuration, is Peasy's only
 durable state. It contains a canonical embedded record with a sorted,
 duplicate-free package attribute list, validated pinned external AppImage
-records, and optional typed GNOME appearance enums. The same file is the NixOS
+records, and optional typed desktop appearance enums. The same file is the NixOS
 module that implements that state. There is no parallel mutable database.
 
 External records render to `fetchurl` plus `appimageTools.wrapType2` and a fixed
 desktop entry; no repository script or AppImage is executed during discovery
-or evaluation. Appearance is a declarative dconf default. Each generation also
+or evaluation. GNOME appearance adds declarative dconf defaults only when GNOME
+is configured; Plasma never receives GNOME dconf settings. Each generation also
 exposes the complete record as `/etc/peasy/state.json` and its appearance subset
 as `/etc/peasy/theme.json`. The unprivileged client applies only those closed
 appearance values to the live session. A user path unit re-synchronizes them at
@@ -275,17 +279,19 @@ Live actions execute only after their typed preview is confirmed:
 These actions do not claim NixOS rollback semantics. NetworkManager, BlueZ, and
 the calendar application retain their normal authorization and undo behavior.
 
-## GNOME integration
+## Desktop integration
 
-A native GNOME Shell `PanelMenu` contributes only a compact mint-circle
-launcher. Selecting it starts the fixed `peasy-ui` executable. Request entry,
+One `ksni` StatusNotifierItem contributes a compact mint-circle launcher through
+the session's tray host. Selecting it starts the fixed `peasy-ui` executable. Request entry,
 progress, package choices, diff review, confirmation, Wi-Fi password entry, and
 provider settings all remain inside the unprivileged GTK4/libadwaita process;
-the shell extension neither receives secrets nor participates in proposals.
+the tray neither receives secrets nor participates in proposals.
 
-The extension is installed in the package's standard GNOME Shell extension
-directory. The NixOS module seeds it in `enabled-extensions` and installs a fixed
-login-time `gnome-extensions enable` action to cover existing profiles.
+The generic XDG autostart entry has no desktop-name restriction. GNOME alone gets
+AppIndicator compatibility plus a fixed login-time enable step. Plasma uses its
+own host; Hyprland uses a bar's tray. Without a host the tray waits without busy
+polling and the application-menu launcher still works. No desktop is installed
+merely to provide a tray. See [desktop capabilities and adapters](desktop-compatibility.md).
 
 The settings view exports a private, portable system directory through a native
 GTK folder dialog. It contains the administrator's complete configuration tree,
