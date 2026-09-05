@@ -2,7 +2,7 @@
   <a href="https://askpeasy.com">
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
   </a>
-  <small><i>(beta)</i>
+![release](https://img.shields.io/badge/release-beta-green?style=flat)
 </h1>
 
 Tell your NixOS computer what you want in plain language.
