@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 pub const REQUEST_FILE: &str = "activation-request.json";
 pub const RESULT_FILE: &str = "activation-result.json";
@@ -92,7 +92,7 @@ fn activate(runtime_dir: &Path, nix_env: &Path) -> Result<()> {
     if !profile.status.success() {
         bail!(
             "could not install system generation: {}",
-            stderr(&profile.stderr)
+            command_failure(&profile)
         );
     }
     let activation = trusted_command(&switch)
@@ -100,7 +100,7 @@ fn activate(runtime_dir: &Path, nix_env: &Path) -> Result<()> {
         .output()
         .context("activating NixOS system generation")?;
     if !activation.status.success() {
-        bail!("system activation failed: {}", stderr(&activation.stderr));
+        bail!("system activation failed: {}", command_failure(&activation));
     }
     Ok(())
 }
@@ -130,20 +130,75 @@ fn write_private_json(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-fn stderr(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .take(12)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .chars()
-        .take(1600)
-        .collect()
+fn command_failure(output: &Output) -> String {
+    let stderr = output_tail(&output.stderr);
+    let details = if stderr.trim().is_empty() {
+        output_tail(&output.stdout)
+    } else {
+        stderr
+    };
+    if details.trim().is_empty() {
+        output.status.to_string()
+    } else {
+        format!("{}\n{details}", output.status)
+    }
+}
+
+fn output_tail(bytes: &[u8]) -> String {
+    // Activation prints progress first and the failed units/cause last. Keep
+    // the end, not the preamble, while bounding the error returned over IPC.
+    let text = String::from_utf8_lossy(bytes);
+    let mut lines: Vec<_> = text.lines().rev().take(32).collect();
+    lines.reverse();
+    let tail = lines.join("\n");
+    let mut chars: Vec<_> = tail.chars().rev().take(4096).collect();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn activation_error_keeps_final_cause_and_exit_status() {
+        let output = Output {
+            status: std::process::ExitStatus::from_raw(4 << 8),
+            stdout: Vec::new(),
+            stderr: format!("{}failed unit: example.service\n", "progress\n".repeat(100))
+                .into_bytes(),
+        };
+        let message = command_failure(&output);
+        assert!(message.starts_with("exit status: 4\n"));
+        assert!(message.ends_with("failed unit: example.service"));
+        assert_eq!(message.lines().count(), 33);
+    }
+
+    #[test]
+    fn activation_error_tail_is_bounded_and_unicode_safe() {
+        let text = format!("{}final cause", "é".repeat(10_000));
+        let tail = output_tail(text.as_bytes());
+        assert_eq!(tail.chars().count(), 4096);
+        assert!(tail.ends_with("final cause"));
+        assert!(!tail.contains('\u{fffd}'));
+        assert!(output_tail(b"invalid: \xff").contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn activation_error_reports_signals_and_stdout_fallback() {
+        let mut output = Output {
+            status: std::process::ExitStatus::from_raw(9),
+            stdout: b"stdout-only cause".to_vec(),
+            stderr: b"\n".to_vec(),
+        };
+        let message = command_failure(&output);
+        assert!(message.contains("signal"));
+        assert!(message.contains('9'));
+        assert!(message.ends_with("stdout-only cause"));
+        output.stdout.clear();
+        assert_eq!(command_failure(&output), output.status.to_string());
+    }
 
     #[test]
     fn a_new_request_removes_any_stale_activation_result() {

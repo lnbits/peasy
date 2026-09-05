@@ -19,6 +19,11 @@ in
     pkgs.python3
   ];
   environment.sessionVariables.GSK_RENDERER = "cairo";
+  # QEMU provides eth0 with NAT/DHCP and eth1 on the test-only VLAN without a
+  # DHCP server. The installed disk does not inherit qemu-vm.nix's static VLAN
+  # configuration. Keep NetworkManager on eth0, but do not let its automatic
+  # eth1 profile time out and fail an otherwise successful system activation.
+  networking.networkmanager.unmanaged = [ "interface-name:eth1" ];
   nix.settings.substituters = lib.mkForce [ ];
   system.extraDependencies = map builtins.storePath data.buildTools;
   services.desktopManager.gnome.extraGSettingsOverrides = lib.mkIf data.gnome ''

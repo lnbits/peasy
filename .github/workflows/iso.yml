@@ -93,9 +93,29 @@ jobs:
             .#checks.x86_64-linux.desktop-config \
             .#checks.x86_64-linux.iso-config \
             .#checks.x86_64-linux.installer-target \
-            .#checks.x86_64-linux.wasm-imports \
+            .#checks.x86_64-linux.wasm-imports
+          # Each test boots a 4–6 GiB VM. Run them sequentially on each runner;
+          # GNOME and Plasma still build on separate runners in parallel.
+          nix build --no-link --max-jobs 1 \
             ".#checks.x86_64-linux.${DESKTOP}-tray" \
             ".#checks.x86_64-linux.installed-${DESKTOP}"
+      - name: Preserve VM diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p diagnostics
+          for check in "${DESKTOP}-tray" "installed-${DESKTOP}"; do
+            drv=$(nix eval --raw ".#checks.x86_64-linux.${check}.drvPath") || continue
+            nix log "$drv" > "diagnostics/${check}.log" 2>&1 || true
+          done
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: peasy-diagnostics-${{ matrix.desktop }}-${{ github.sha }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Build ISO and checksums
         shell: bash
         run: |

@@ -183,6 +183,23 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     import datetime as dt
 
+    def package_action(operation):
+        try:
+            target.succeed(f"python /etc/nixos/test-package.py {operation}", timeout=dt.timedelta(minutes=10))
+        except Exception:
+            # Test-only machines contain no provider credentials. Preserve the
+            # actual failed units and activation journal before QEMU cleanup.
+            for command in [
+                "systemctl --failed --no-pager",
+                "journalctl -b -u peasy-activate.service -u peasy-system.service --no-pager -n 100",
+                "journalctl -b -p warning --no-pager -n 100",
+            ]:
+                try:
+                    print(command, target.execute(command))
+                except Exception as diagnostic_error:
+                    print("Could not collect diagnostic:", diagnostic_error)
+            raise
+
     installer.start()
     installer.wait_for_unit("multi-user.target")
     installer.succeed("udevadm settle")
@@ -217,6 +234,11 @@ pkgs.testers.runNixOSTest {
     target.start()
     target.wait_for_unit("graphical.target")
     target.wait_for_unit("peasy-system.service")
+    # GNOME normally pulls this in itself; explicitly start it for desktops
+    # that do not otherwise need network-online.target during login.
+    target.succeed("systemctl start NetworkManager-wait-online.service", timeout=dt.timedelta(minutes=2))
+    target.wait_for_unit("NetworkManager-wait-online.service")
+    target.succeed("LC_ALL=C nmcli -g GENERAL.STATE device show eth1 | grep -q unmanaged")
     target.wait_until_succeeds("pgrep -u peasytest -x peasy-tray", timeout=dt.timedelta(minutes=3))
     target.succeed("test -x /run/current-system/sw/bin/peasy-ui; test -f /etc/nixos/peasy.nix")
     target.succeed("pkaction --action-id io.github.peasy.apply --verbose | grep auth_admin")
@@ -226,12 +248,14 @@ pkgs.testers.runNixOSTest {
     target.fail("id nixos")
     target.fail("test -e /etc/peasy/ISO-README.txt")
     target.fail("test -e /home/peasytest/.config/peasy/openai-api-key")
-    target.succeed("python /etc/nixos/test-package.py install", timeout=dt.timedelta(minutes=10))
+    package_action("install")
+    target.succeed("systemctl is-active NetworkManager-wait-online.service")
     target.succeed("/run/current-system/sw/bin/hello")
     target.succeed("test -f /etc/nixos/.peasy/peasy-managed.nix")
     target.succeed("nixos-rebuild build --no-flake", timeout=dt.timedelta(minutes=10))
     target.succeed("test -x result/sw/bin/hello")
-    target.succeed("python /etc/nixos/test-package.py remove", timeout=dt.timedelta(minutes=10))
+    package_action("remove")
+    target.succeed("systemctl is-active NetworkManager-wait-online.service")
     target.fail("test -e /run/current-system/sw/bin/hello")
     target.screenshot("peasy-installed-${desktop}")
   '';
