@@ -1,7 +1,7 @@
 # How Peasy, AI, Wasm and NixOS fit together
 
 **The AI suggests an action. Peasy validates it. You approve changes. Native
-Peasy code—not the AI and not Wasm—performs the permitted operation.**
+Peasy code, not the AI and not Wasm, performs the permitted operation.**
 
 The diagrams use Mermaid, which GitHub renders directly in Markdown. Arrows
 show data or control flow, not unrestricted access between components.
