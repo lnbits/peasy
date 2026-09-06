@@ -26,11 +26,21 @@ class GitHub:
         self.annotated = False
         self.fail_after = None
         self.move_after_upload = False
+        self.hide_created_release = False
 
     def __call__(self, *args):
         self.calls.append(args)
         if args[0] == "api":
             endpoint = args[1]
+            if "--method" in args:
+                assert endpoint == f"repos/{REPO}/releases"
+                assert args[args.index("--method") + 1] == "POST"
+                request = json.loads(Path(args[args.index("--input") + 1]).read_text())
+                assert request["draft"] is True
+                assert request["tag_name"] == TAG and request["target_commitish"] == COMMIT
+                self.release = {"id": 7, "tag_name": request["tag_name"],
+                                "draft": request["draft"], "body": request["body"]}
+                return json.dumps(self.release)
             if "/git/ref/tags/" in endpoint:
                 return json.dumps({"object": {"type": "tag" if self.annotated else "commit", "sha": self.commit}})
             if "/git/tags/" in endpoint:
@@ -38,14 +48,9 @@ class GitHub:
             if endpoint.endswith("/assets"):
                 return json.dumps([self.assets])
             if endpoint.endswith("/releases"):
-                return json.dumps([[self.release] if self.release else []])
+                return json.dumps([[self.release] if self.release and not self.hide_created_release else []])
             return json.dumps(self.release)
-        if args[:2] == ("release", "create"):
-            assert "--draft" in args and "--verify-tag" in args
-            assert args[args.index("--target") + 1] == COMMIT
-            self.release = {"id": 7, "tag_name": TAG, "draft": True,
-                            "body": Path(args[args.index("--notes-file") + 1]).read_text()}
-        elif args[:2] == ("release", "upload"):
+        if args[:2] == ("release", "upload"):
             assert self.release["draft"] is True
             assert "--clobber" not in args
             if self.fail_upload or self.fail_after == len(self.assets):
@@ -162,6 +167,51 @@ class Releases(unittest.TestCase):
         self.publish(assets, github)
         self.assertIs(github.release["draft"], False)
         self.assertEqual(len(github.assets), len(assets))
+
+    def test_created_draft_need_not_be_visible_in_release_listing(self):
+        assets = self.prepare()
+        github = GitHub()
+        github.hide_created_release = True
+        self.publish(assets, github)
+        self.assertIs(github.release["draft"], False)
+        self.assertEqual(len(github.assets), len(assets))
+        listings = [call for call in github.calls
+                    if call[:2] == ("api", f"repos/{REPO}/releases") and "--paginate" in call]
+        self.assertEqual(len(listings), 1)
+
+    def test_invalid_creation_response_never_uploads_or_publishes(self):
+        assets = self.prepare()
+        for field, value in (("id", None), ("tag_name", "v-other"),
+                             ("body", "unrelated"), ("draft", False)):
+            with self.subTest(field=field):
+                github = GitHub()
+
+                def invalid_response(*args):
+                    response = github(*args)
+                    if "--method" in args:
+                        data = json.loads(response)
+                        data[field] = value
+                        return json.dumps(data)
+                    return response
+
+                with self.assertRaises(ValueError):
+                    self.publish(assets, invalid_response)
+                self.assertEqual(github.assets, [])
+                self.assertFalse(any(call[0] == "release" for call in github.calls))
+
+    def test_creation_failure_does_not_upload_or_publish(self):
+        assets = self.prepare()
+        github = GitHub()
+
+        def failing(*args):
+            if "--method" in args:
+                raise subprocess.CalledProcessError(1, "gh")
+            return github(*args)
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.publish(assets, failing)
+        self.assertIsNone(github.release)
+        self.assertEqual(github.assets, [])
 
     def test_tag_moved_during_upload_never_publishes(self):
         assets = self.prepare()

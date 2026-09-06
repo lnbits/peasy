@@ -107,8 +107,14 @@ def publish(assets, tag, commit, repo, output, run=gh):
         return matches[0] if matches else None
 
     def validate(release, require_draft=True):
-        if not release or (require_draft and release.get("draft") is not True) or marker not in (release.get("body") or ""):
-            raise ValueError("Refusing to modify a published release or an unrelated draft")
+        if not isinstance(release, dict) or not release:
+            raise ValueError("GitHub did not return a release; retry the failed publish job")
+        if type(release.get("id")) is not int or release["id"] <= 0:
+            raise ValueError("GitHub returned an invalid release ID")
+        if release.get("tag_name") != tag or marker not in (release.get("body") or ""):
+            raise ValueError("Refusing to modify a release without the expected tag and commit marker")
+        if type(release.get("draft")) is not bool or (require_draft and not release["draft"]):
+            raise ValueError("Refusing to modify a release that is not a private draft")
 
     verify_tag()
     release = find_release()  # API/auth errors are NOT treated as absence.
@@ -146,9 +152,16 @@ tagged source. GitHub also provides the tagged source archives.
 If uploads fail, the workflow keeps an incomplete draft private. Rerun the failed
 job to resume verified uploads; do not manually publish an incomplete draft.
 """)
-        run("release", "create", tag, "--repo", repo, "--draft", "--verify-tag",
-            "--target", commit, "--title", f"Peasy {tag}", "--notes-file", str(notes))
-        release = find_release()
+        request = output / "release-request.json"
+        request.write_text(json.dumps({
+            "tag_name": tag, "target_commitish": commit, "name": f"Peasy {tag}",
+            "body": notes.read_text(), "draft": True,
+        }))
+        verify_tag()
+        # Creation returns the draft and its ID. Do not immediately rediscover
+        # it through the release listing, which may not show the new draft yet.
+        release = json.loads(run("api", endpoint, "--method", "POST", "--input", str(request)))
+        validate(release)
     validate(release, require_draft=False)
     release_endpoint = f"{endpoint}/{release['id']}"
     pages = json.loads(run("api", f"{release_endpoint}/assets", "--paginate", "--slurp"))
