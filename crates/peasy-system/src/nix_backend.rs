@@ -160,6 +160,8 @@ impl NixBackend {
         expected: &PackageState,
         proposal_id: &str,
     ) -> Result<ApplyResult> {
+        let cancellation = peasy_core::cancellation::Cancellation::current();
+        cancellation.check()?;
         let _guard = self
             .apply_lock
             .try_lock()
@@ -252,6 +254,13 @@ impl NixBackend {
             bail!("proposal staging directory already exists");
         }
         fs::create_dir_all(&stage)?;
+        struct StagingCleanup<'a>(&'a Path);
+        impl Drop for StagingCleanup<'_> {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(self.0);
+            }
+        }
+        let _staging_cleanup = StagingCleanup(&stage);
         fs::set_permissions(&stage, fs::Permissions::from_mode(0o700))?;
         fs::write(
             stage.join("peasy-managed.nix"),
@@ -271,6 +280,7 @@ impl NixBackend {
             RebuildTarget::Flake { .. } => None,
         };
 
+        cancellation.check()?;
         state::write_managed_atomic(&self.config.managed_module, &proposed)?;
         let build_result = match &self.config.rebuild_target {
             RebuildTarget::Configuration { .. } => {
@@ -356,6 +366,14 @@ impl NixBackend {
                     self.config.managed_module.display()
                 ),
             });
+        }
+        // Cancellation is allowed until this atomic transition. Once protected,
+        // neither window closure nor a disconnected client can kill activation.
+        if let Err(error) = cancellation.protect() {
+            state::write_managed_atomic(&self.config.managed_module, &previous)
+                .context("restoring peasy-managed.nix after cancellation")?;
+            let _ = fs::remove_dir_all(&stage);
+            return Err(error.into());
         }
         let activation_attempt = (|| -> Result<_> {
             activation::write_request(&self.config.runtime_dir, &system)?;
@@ -472,6 +490,52 @@ mod tests {
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn cancelled_build_restores_source_cleans_staging_and_releases_locks() {
+        struct CancelBuild;
+        impl CommandRunner for CancelBuild {
+            fn run(&self, _: &Path, args: &[OsString], cwd: Option<&Path>) -> Result<Output> {
+                assert_eq!(args[0], "build", "must never reach activation");
+                assert!(cwd.unwrap().join("peasy-managed.nix").is_file());
+                let token = peasy_core::cancellation::Cancellation::current();
+                token.cancel();
+                token.check()?;
+                unreachable!()
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let backend =
+            NixBackend::new(config(temp.path().join("state")), Arc::new(CancelBuild)).unwrap();
+        let before = backend.current_state().unwrap();
+        let preview = backend
+            .preview_theme(ThemeSettings {
+                accent_color: Some(peasy_core::AccentColor::Green),
+                color_scheme: None,
+            })
+            .unwrap();
+        let token = peasy_core::cancellation::Cancellation::default();
+        let id = "a".repeat(48);
+        let error = token
+            .scope(|| backend.apply(&preview.change, &preview.before, &id))
+            .unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<peasy_core::cancellation::Cancelled>()
+                .is_some()
+        );
+        assert_eq!(backend.current_state().unwrap(), before);
+        assert!(
+            !backend
+                .config
+                .runtime_dir
+                .join("transactions")
+                .join(id)
+                .exists()
+        );
+        assert!(!backend.is_applying());
+        assert!(backend.evaluation_lock.try_lock().is_ok());
     }
 
     fn config(runtime_dir: PathBuf) -> BackendConfig {

@@ -1,4 +1,5 @@
 //! hyprland pea: unprivileged discovery, review and execution.
+use crate::CancellableCommand;
 use crate::{
     LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution, runtime_desktop_kind,
     safe_stderr,
@@ -152,7 +153,7 @@ impl PeasyClient {
     pub(super) fn hyprland_json(&self, command: &str) -> Result<Value> {
         let output = Command::new(&self.tools.hyprctl)
             .args(["-j", command])
-            .output()
+            .cancellable_output()
             .with_context(|| format!("querying Hyprland {command}"))?;
         if !output.status.success() {
             bail!(
@@ -201,7 +202,7 @@ impl PeasyClient {
         ] {
             let output = Command::new(&self.tools.hyprctl)
                 .args(["-j", "getoption", &option])
-                .output()
+                .cancellable_output()
                 .context("reading the current Hyprland setting")?;
             if output.status.success() {
                 let value: Value = serde_json::from_slice(&output.stdout)
@@ -243,7 +244,7 @@ impl PeasyClient {
     pub(super) fn hyprland_uses_lua(&self) -> Result<bool> {
         let output = Command::new(&self.tools.hyprctl)
             .arg("--help")
-            .output()
+            .cancellable_output()
             .context("checking the installed hyprctl interface")?;
         if !output.status.success() {
             bail!("hyprctl could not report its supported interface");
@@ -267,12 +268,12 @@ impl PeasyClient {
             );
             Command::new(&self.tools.hyprctl)
                 .args(["eval", &expression])
-                .output()
+                .cancellable_output()
                 .context("applying the Hyprland setting")?
         } else {
             Command::new(&self.tools.hyprctl)
                 .args(["keyword", &change.setting.legacy_option_path(), &normalized])
-                .output()
+                .cancellable_output()
                 .context("applying the Hyprland setting")?
         };
         ensure_hyprland_success(output, "change the setting")?;
@@ -293,13 +294,13 @@ impl PeasyClient {
             let expression = modern_hyprland_dispatch(*dispatch, argument.as_deref());
             Command::new(&self.tools.hyprctl)
                 .args(["eval", &expression])
-                .output()
+                .cancellable_output()
                 .context("controlling Hyprland")?
         } else {
             let (name, value) = legacy_hyprland_dispatch(*dispatch, argument.as_deref());
             Command::new(&self.tools.hyprctl)
                 .args(["dispatch", name, &value])
-                .output()
+                .cancellable_output()
                 .context("controlling Hyprland")?
         };
         ensure_hyprland_success(output, "perform the requested action")?;

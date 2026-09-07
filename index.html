@@ -458,6 +458,13 @@
       margin: 0;
     }
 
+    .download-actions .hero-cta[aria-disabled="true"] {
+      opacity: 0.55;
+      pointer-events: none;
+      box-shadow: none;
+      transform: none;
+    }
+
     .download-link,
     .download-help a {
       color: var(--mint);
@@ -799,14 +806,15 @@
         <p class="section-kicker">Your next desktop</p>
         <h2 id="downloads-title">Download the latest Peasy ISO.</h2>
         <p class="section-lead">One installer, Peasy included. Try the GNOME live desktop in a virtual machine or boot from USB. Install with GNOME selected by default, or choose lightweight XFCE for a slower computer.</p>
-        <p class="download-help" id="download-status" role="status">Find the latest images and checksums on GitHub Releases.</p>
+        <p class="download-help" id="download-status" role="status">Checking for the latest ISO download…</p>
+        <noscript><p class="download-help">Enable JavaScript to load the direct ISO download. The Checksums link below opens GitHub Releases.</p></noscript>
         <div class="download-grid">
           <article class="download-card" aria-labelledby="download-gnome-title">
             <h3 id="download-gnome-title">Peasy installer</h3>
             <p>GNOME is bundled for offline installation. XFCE installation requires an Internet connection. Peasy is included with either choice.</p>
             <p class="download-meta" id="download-gnome-meta">64-bit Intel / AMD · Complete installer ISO</p>
             <div class="download-actions">
-              <a class="hero-cta" id="download-gnome" href="https://github.com/lnbits/peasy/releases/latest">View latest release <span aria-hidden="true">↗</span></a>
+              <a class="hero-cta" id="download-gnome" role="link" aria-disabled="true" tabindex="-1" aria-describedby="download-status">Download Peasy ISO <span aria-hidden="true">↓</span></a>
               <a class="download-link" id="checksum-gnome" href="https://github.com/lnbits/peasy/releases/latest">Checksums</a>
             </div>
           </article>

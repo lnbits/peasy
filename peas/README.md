@@ -111,6 +111,11 @@ event was saved, and live Hyprland changes are not persistent NixOS settings.
    and fixed execution handler reached only through the existing confirmation
    path. Add fixed tools through `LocalTools` and trusted Nix wrappers, never from
    model-selected executable paths. Report unsupported desktops explicitly.
+   Read-only subprocesses should use `CancellableCommand::cancellable_output`;
+   HTTP reads use the shared cancellable transport. UI work runs inside its
+   native `Cancellation` scope. Do not detach extra work from that lifetime or
+   introduce process/socket imports to Wasm. Reviewed local mutations are
+   protected once `apply_local` starts; closing is not an undo operation.
 6. For a system change, extend the closed IPC/proposal/state types only as needed.
    Prepare the reviewed change in `system.rs`; keep Apply authorization, stale
    proposal checks, rendering, build verification and activation in the shared

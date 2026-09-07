@@ -2,6 +2,7 @@ use crate::authorization::{Authorizer, Peer};
 use crate::nix_backend::NixBackend;
 use anyhow::{Context, Result, bail};
 use nix::sys::socket::{getsockopt, sockopt};
+use peasy_core::cancellation::Cancellation;
 use peasy_core::{
     IpcRequest, IpcResponse, PackageOperation, PackageState, Proposal, ProposalChange,
     ThemeSettings,
@@ -76,11 +77,13 @@ impl Drop for ConnectionGuard {
     }
 }
 
+#[derive(Clone)]
 struct PendingProposal {
     uid: u32,
     change: ProposalChange,
     before: PackageState,
     expires: Instant,
+    running: Option<Cancellation>,
 }
 
 pub struct Server {
@@ -173,17 +176,82 @@ fn handle(
         .take(64 * 1024)
         .read_line(&mut line)?;
     let response = match serde_json::from_str::<IpcRequest>(&line) {
-        Ok(request) => dispatch(request, &peer, &backend, &proposals, authorizer.as_ref())
-            .unwrap_or_else(|error| IpcResponse::Error {
-                message: format!("{error:#}"),
-            }),
+        Ok(request) => with_disconnect_cancellation(&stream, || {
+            dispatch(request, &peer, &backend, &proposals, authorizer.as_ref())
+        })
+        .unwrap_or_else(|error| IpcResponse::Error {
+            message: format!("{error:#}"),
+        }),
         Err(_) => IpcResponse::Error {
             message: "invalid typed IPC request".into(),
         },
     };
-    serde_json::to_writer(&mut stream, &response)?;
-    stream.write_all(b"\n")?;
-    Ok(())
+    let delivered = (|| -> Result<()> {
+        serde_json::to_writer(&mut stream, &response)?;
+        stream.write_all(b"\n")?;
+        Ok(())
+    })();
+    if delivered.is_err()
+        && let IpcResponse::Proposal { proposal } = &response
+    {
+        // No client received this token to review or explicitly discard.
+        let _ = cancel_proposal(&proposals, &proposal.id, uid);
+    }
+    delivered
+}
+
+// A request owns its work. Disconnecting cancels subprocesses unless activation
+// has atomically crossed the protected boundary. Never change socket flags on
+// the shared file description: MSG_DONTWAIT applies only to this read.
+fn with_disconnect_cancellation<T>(
+    stream: &UnixStream,
+    work: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    use std::os::fd::AsRawFd;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let control = Cancellation::default();
+    let done = AtomicBool::new(false);
+    thread::scope(|scope| {
+        struct Finish<'a>(&'a AtomicBool);
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let watcher = thread::Builder::new()
+            .name("peasy-disconnect".into())
+            .spawn_scoped(scope, || {
+                let mut bytes = [0; 256];
+                while !done.load(Ordering::Acquire) {
+                    match nix::sys::socket::recv(
+                        stream.as_raw_fd(),
+                        &mut bytes,
+                        nix::sys::socket::MsgFlags::MSG_DONTWAIT,
+                    ) {
+                        Ok(0) => {
+                            control.cancel();
+                            break;
+                        }
+                        Err(nix::errno::Errno::EAGAIN | nix::errno::Errno::EINTR) => {}
+                        Err(_) => {
+                            control.cancel();
+                            break;
+                        }
+                        Ok(_) => {
+                            control.cancel();
+                            break;
+                        } // one request per connection
+                    }
+                    thread::park_timeout(Duration::from_millis(25));
+                }
+            })?;
+        let finish = Finish(&done);
+        let result = control.scope(work);
+        drop(finish);
+        watcher.thread().unpark();
+        let _ = watcher.join();
+        result
+    })
 }
 
 fn dispatch(
@@ -229,14 +297,28 @@ fn dispatch(
                 bail!("invalid proposal token");
             }
             let pending = take_proposal(proposals, &proposal, uid)?;
-            authorizer.authorize(peer)?;
-            if pending.expires < Instant::now() {
-                bail!("proposal expired during authorization; review the change again");
-            }
-            Ok(IpcResponse::Applied {
-                result: backend.apply(&pending.change, &pending.before, &proposal)?,
-            })
+            let result = pending
+                .running
+                .as_ref()
+                .expect("claimed proposal")
+                .scope(|| {
+                    Cancellation::current().check()?;
+                    authorizer.authorize(peer)?;
+                    Cancellation::current().check()?;
+                    if pending.expires < Instant::now() {
+                        bail!("proposal expired during authorization; review the change again");
+                    }
+                    Ok(IpcResponse::Applied {
+                        result: backend.apply(&pending.change, &pending.before, &proposal)?,
+                    })
+                });
+            proposals
+                .lock()
+                .expect("proposal mutex poisoned")
+                .remove(&proposal);
+            result
         }
+        IpcRequest::Cancel { proposal } => cancel_proposal(proposals, &proposal, uid),
         IpcRequest::Status => Ok(IpcResponse::Status {
             ready: true,
             applying: backend.is_applying(),
@@ -250,11 +332,36 @@ fn take_proposal(
     uid: u32,
 ) -> Result<PendingProposal> {
     let mut map = proposals.lock().expect("proposal mutex poisoned");
-    let pending = map.get(token).context("unknown or already-used proposal")?;
-    if pending.uid != uid || pending.expires < Instant::now() {
+    let pending = map
+        .get_mut(token)
+        .context("unknown or already-used proposal")?;
+    if pending.uid != uid || pending.expires < Instant::now() || pending.running.is_some() {
         bail!("proposal is expired or belongs to another user");
     }
-    Ok(map.remove(token).expect("proposal checked under lock"))
+    pending.running = Some(Cancellation::current());
+    Ok(pending.clone())
+}
+
+fn cancel_proposal(
+    proposals: &Mutex<HashMap<String, PendingProposal>>,
+    token: &str,
+    uid: u32,
+) -> Result<IpcResponse> {
+    if token.len() != 48 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("invalid proposal token");
+    }
+    let mut map = proposals.lock().expect("proposal mutex poisoned");
+    let pending = map.get(token).context("unknown or already-used proposal")?;
+    if pending.uid != uid {
+        bail!("proposal belongs to another user");
+    }
+    let activation_started = if let Some(control) = &pending.running {
+        !control.cancel()
+    } else {
+        map.remove(token);
+        false
+    };
+    Ok(IpcResponse::Cancelled { activation_started })
 }
 
 fn propose_package(
@@ -283,15 +390,17 @@ fn store_proposal(
     uid: u32,
     preview: crate::nix_backend::Preview,
 ) -> Result<IpcResponse> {
+    Cancellation::current().check()?;
     let id = hex::encode(rand::random::<[u8; 24]>());
     let pending = PendingProposal {
         uid,
         change: preview.change.clone(),
         before: preview.before,
         expires: Instant::now() + Duration::from_secs(300),
+        running: None,
     };
     let mut map = proposals.lock().expect("proposal mutex poisoned");
-    map.retain(|_, proposal| proposal.expires >= Instant::now());
+    map.retain(|_, proposal| proposal.running.is_some() || proposal.expires >= Instant::now());
     if map.len() >= MAX_PROPOSALS
         || map.values().filter(|pending| pending.uid == uid).count() >= MAX_PROPOSALS_PER_UID
     {
@@ -365,6 +474,56 @@ mod tests {
         map.lock().unwrap().get_mut(&p.id).unwrap().expires =
             Instant::now() - Duration::from_secs(1);
         assert!(take_proposal(&map, &p.id, 1000).is_err());
+    }
+
+    #[test]
+    fn cancellation_is_owner_scoped_and_respects_activation_boundary() {
+        let map = Mutex::new(HashMap::new());
+        let p = proposal(&map, 1000);
+        assert!(cancel_proposal(&map, &p.id, 1001).is_err());
+        assert!(matches!(
+            cancel_proposal(&map, &p.id, 1000).unwrap(),
+            IpcResponse::Cancelled {
+                activation_started: false
+            }
+        ));
+        assert!(take_proposal(&map, &p.id, 1000).is_err());
+        for protected in [false, true] {
+            let p = proposal(&map, 1000);
+            let pending = take_proposal(&map, &p.id, 1000).unwrap();
+            let token = pending.running.unwrap();
+            if protected {
+                token.protect().unwrap();
+            }
+            assert!(cancel_proposal(&map, &p.id, 1001).is_err());
+            assert!(!token.is_cancelled());
+            assert!(
+                matches!(cancel_proposal(&map, &p.id, 1000).unwrap(), IpcResponse::Cancelled { activation_started } if activation_started == protected)
+            );
+            assert_eq!(token.is_cancelled(), !protected);
+            assert!(take_proposal(&map, &p.id, 1000).is_err());
+        }
+    }
+
+    #[test]
+    fn disconnect_cancels_work_but_not_protected_activation() {
+        for protected in [false, true] {
+            let (client, server) = UnixStream::pair().unwrap();
+            with_disconnect_cancellation(&server, || {
+                let token = Cancellation::current();
+                if protected {
+                    token.protect()?;
+                }
+                drop(client);
+                let start = Instant::now();
+                while !token.is_cancelled() && start.elapsed() < Duration::from_millis(150) {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                assert_eq!(token.is_cancelled(), !protected);
+                Ok(())
+            })
+            .unwrap();
+        }
     }
 
     #[test]

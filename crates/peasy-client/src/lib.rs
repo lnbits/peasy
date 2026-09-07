@@ -1,3 +1,20 @@
+mod http;
+pub use peasy_core::cancellation::Cancellation;
+
+trait CancellableCommand {
+    fn cancellable_output(&mut self) -> Result<std::process::Output>;
+}
+
+impl CancellableCommand for std::process::Command {
+    fn cancellable_output(&mut self) -> Result<std::process::Output> {
+        if Cancellation::current().is_protected() {
+            // Killing a reviewed mutation cannot undo effects already committed.
+            return Ok(self.output()?);
+        }
+        peasy_core::process::run(self, Duration::from_secs(3600))
+    }
+}
+
 #[path = "../../../peas/appearance/client.rs"]
 mod appearance;
 #[path = "../../../peas/appimages/client.rs"]
@@ -38,7 +55,7 @@ mod pea_contracts;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
@@ -318,16 +335,46 @@ impl IpcClient {
     }
 
     pub fn request(&self, request: &IpcRequest) -> Result<IpcResponse> {
+        let cancellation = Cancellation::current();
+        cancellation.check()?;
         let mut stream = UnixStream::connect(&self.socket)
             .with_context(|| format!("connecting to {}", self.socket.display()))?;
         serde_json::to_writer(&mut stream, request)?;
         stream.write_all(b"\n")?;
-        let mut line = String::new();
-        BufReader::new(stream)
-            .take(2 * 1024 * 1024)
-            .read_line(&mut line)?;
+        stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+        let started = std::time::Instant::now();
+        let mut line = Vec::new();
+        loop {
+            cancellation.check()?;
+            if matches!(request, IpcRequest::Cancel { .. })
+                && started.elapsed() > Duration::from_secs(15)
+            {
+                bail!("system service did not confirm cancellation");
+            }
+            let mut chunk = [0; 8192];
+            match stream.read(&mut chunk) {
+                Ok(0) => bail!("system service closed the connection"),
+                Ok(count) => {
+                    if line.len() + count > 2 * 1024 * 1024 {
+                        bail!("oversized system response");
+                    }
+                    line.extend_from_slice(&chunk[..count]);
+                    if line.contains(&b'\n') {
+                        break;
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::TimedOut
+                            | std::io::ErrorKind::Interrupted
+                    ) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
         let response: IpcResponse =
-            serde_json::from_str(&line).context("invalid system response")?;
+            serde_json::from_slice(&line).context("invalid system response")?;
         if let IpcResponse::Error { message } = &response {
             bail!("{message}");
         }
@@ -336,13 +383,13 @@ impl IpcClient {
 }
 
 struct OpenAi {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
     key: zeroize::Zeroizing<String>,
     model: String,
 }
 
 struct Ollama {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
     base_url: String,
     model: String,
 }
@@ -404,7 +451,7 @@ struct DeclaredSystemProfile {
 impl OpenAi {
     fn new(key: String, model: String) -> Result<Self> {
         validate_model_name(&model)?;
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
@@ -462,22 +509,12 @@ impl OpenAi {
                 "schema": model_schema()
             }}
         });
-        let response = self
+        let request = self
             .client
             .post(OPENAI_URL)
             .bearer_auth(self.key.as_str())
-            .json(&body)
-            .send()
-            .context("contacting OpenAI")?;
-        let status = response.status();
-        let mut body = Vec::new();
-        response
-            .take(256 * 1024 + 1)
-            .read_to_end(&mut body)
-            .context("reading OpenAI response")?;
-        if body.len() > 256 * 1024 {
-            bail!("OpenAI returned an oversized response");
-        }
+            .json(&body);
+        let (status, body) = http::read(request, 256 * 1024).context("contacting OpenAI")?;
         let value: Value = serde_json::from_slice(&body).context("OpenAI returned invalid JSON")?;
         if !status.is_success() {
             let message = value
@@ -510,7 +547,7 @@ impl Ollama {
     fn new(base_url: String, model: String) -> Result<Self> {
         validate_ollama_url(&base_url)?;
         validate_model_name(&model)?;
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
@@ -568,21 +605,11 @@ impl Ollama {
             "stream": false,
             "options": { "temperature": 0 }
         });
-        let response = self
+        let request = self
             .client
             .post(format!("{}/api/chat", self.base_url))
-            .json(&body)
-            .send()
-            .context("contacting local Ollama")?;
-        let status = response.status();
-        let mut bytes = Vec::new();
-        response
-            .take(256 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .context("reading Ollama response")?;
-        if bytes.len() > 256 * 1024 {
-            bail!("Ollama returned an oversized response");
-        }
+            .json(&body);
+        let (status, bytes) = http::read(request, 256 * 1024).context("contacting local Ollama")?;
         let value: Value =
             serde_json::from_slice(&bytes).context("Ollama returned invalid JSON")?;
         if !status.is_success() {
@@ -659,7 +686,7 @@ impl ModelBackend {
 
 pub fn list_ollama_models(base_url: &str) -> Result<Vec<String>> {
     validate_ollama_url(base_url)?;
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -667,16 +694,11 @@ pub fn list_ollama_models(base_url: &str) -> Result<Vec<String>> {
         .timeout(Duration::from_secs(15))
         .user_agent(concat!("Peasy/", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let response = client
-        .get(format!("{}/api/tags", base_url.trim_end_matches('/')))
-        .send()
-        .context("connecting to local Ollama at http://127.0.0.1:11434")?;
-    let status = response.status();
-    let mut bytes = Vec::new();
-    response.take(256 * 1024 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > 256 * 1024 {
-        bail!("Ollama returned an oversized model list");
-    }
+    let (status, bytes) = http::read(
+        client.get(format!("{}/api/tags", base_url.trim_end_matches('/'))),
+        256 * 1024,
+    )
+    .context("connecting to local Ollama at http://127.0.0.1:11434")?;
     let value: Value = serde_json::from_slice(&bytes).context("Ollama returned invalid JSON")?;
     if !status.is_success() {
         let message = value
@@ -909,6 +931,14 @@ pub struct PeasyClient {
 }
 
 impl PeasyClient {
+    pub fn cancel_proposal(&self, proposal: &str) -> Result<bool> {
+        match self.ipc.request(&IpcRequest::Cancel {
+            proposal: proposal.into(),
+        })? {
+            IpcResponse::Cancelled { activation_started } => Ok(activation_started),
+            _ => bail!("unexpected response to Cancel"),
+        }
+    }
     pub fn new(socket: PathBuf, engine: &Path, key: String) -> Result<Self> {
         Self::with_provider(
             socket,
@@ -1125,6 +1155,9 @@ impl PeasyClient {
         proposal: &LocalProposal,
         supplied_password: Option<&str>,
     ) -> Result<LocalResult> {
+        // Once a reviewed desktop mutation starts it may already have taken
+        // effect. Finish it; cancellation must not pretend to undo that effect.
+        Cancellation::current().protect()?;
         if supplied_password
             .is_some_and(|password| password.len() > 256 || password.chars().any(char::is_control))
         {
@@ -1366,10 +1399,41 @@ fn safe_stderr(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::sync::mpsc;
     use std::thread;
+
+    #[test]
+    fn cancelled_ipc_closes_the_connection() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ipc");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let token = Cancellation::default();
+        let worker_token = token.clone();
+        let worker = thread::spawn(move || {
+            worker_token.scope(|| IpcClient::new(path).request(&IpcRequest::GetPackages))
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = String::new();
+        BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut request)
+            .unwrap();
+        token.cancel();
+        assert!(
+            worker
+                .join()
+                .unwrap()
+                .unwrap_err()
+                .downcast_ref::<peasy_core::cancellation::Cancelled>()
+                .is_some()
+        );
+        assert_eq!(stream.read(&mut [0; 1]).unwrap(), 0);
+    }
 
     #[test]
     fn key_file_is_private_and_not_a_symlink() {

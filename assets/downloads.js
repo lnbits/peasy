@@ -40,28 +40,43 @@
 
   async function loadDownloads(doc, fetchRelease = fetch) {
     const status = doc.getElementById('download-status');
-    if (!status) return;
+    const button = doc.getElementById('download-gnome');
+    if (!status || !button) return;
+    // The primary action must never turn into a GitHub navigation link, or
+    // retain an expired ISO URL when a subsequent lookup fails.
+    button.removeAttribute('href');
+    button.removeAttribute('download');
+    button.setAttribute('aria-disabled', 'true');
+    button.setAttribute('tabindex', '-1');
+    button.textContent = 'Download Peasy ISO ↓';
+    doc.getElementById('checksum-gnome').href = `${releases}/latest`;
+    status.textContent = 'Checking for the latest ISO download…';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
       const response = await fetchRelease(api, {
         signal: controller.signal, credentials: 'omit', headers: {Accept: 'application/vnd.github+json'},
       });
+      if (response.status === 404) {
+        status.textContent = 'No published ISO release is available yet.';
+        return;
+      }
       if (!response.ok) throw new Error('Release lookup unavailable');
       const release = parseRelease(await response.json());
       for (const item of release.images) {
         if (item.desktop !== 'gnome') continue;
-        const button = doc.getElementById(`download-${item.desktop}`);
         button.href = item.url;
-        button.textContent = 'Download Peasy ISO ↓';
-        doc.getElementById(`checksum-${item.desktop}`).href = item.checksumURL;
+        button.setAttribute('download', item.name);
+        button.removeAttribute('aria-disabled');
+        button.removeAttribute('tabindex');
+        doc.getElementById(`checksum-${item.desktop}`).href = release.url;
         doc.getElementById(`download-${item.desktop}-meta`).textContent =
           `64-bit Intel / AMD · ${(item.size / 1024 ** 3).toFixed(2)} GiB · ${release.tag}`;
       }
       doc.getElementById('download-release').href = release.url;
       status.textContent = `Latest release: ${release.tag}. Complete ISO, ready to download — no parts to join.`;
     } catch (_) {
-      status.textContent = 'Check GitHub Releases for the latest available images and checksums.';
+      status.textContent = 'The ISO download is unavailable right now. Try again later; release details are available through Checksums.';
     } finally {
       clearTimeout(timer);
     }

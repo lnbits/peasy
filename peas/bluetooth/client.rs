@@ -1,4 +1,5 @@
 //! bluetooth pea: unprivileged discovery, review and execution.
+use crate::CancellableCommand;
 use crate::{LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution, safe_stderr};
 use anyhow::{Context, Result, bail};
 use peasy_core::{DiffKind, DiffLine, validate_query};
@@ -17,10 +18,10 @@ impl PeasyClient {
         let query = validate_query(query)?;
         let _ = Command::new(&self.tools.bluetoothctl)
             .args(["--timeout", "8", "scan", "on"])
-            .output();
+            .cancellable_output();
         let output = Command::new(&self.tools.bluetoothctl)
             .arg("devices")
-            .output()
+            .cancellable_output()
             .context("listing Bluetooth devices")?;
         if !output.status.success() {
             bail!("Bluetooth is unavailable");
@@ -67,12 +68,12 @@ impl PeasyClient {
     pub(super) fn apply_bluetooth(&self, name: &str, address: &str) -> Result<LocalResult> {
         let connected = Command::new(&self.tools.bluetoothctl)
             .args(["--timeout", "45", "connect", address])
-            .output()
+            .cancellable_output()
             .context("connecting Bluetooth device")?;
         if !connected.status.success() {
             let paired = Command::new(&self.tools.bluetoothctl)
                 .args(["--timeout", "45", "pair", address])
-                .output()
+                .cancellable_output()
                 .context("pairing Bluetooth device")?;
             if !paired.status.success() {
                 bail!(
@@ -82,7 +83,7 @@ impl PeasyClient {
             }
             let retry = Command::new(&self.tools.bluetoothctl)
                 .args(["--timeout", "45", "connect", address])
-                .output()?;
+                .cancellable_output()?;
             if !retry.status.success() {
                 bail!(
                     "Bluetooth could not connect {name}: {}",

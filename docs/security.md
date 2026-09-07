@@ -140,6 +140,25 @@ binding the peer UID, PID and process start time. The default policy uses
 `auth_admin`, not cached authorization; cancellation consumes the proposal and
 requires reviewing a new one. Administrator-written Polkit rules remain trusted.
 
+Closing the UI cancels its HTTP requests and read-only subprocesses, discards
+unapplied proposals, and requests cancellation of an in-progress system change.
+The typed `Cancel` request requires the same proposal token and peer UID as
+`Apply`; it cannot cancel another user's work. Claimed proposals remain one-use
+while cancellation and cleanup are in progress. A disconnected IPC client also
+cancels its request. Before activation, cancellation stops the request's process
+group, restores the prior managed Nix state, removes its staging directory, and
+only then releases the apply lock. Cached Nix store outputs may remain reusable;
+cancellation does not run garbage collection or stop unrelated Nix builds.
+
+Cancellation and activation compete in a single atomic state transition. Once
+activation wins, neither `Cancel` nor a client disconnect interrupts the switch.
+The UI waits for its result without reopening a closed window. Reviewed desktop
+mutations that have started also finish, since terminating a command cannot undo
+effects already applied. Stale search/AI results cannot replace a reopened prompt.
+Aborting an AI HTTP request closes the local transport; it does not guarantee
+that the provider stops server-side computation or billing. These native lifetime
+and process helpers are excluded from the Wasm build; they add no AI capabilities.
+
 IPC is bounded to 16 active connections, four per UID, 120 requests per UID per
 minute, and 64 pending proposals (eight per UID). Expired proposals are pruned.
 Heavy Nix operations are serialized; concurrent attempts fail promptly as busy.

@@ -1,4 +1,5 @@
 //! calendar pea: unprivileged discovery, review and execution.
+use crate::CancellableCommand;
 use crate::{
     LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution, safe_stderr, tool_path,
 };
@@ -17,7 +18,7 @@ pub(super) fn current_local_time() -> String {
     let date = tool_path("PEASY_DATE", "/run/current-system/sw/bin/date");
     Command::new(date)
         .arg("+%Y-%m-%dT%H:%M:%S %:z %Z")
-        .output()
+        .cancellable_output()
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
@@ -48,7 +49,7 @@ pub(super) fn write_calendar_invite(
 pub(super) fn open_calendar_file(gio: &Path, calendar: &Path) -> Result<()> {
     // GIO uses the freedesktop MIME/default-application association, not GNOME
     // Calendar. GLib is already packaged for the GTK UI; no PIM stack is needed.
-    let output = Command::new(gio).arg("open").arg(calendar).output()
+    let output = Command::new(gio).arg("open").arg(calendar).cancellable_output()
         .with_context(|| format!("Could not open the event; the .ics file is saved at {}. Configure a default calendar application for text/calendar.", calendar.display()))?;
     if !output.status.success() {
         bail!(
@@ -87,7 +88,7 @@ pub(super) fn write_calendar_invite_at(
     }
     let stamp = Command::new(tool_path("PEASY_DATE", "/run/current-system/sw/bin/date"))
         .args(["-u", "+%Y%m%dT%H%M%SZ"])
-        .output()
+        .cancellable_output()
         .context("creating calendar timestamp")?;
     let stamp_text = String::from_utf8_lossy(&stamp.stdout);
     let stamp_text = stamp_text.trim();

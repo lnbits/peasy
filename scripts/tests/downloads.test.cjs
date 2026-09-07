@@ -59,7 +59,11 @@ function documentStub() {
   const elements = new Map();
   return {getElementById(id) {
     assert.ok(!id.includes('plasma'), 'The website has only one ISO card');
-    if (!elements.has(id)) elements.set(id, {textContent: '', href: 'https://github.com/lnbits/peasy/releases/latest'});
+    if (!elements.has(id)) elements.set(id, {textContent: '',
+      ...(id === 'download-gnome' ? {} : {href: 'https://github.com/lnbits/peasy/releases/latest'}),
+      setAttribute(name, value) { this[name] = value; },
+      removeAttribute(name) { delete this[name]; },
+    });
     return elements.get(id);
   }};
 }
@@ -74,18 +78,35 @@ test('UI resolves the single card for new and previous releases without HTML inj
   });
   assert.match(doc.getElementById('download-gnome').href, /^https:\/\/downloads.askpeasy.com\//);
   assert.equal(doc.getElementById('download-gnome').textContent, 'Download Peasy ISO ↓');
+  assert.equal(doc.getElementById('download-gnome')['aria-disabled'], undefined);
+  assert.equal(doc.getElementById('download-gnome').download, 'peasy-nixos-v1.2.3-gnome-x86_64.iso');
+  assert.equal(doc.getElementById('checksum-gnome').href, 'https://github.com/lnbits/peasy/releases/tag/v1.2.3');
   assert.match(doc.getElementById('download-gnome-meta').textContent, /6.00 GiB/);
   }
 });
 
-test('network, rate limit and invalid metadata preserve functional release-page fallback', async () => {
+test('network, rate limit and invalid metadata disable download but leave release checksums available', async () => {
   for (const fetch of [async () => {throw new Error('offline');}, async () => ({ok: false}),
     async () => ({ok: true, json: async () => ({})})]) {
     const doc = documentStub();
     await loadDownloads(doc, fetch);
-    assert.equal(doc.getElementById('download-gnome').href, 'https://github.com/lnbits/peasy/releases/latest');
-    assert.match(doc.getElementById('download-status').textContent, /Check GitHub/);
+    assert.equal(doc.getElementById('download-gnome').href, undefined);
+    assert.equal(doc.getElementById('download-gnome')['aria-disabled'], 'true');
+    assert.equal(doc.getElementById('download-gnome').textContent, 'Download Peasy ISO ↓');
+    assert.equal(doc.getElementById('checksum-gnome').href, 'https://github.com/lnbits/peasy/releases/latest');
+    assert.match(doc.getElementById('download-status').textContent, /unavailable right now/);
   }
+});
+
+test('no published release disables downloading, including after an earlier successful lookup', async () => {
+  const doc = documentStub();
+  await loadDownloads(doc, async () => ({ok: true, json: async () => fixture().encode()}));
+  assert.ok(doc.getElementById('download-gnome').href.endsWith('.iso'));
+  await loadDownloads(doc, async () => ({ok: false, status: 404}));
+  assert.equal(doc.getElementById('download-gnome').href, undefined);
+  assert.equal(doc.getElementById('download-gnome').download, undefined);
+  assert.equal(doc.getElementById('download-gnome')['aria-disabled'], 'true');
+  assert.match(doc.getElementById('download-status').textContent, /No published ISO release/);
 });
 
 test('downloads is the third major section; no-JS links are present', () => {
@@ -94,7 +115,11 @@ test('downloads is the third major section; no-JS links are present', () => {
   assert.match(sections[0], /hero/);
   assert.match(sections[1], /id="why"/);
   assert.match(sections[2], /id="downloads"/);
-  assert.ok(html.includes('id="download-gnome" href="https://github.com/lnbits/peasy/releases/latest"'));
+  const button = html.match(/<a\b[^>]*id="download-gnome"[^>]*>/)[0];
+  assert.ok(!button.includes('href='));
+  assert.ok(button.includes('aria-disabled="true"'));
+  assert.ok(html.includes('id="checksum-gnome" href="https://github.com/lnbits/peasy/releases/latest"'));
+  assert.ok(html.includes('<noscript>'));
   assert.ok(!html.includes('id="download-plasma"'));
   assert.ok(html.includes('XFCE installation requires an Internet connection'));
 });

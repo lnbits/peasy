@@ -1675,6 +1675,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "zeroize",
 ]
 
@@ -1682,6 +1683,8 @@ dependencies = [
 name = "peasy-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "nix",
  "serde",
  "serde_json",
  "tempfile",

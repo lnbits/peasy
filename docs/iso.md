@@ -246,8 +246,10 @@ and `iso-downloads.json`. Release notes contain direct download links and the sa
 machine-readable metadata. The website reads GitHub's latest published release,
 validates its metadata, and displays one download card. The previous dual-image
 manifest format remains readable, but only its GNOME download is shown. No R2 CORS or Worker is
-needed. With no JavaScript, unavailable API, or a legacy release, buttons fall back
-to GitHub Releases rather than guessing nonexistent ISO URLs.
+needed. The main button downloads the verified ISO directly from R2; Checksums
+opens its GitHub release page. With no JavaScript, an unavailable API, or missing
+verified metadata, the download is disabled rather than redirected to GitHub or
+pointed at a guessed URL. The Checksums and release links remain available.
 
 The job creates a temporary private draft, uploads assets, checks GitHub's stored
 sizes and SHA-256 digests, and verifies the tag still identifies the tested commit.

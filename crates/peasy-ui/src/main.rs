@@ -8,7 +8,8 @@ use peasy_client::{
     load_model_provider,
 };
 use peasy_core::{DiffKind, Proposal};
-use std::cell::RefCell;
+mod tasks;
+use std::cell::{Cell, RefCell};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -34,6 +35,10 @@ struct AppState {
     keys: KeyStore,
     providers: ProviderStore,
     client: Rc<RefCell<Option<Arc<PeasyClient>>>>,
+    tasks: Rc<RefCell<tasks::Tasks>>,
+    pending: Rc<RefCell<Option<String>>>,
+    applying: Rc<Cell<bool>>,
+    closing_apply: Rc<Cell<bool>>,
 }
 
 enum ResolveMessage {
@@ -59,6 +64,10 @@ fn main() -> Result<()> {
         keys,
         providers,
         client: Rc::new(RefCell::new(initial.map(Arc::new))),
+        tasks: Default::default(),
+        pending: Default::default(),
+        applying: Default::default(),
+        closing_apply: Default::default(),
     };
     let application_id = if state.args.settings {
         "io.github.peasy.Peasy.Settings"
@@ -74,10 +83,14 @@ fn main() -> Result<()> {
 }
 
 fn activate(app: &adw::Application, state: AppState) {
-    if let Some(window) = app.active_window() {
+    if let Some(window) = app.windows().into_iter().next() {
         let window = window
             .downcast::<adw::ApplicationWindow>()
             .expect("Peasy owns an Adwaita application window");
+        if state.applying.get() {
+            window.present();
+            return;
+        }
         if state.args.settings || state.client.borrow().is_none() {
             show_provider_settings(&window, state);
         } else {
@@ -93,7 +106,15 @@ fn activate(app: &adw::Application, state: AppState) {
         .default_width(440)
         .resizable(false)
         .build();
-    window.connect_close_request(|window| {
+    let close_state = state.clone();
+    window.connect_close_request(move |window| {
+        close_state.tasks.borrow_mut().close();
+        if close_state.applying.get() {
+            request_apply_cancellation(window, close_state.clone());
+        } else {
+            discard_pending(&close_state);
+            clear_panel_status();
+        }
         window.set_visible(false);
         glib::Propagation::Stop
     });
@@ -103,6 +124,64 @@ fn activate(app: &adw::Application, state: AppState) {
         show_prompt(&window, state);
     }
     window.present();
+}
+
+fn discard_pending(state: &AppState) {
+    if let Some(token) = state.pending.borrow_mut().take() {
+        discard_token(state, token);
+    }
+}
+
+fn discard_token(state: &AppState, token: String) {
+    if let Some(client) = state.client.borrow().clone() {
+        std::thread::spawn(move || {
+            let _ = client.cancel_proposal(&token);
+        });
+    }
+}
+
+fn request_apply_cancellation(window: &adw::ApplicationWindow, state: AppState) {
+    if state.closing_apply.replace(true) {
+        return;
+    }
+    let Some(token) = state.pending.borrow().clone() else {
+        return;
+    };
+    let Some(client) = state.client.borrow().clone() else {
+        return;
+    };
+    show_working(
+        window,
+        "Requesting cancellation… If activation has started, it will finish safely in the background.",
+    );
+    let (tx, rx) = mpsc::channel();
+    let expected_token = token.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(client.cancel_proposal(&token));
+    });
+    let window = window.clone();
+    glib::timeout_add_local(Duration::from_millis(80), move || {
+        if !state.applying.get() || state.pending.borrow().as_ref() != Some(&expected_token) {
+            return glib::ControlFlow::Break;
+        }
+        match rx.try_recv() {
+            Ok(result) => {
+                let message = match result {
+                    Ok(false) => "Cancelling the build and restoring the previous configuration…",
+                    Ok(true) => {
+                        "System activation has already started. It will finish safely in the background."
+                    }
+                    Err(_) => {
+                        "Cancellation could not be confirmed. Waiting for the operation to finish safely…"
+                    }
+                };
+                show_working(&window, message);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+        }
+    });
 }
 
 fn page(title: &str) -> (gtk::Box, gtk::Box) {
@@ -144,6 +223,8 @@ fn initial_provider_selection(settings: Option<&ProviderSettings>, has_stored_ke
 }
 
 fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
+    state.tasks.borrow_mut().close();
+    discard_pending(&state);
     let (root, body) = page("Peasy settings");
     let heading = gtk::Label::new(Some("AI provider"));
     heading.add_css_class("title-3");
@@ -320,6 +401,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
 
     let detected_models = Rc::new(RefCell::new(Vec::<String>::new()));
     refresh_ollama_models(
+        &state,
         ollama_status.clone(),
         ollama_model.clone(),
         detected_models.clone(),
@@ -327,8 +409,10 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let detected_clone = detected_models.clone();
     let ollama_status_clone = ollama_status.clone();
     let ollama_model_clone = ollama_model.clone();
+    let refresh_state = state.clone();
     refresh.connect_clicked(move |_| {
         refresh_ollama_models(
+            &refresh_state,
             ollama_status_clone.clone(),
             ollama_model_clone.clone(),
             detected_clone.clone(),
@@ -664,51 +748,66 @@ fn configured_path(pointer: &Path, fallback: &str) -> Result<PathBuf> {
 }
 
 fn refresh_ollama_models(
+    state: &AppState,
     status: gtk::Label,
     model_entry: gtk::Entry,
     detected: Rc<RefCell<Vec<String>>>,
 ) {
     status.set_text("Checking local Ollama…");
+    let task = state.tasks.borrow_mut().start();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ =
-            tx.send(list_ollama_models(DEFAULT_OLLAMA_URL).map_err(|error| format!("{error:#}")));
+        task.work.scope(|| {
+            let _ = tx
+                .send(list_ollama_models(DEFAULT_OLLAMA_URL).map_err(|error| format!("{error:#}")));
+        })
     });
-    glib::timeout_add_local(Duration::from_millis(50), move || match rx.try_recv() {
-        Ok(Ok(models)) => {
-            *detected.borrow_mut() = models.clone();
-            if models.is_empty() {
-                status.set_text(
+    glib::timeout_add_local(Duration::from_millis(50), move || {
+        if task.view.is_cancelled() {
+            return glib::ControlFlow::Break;
+        }
+        let result = rx.try_recv();
+        if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+            task.view.cancel();
+        }
+        match result {
+            Ok(Ok(models)) => {
+                *detected.borrow_mut() = models.clone();
+                if models.is_empty() {
+                    status.set_text(
                     "Ollama is running but has no models. Run `ollama pull MODEL`, then press Refresh.",
                 );
-            } else {
-                if model_entry.text().trim().is_empty()
-                    || !models
-                        .iter()
-                        .any(|model| model == model_entry.text().as_str())
-                {
-                    model_entry.set_text(&models[0]);
+                } else {
+                    if model_entry.text().trim().is_empty()
+                        || !models
+                            .iter()
+                            .any(|model| model == model_entry.text().as_str())
+                    {
+                        model_entry.set_text(&models[0]);
+                    }
+                    status.set_text(&format!("Installed: {}", models.join(", ")));
                 }
-                status.set_text(&format!("Installed: {}", models.join(", ")));
+                glib::ControlFlow::Break
             }
-            glib::ControlFlow::Break
-        }
-        Ok(Err(error)) => {
-            detected.borrow_mut().clear();
-            status.set_text(&format!(
-                "{error}\nEnable services.ollama and start it, then press Refresh."
-            ));
-            glib::ControlFlow::Break
-        }
-        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(mpsc::TryRecvError::Disconnected) => {
-            status.set_text("Ollama model check stopped unexpectedly.");
-            glib::ControlFlow::Break
+            Ok(Err(error)) => {
+                detected.borrow_mut().clear();
+                status.set_text(&format!(
+                    "{error}\nEnable services.ollama and start it, then press Refresh."
+                ));
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                status.set_text("Ollama model check stopped unexpectedly.");
+                glib::ControlFlow::Break
+            }
         }
     });
 }
 
 fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
+    state.tasks.borrow_mut().close();
+    discard_pending(&state);
     let request = take_panel_request().ok().flatten();
     if request.is_none() {
         clear_panel_status();
@@ -757,42 +856,67 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
             return;
         };
         let (tx, rx) = mpsc::channel();
+        let task = state_clone.tasks.borrow_mut().start();
         std::thread::spawn(move || {
-            let progress_tx = tx.clone();
-            let result = client
-                .resolve_with_progress(&request, move |stage| {
-                    let _ = progress_tx.send(ResolveMessage::Progress(stage));
-                })
-                .map(Box::new)
-                .map_err(|error| format!("{error:#}"));
-            let _ = tx.send(ResolveMessage::Finished(result));
+            task.work.scope(|| {
+                let progress_tx = tx.clone();
+                let result = client
+                    .resolve_with_progress(&request, move |stage| {
+                        let _ = progress_tx.send(ResolveMessage::Progress(stage));
+                    })
+                    .map(Box::new)
+                    .map_err(|error| format!("{error:#}"));
+                let _ = tx.send(ResolveMessage::Finished(result));
+            })
         });
         let window = window_clone.clone();
         let state = state_clone.clone();
         let button = button.clone();
         let status = status_clone.clone();
-        glib::timeout_add_local(Duration::from_millis(50), move || match rx.try_recv() {
-            Ok(ResolveMessage::Progress(stage)) => {
-                status.set_text(stage.message());
-                write_panel_status(stage.panel_message());
-                glib::ControlFlow::Continue
+        glib::timeout_add_local(Duration::from_millis(50), move || {
+            let result = rx.try_recv();
+            if task.view.is_cancelled() {
+                return match result {
+                    Ok(ResolveMessage::Finished(Ok(resolution))) => {
+                        if let Resolution::Proposal(p) = *resolution {
+                            discard_token(&state, p.id);
+                        }
+                        glib::ControlFlow::Break
+                    }
+                    Ok(ResolveMessage::Finished(Err(_)))
+                    | Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+                    _ => glib::ControlFlow::Continue,
+                };
             }
-            Ok(ResolveMessage::Finished(Ok(resolution))) => {
-                show_resolution(&window, state.clone(), *resolution);
-                glib::ControlFlow::Break
+            if matches!(
+                result,
+                Ok(ResolveMessage::Finished(_)) | Err(mpsc::TryRecvError::Disconnected)
+            ) {
+                task.view.cancel();
             }
-            Ok(ResolveMessage::Finished(Err(error))) => {
-                status.set_text(&error);
-                write_panel_status("Peasy needs attention");
-                button.set_sensitive(true);
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                status.set_text("The request worker stopped unexpectedly.");
-                write_panel_status("Peasy request stopped");
-                button.set_sensitive(true);
-                glib::ControlFlow::Break
+            match result {
+                Ok(ResolveMessage::Progress(stage)) => {
+                    status.set_text(stage.message());
+                    write_panel_status(stage.panel_message());
+                    glib::ControlFlow::Continue
+                }
+                Ok(ResolveMessage::Finished(Ok(resolution))) => {
+                    show_resolution(&window, state.clone(), *resolution);
+                    glib::ControlFlow::Break
+                }
+                Ok(ResolveMessage::Finished(Err(error))) => {
+                    status.set_text(&error);
+                    write_panel_status("Peasy needs attention");
+                    button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    status.set_text("The request worker stopped unexpectedly.");
+                    write_panel_status("Peasy request stopped");
+                    button.set_sensitive(true);
+                    glib::ControlFlow::Break
+                }
             }
         });
     });
@@ -880,32 +1004,51 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
             show_working(&window_clone, "Preparing the configuration change…");
             write_panel_status("…preparing change");
             let (tx, rx) = mpsc::channel();
+            let task = state_clone.tasks.borrow_mut().start();
             std::thread::spawn(move || {
-                let _ = tx.send(
-                    client
-                        .select(choice, index)
-                        .map_err(|error| format!("{error:#}")),
-                );
+                task.work.scope(|| {
+                    let _ = tx.send(
+                        client
+                            .select(choice, index)
+                            .map_err(|error| format!("{error:#}")),
+                    );
+                })
             });
             let window = window_clone.clone();
             let state = state_clone.clone();
-            glib::timeout_add_local(Duration::from_millis(50), move || match rx.try_recv() {
-                Ok(Ok(resolution)) => {
-                    show_resolution(&window, state.clone(), resolution);
-                    glib::ControlFlow::Break
+            glib::timeout_add_local(Duration::from_millis(50), move || {
+                let result = rx.try_recv();
+                if task.view.is_cancelled() {
+                    return match result {
+                        Ok(Ok(Resolution::Proposal(p))) => {
+                            discard_token(&state, p.id);
+                            glib::ControlFlow::Break
+                        }
+                        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                        _ => glib::ControlFlow::Break,
+                    };
                 }
-                Ok(Err(error)) => {
-                    show_error_message(&window, state.clone(), &error);
-                    glib::ControlFlow::Break
+                if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+                    task.view.cancel();
                 }
-                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    show_error_message(
-                        &window,
-                        state.clone(),
-                        "The package-selection worker stopped unexpectedly.",
-                    );
-                    glib::ControlFlow::Break
+                match result {
+                    Ok(Ok(resolution)) => {
+                        show_resolution(&window, state.clone(), resolution);
+                        glib::ControlFlow::Break
+                    }
+                    Ok(Err(error)) => {
+                        show_error_message(&window, state.clone(), &error);
+                        glib::ControlFlow::Break
+                    }
+                    Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        show_error_message(
+                            &window,
+                            state.clone(),
+                            "The package-selection worker stopped unexpectedly.",
+                        );
+                        glib::ControlFlow::Break
+                    }
                 }
             });
         });
@@ -967,7 +1110,7 @@ fn show_apply_progress(window: &adw::ApplicationWindow, title: &str) -> gtk::Lab
     body.append(&progress);
 
     let explanation = gtk::Label::new(Some(
-        "Peasy is validating, building, and activating your new system generation. This can take a few minutes; this window will update when it finishes.",
+        "Peasy is validating, building, and activating your new system generation. Closing this window cancels the build and restores your configuration. If activation has already started, it will finish safely in the background.",
     ));
     explanation.set_halign(gtk::Align::Start);
     explanation.set_wrap(true);
@@ -979,6 +1122,7 @@ fn show_apply_progress(window: &adw::ApplicationWindow, title: &str) -> gtk::Lab
 }
 
 fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Proposal) {
+    *state.pending.borrow_mut() = Some(proposal.id.clone());
     write_panel_status(&format!("…review {}", proposal.title));
     let (root, body) = page("Review change");
     let title = gtk::Label::new(Some(&proposal.title));
@@ -1010,6 +1154,8 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
             return;
         };
         let progress = show_apply_progress(&window_apply, &proposal.title);
+        state.applying.set(true);
+        state.closing_apply.set(false);
         write_panel_status(&format!("…applying {}", proposal.title));
         let proposal = proposal.clone();
         let (tx, rx) = mpsc::channel();
@@ -1023,45 +1169,60 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
         let window = window_apply.clone();
         let state = state.clone();
         let started = Instant::now();
-        glib::timeout_add_local(Duration::from_millis(80), move || match rx.try_recv() {
-            Ok(Ok(result)) => {
-                let message = if result.activated {
-                    format!(
-                        "✓ Configuration valid\n✓ Build successful\n✓ Activated\n\n{}",
+        glib::timeout_add_local(Duration::from_millis(80), move || {
+            let result = rx.try_recv();
+            if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+                state.applying.set(false);
+                state.pending.borrow_mut().take();
+            }
+            match result {
+                Ok(Ok(result)) => {
+                    let message = if result.activated {
+                        format!(
+                            "✓ Configuration valid\n✓ Build successful\n✓ Activated\n\n{}",
+                            result.message
+                        )
+                    } else {
                         result.message
-                    )
-                } else {
-                    result.message
-                };
-                if result.activated {
-                    show_message(&window, state.clone(), &message);
-                } else {
-                    show_error_message(&window, state.clone(), &message);
+                    };
+                    if result.activated {
+                        show_message(&window, state.clone(), &message);
+                    } else {
+                        show_error_message(&window, state.clone(), &message);
+                    }
+                    glib::ControlFlow::Break
                 }
-                glib::ControlFlow::Break
-            }
-            Ok(Err(error)) => {
-                show_error_message(&window, state.clone(), &error);
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => {
-                let elapsed = started.elapsed();
-                if elapsed >= Duration::from_secs(30) {
-                    progress.set_text(
-                        "Still building… NixOS may be downloading or compiling packages.",
+                Ok(Err(error)) => {
+                    if state.closing_apply.get() && error == "Operation cancelled" {
+                        show_message(
+                            &window,
+                            state.clone(),
+                            "Cancelled. The previous configuration is unchanged.",
+                        );
+                    } else {
+                        show_error_message(&window, state.clone(), &error);
+                    }
+                    glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    let elapsed = started.elapsed();
+                    if elapsed >= Duration::from_secs(30) {
+                        progress.set_text(
+                            "Still building… NixOS may be downloading or compiling packages.",
+                        );
+                    } else if elapsed >= Duration::from_secs(2) {
+                        progress.set_text("Validating and building the new NixOS generation…");
+                    }
+                    glib::ControlFlow::Continue
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    show_error_message(
+                        &window,
+                        state.clone(),
+                        "The configuration worker stopped unexpectedly.",
                     );
-                } else if elapsed >= Duration::from_secs(2) {
-                    progress.set_text("Validating and building the new NixOS generation…");
+                    glib::ControlFlow::Break
                 }
-                glib::ControlFlow::Continue
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                show_error_message(
-                    &window,
-                    state.clone(),
-                    "The configuration worker stopped unexpectedly.",
-                );
-                glib::ControlFlow::Break
             }
         });
     });
@@ -1203,30 +1364,42 @@ fn apply_local(
     });
     write_panel_status(status.text().as_str());
     let (tx, rx) = mpsc::channel();
+    let task = state.tasks.borrow_mut().start();
     std::thread::spawn(move || {
-        let result = client
-            .apply_local(&proposal, password.as_deref())
-            .map_err(|error| format!("{error:#}"));
-        let _ = tx.send(result);
+        task.work.scope(|| {
+            let result = client
+                .apply_local(&proposal, password.as_deref())
+                .map_err(|error| format!("{error:#}"));
+            let _ = tx.send(result);
+        })
     });
     let window = window.clone();
-    glib::timeout_add_local(Duration::from_millis(80), move || match rx.try_recv() {
-        Ok(Ok(result)) => {
-            show_message(&window, state.clone(), &format!("✓ {}", result.message));
-            glib::ControlFlow::Break
+    glib::timeout_add_local(Duration::from_millis(80), move || {
+        if task.view.is_cancelled() {
+            return glib::ControlFlow::Break;
         }
-        Ok(Err(error)) => {
-            show_error_message(&window, state.clone(), &error);
-            glib::ControlFlow::Break
+        let result = rx.try_recv();
+        if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+            task.view.cancel();
         }
-        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(mpsc::TryRecvError::Disconnected) => {
-            show_error_message(
-                &window,
-                state.clone(),
-                "The desktop-action worker stopped unexpectedly.",
-            );
-            glib::ControlFlow::Break
+        match result {
+            Ok(Ok(result)) => {
+                show_message(&window, state.clone(), &format!("✓ {}", result.message));
+                glib::ControlFlow::Break
+            }
+            Ok(Err(error)) => {
+                show_error_message(&window, state.clone(), &error);
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                show_error_message(
+                    &window,
+                    state.clone(),
+                    "The desktop-action worker stopped unexpectedly.",
+                );
+                glib::ControlFlow::Break
+            }
         }
     });
 }

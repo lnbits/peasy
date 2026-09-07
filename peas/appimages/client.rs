@@ -1,4 +1,5 @@
 //! appimages pea: unprivileged discovery, review and execution.
+use crate::CancellableCommand;
 use crate::{Choice, ChoiceItem, ChoiceSource, PeasyClient, Resolution, human_name, safe_stderr};
 use anyhow::{Context, Result, bail};
 use peasy_core::validate_query;
@@ -8,13 +9,12 @@ use peasy_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::Read;
 use std::{path::Path, process::Command, time::Duration};
 
 const GITHUB_API: &str = "https://api.github.com";
 
 pub(super) struct GitHubDiscovery {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,7 +93,7 @@ impl AppImageCandidate {
 impl GitHubDiscovery {
     pub(super) fn new() -> Result<Self> {
         Ok(Self {
-            client: reqwest::blocking::Client::builder()
+            client: reqwest::Client::builder()
                 .https_only(true)
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(25))
@@ -190,19 +190,13 @@ impl GitHubDiscovery {
 
     fn get_json<T: for<'de> Deserialize<'de>>(
         &self,
-        request: reqwest::blocking::RequestBuilder,
+        request: reqwest::RequestBuilder,
     ) -> Result<T> {
-        let response = request
+        let request = request
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
-            .context("searching GitHub releases")?;
-        let status = response.status();
-        let mut bytes = Vec::new();
-        response.take(2 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            bail!("GitHub returned an oversized response");
-        }
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        let (status, bytes) =
+            crate::http::read(request, 2 * 1024 * 1024).context("searching GitHub releases")?;
         if !status.is_success() {
             let message = serde_json::from_slice::<Value>(&bytes)
                 .ok()
@@ -481,7 +475,7 @@ impl PeasyClient {
                 "NIX_CONFIG",
                 "extra-experimental-features = nix-command flakes",
             )
-            .output()
+            .cancellable_output()
             .context("downloading the selected AppImage into the Nix store")?;
         if !output.status.success() {
             bail!(

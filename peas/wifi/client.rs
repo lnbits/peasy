@@ -1,4 +1,5 @@
 //! wifi pea: unprivileged discovery, review and execution.
+use crate::CancellableCommand;
 use crate::{LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution, safe_stderr};
 use anyhow::{Context, Result, bail};
 use peasy_core::{DiffKind, DiffLine, validate_ssid};
@@ -91,7 +92,7 @@ impl PeasyClient {
                 "--rescan",
                 "auto",
             ])
-            .output()
+            .cancellable_output()
             .context("listing nearby Wi-Fi networks")?;
         if !output.status.success() {
             bail!("NetworkManager could not list Wi-Fi networks");

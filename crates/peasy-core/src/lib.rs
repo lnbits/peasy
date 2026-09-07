@@ -1,3 +1,8 @@
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cancellation;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod process;
+
 #[path = "../../../peas/packages/types.rs"]
 mod packages;
 pub use packages::{
@@ -431,6 +436,7 @@ pub enum IpcRequest {
     ProposeRemove { package: String },
     ProposeTheme { theme: ThemeSettings },
     Apply { proposal: String },
+    Cancel { proposal: String },
     Status,
 }
 
@@ -494,6 +500,7 @@ pub enum IpcResponse {
     ManagedModule { module: String },
     Proposal { proposal: Box<Proposal> },
     Applied { result: ApplyResult },
+    Cancelled { activation_started: bool },
     Status { ready: bool, applying: bool },
     Error { message: String },
 }

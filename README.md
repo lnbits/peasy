@@ -16,6 +16,11 @@ Peasy uses an OpenAI model or a local Ollama model to understand the request.
 The model cannot run commands or edit files: it returns a typed action that
 Peasy validates and applies through NixOS.
 
+Closing Peasy cancels AI requests, searches, downloads and system builds that
+have not started activation. Cancelled builds restore the previous managed
+configuration. Activation and desktop actions already being applied finish
+safely; closing a window does not undo completed changes.
+
 And because NixOS has excellent rollback support, if anything goes wrong, you can easily restore the system to a previous working state.
 
 ## Install NixOS with Peasy
