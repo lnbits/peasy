@@ -6,6 +6,8 @@
 }:
 let
   gnome = desktop == "gnome";
+  plasma = desktop == "plasma";
+  xfce = desktop == "xfce";
 in
 pkgs.testers.runNixOSTest {
   name = "peasy-${desktop}-tray";
@@ -21,15 +23,17 @@ pkgs.testers.runNixOSTest {
       user = "alice";
     };
     services.displayManager.gdm.enable = gnome;
-    services.displayManager.sddm.enable = !gnome;
+    services.displayManager.sddm.enable = plasma;
+    services.xserver.displayManager.lightdm.enable = xfce;
     services.desktopManager.gnome.enable = gnome;
-    services.desktopManager.plasma6.enable = !gnome;
+    services.desktopManager.plasma6.enable = plasma;
+    services.xserver.desktopManager.xfce.enable = xfce;
     services.desktopManager.gnome.extraGSettingsOverrides = pkgs.lib.mkIf gnome ''
       [org.gnome.shell]
       welcome-dialog-last-shown-version='9999999999'
     '';
     services.xserver.enable = true;
-    environment.systemPackages = [ pkgs.glib ] ++ pkgs.lib.optional (!gnome) pkgs.kdePackages.kconfig;
+    environment.systemPackages = [ pkgs.glib ] ++ pkgs.lib.optional plasma pkgs.kdePackages.kconfig;
     environment.sessionVariables.GSK_RENDERER = "cairo";
     services.peasy = {
       enable = true;
@@ -73,7 +77,7 @@ pkgs.testers.runNixOSTest {
     assert "OnlyShowIn" not in autostart and "NotShowIn" not in autostart
     machine.fail("test -e /etc/xdg/autostart/peasy-hyprland.desktop")
     profile = json.loads(machine.succeed("cat /etc/peasy/system-profile.json"))
-    assert profile["configured_desktops"] == ["${if gnome then "gnome" else "kde_plasma"}"]
+    assert profile["configured_desktops"] == ["${if plasma then "kde_plasma" else desktop}"]
     assert profile["peasy_variant"] == "desktop"
     machine.succeed("test -f /etc/peasy/module-import-path")
     machine.succeed("test -f /run/current-system/sw/share/peasy/source/nix/module.nix")
@@ -91,7 +95,7 @@ pkgs.testers.runNixOSTest {
           assert "peasy_bg.png" in background
           assert "peasy_bg.png" in machine.succeed(user("gsettings get org.gnome.desktop.background picture-uri-dark"))
         ''
-      else
+      else if plasma then
         ''
           machine.fail("test -e /etc/xdg/autostart/peasy-panel.desktop")
           machine.wait_until_succeeds("test -f /home/alice/.local/state/peasy/iso-appearance-v1")
@@ -104,17 +108,25 @@ pkgs.testers.runNixOSTest {
               print(machine.succeed("journalctl --no-pager _SYSTEMD_USER_UNIT=peasy-iso-appearance.service"))
               raise
         ''
+      else
+        ''
+          machine.fail("test -e /etc/xdg/autostart/peasy-panel.desktop")
+          # Nixpkgs wraps the panel executable; its kernel process name is truncated.
+          machine.wait_until_succeeds("pgrep -u alice -f '(^|/)([.]xfce4-panel-wrapped|xfce4-panel)( |$)'", timeout=30)
+        ''
     }
     machine.screenshot("peasy-${desktop}-iso-defaults")
     machine.succeed("printf '%s\\n' '{\"accent_color\":\"purple\",\"color_scheme\":\"dark\"}' > /tmp/peasy-live-theme.json")
-    machine.succeed(user("peasy --sync-theme --theme-state /tmp/peasy-live-theme.json"))
+    ${
+      if xfce then "machine.fail" else "machine.succeed"
+    }(user("peasy --sync-theme --theme-state /tmp/peasy-live-theme.json"))
     ${
       if gnome then
         ''
           assert "purple" in machine.succeed(user("gsettings get org.gnome.desktop.interface accent-color"))
           assert "prefer-dark" in machine.succeed(user("gsettings get org.gnome.desktop.interface color-scheme"))
         ''
-      else
+      else if plasma then
         ''
           assert "BreezeDark" in machine.succeed(user("kreadconfig6 --file kdeglobals --group General --key ColorScheme"))
           accent = machine.succeed(user("kreadconfig6 --file kdeglobals --group General --key AccentColor"))
@@ -123,6 +135,8 @@ pkgs.testers.runNixOSTest {
           machine.succeed(user("systemctl --user restart peasy-iso-appearance.service"))
           assert "145,65,172" in machine.succeed(user("kreadconfig6 --file kdeglobals --group General --key AccentColor"))
         ''
+      else
+        ""
     }
     worker = machine.succeed(user("peasy --panel-worker"))
     assert '"event":"error"' in worker and "provider" in worker

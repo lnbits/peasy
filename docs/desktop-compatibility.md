@@ -74,5 +74,8 @@ successful launch does not claim the calendar has already imported the event.
 
 GNOME and Plasma VMs exercise the same SNI ID, host registration, activation of
 the real UI, provider setup without credentials, ISO appearance defaults, and
-live theme changes. Hyprland/other configurations have evaluation and typed-action
+live theme changes. The XFCE VM checks autostart, SNI registration, UI activation,
+bundled export-source availability, and rejection of unsupported appearance changes.
+The module explicitly links `/share/peasy` for export rather than relying on a
+desktop linking every shared-data directory. Hyprland/other configurations have evaluation and typed-action
 tests; this is not a claim of runtime testing every compositor or tray host.

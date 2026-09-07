@@ -1,9 +1,11 @@
-# GNOME and Plasma installers
+# Peasy installer ISO
 
-The installers retain Peasy after installation. Installed-disk boot is verified
-in GNOME/BIOS and Plasma/UEFI VMs; physical-hardware testing remains important.
-Pushing a `v*` tag automatically publishes a release only after both desktops'
-CI checks and asset verification succeed. Complete ISOs are hosted on Cloudflare
+The installer retains Peasy after installation. One GNOME live ISO is published.
+GNOME is selected by default; XFCE is the optional lightweight desktop and requires
+Internet access to install. The live environment still runs GNOME, so choosing
+XFCE does not reduce the resources needed to boot the installation media.
+Pushing a `v*` tag automatically publishes a release only after
+CI checks and asset verification succeed. The complete ISO is hosted on Cloudflare
 R2; GitHub Releases carries the download links and whole-image checksums.
 
 Installing Peasy on an existing NixOS system is separately supported: follow
@@ -11,7 +13,7 @@ Installing Peasy on an existing NixOS system is separately supported: follow
 
 ## Build and install
 
-Choose GNOME or Plasma from the [latest release](https://github.com/lnbits/peasy/releases/latest)
+Visit the [latest release](https://github.com/lnbits/peasy/releases/latest)
 or the website's download section. Download the complete `.iso` using its release
 link, and the matching `.iso.sha256` GitHub asset into the same directory. Verify
 before writing it to USB or booting it in a VM (replace `v1.2.3` with the tag):
@@ -20,7 +22,7 @@ before writing it to USB or booting it in a VM (replace `v1.2.3` with the tag):
 sha256sum --check peasy-nixos-v1.2.3-gnome-x86_64.iso.sha256
 ```
 
-Use `plasma` instead of `gnome` for Plasma. No joining or extraction is needed.
+No joining or extraction is needed.
 Checksums detect corruption, not publisher impersonation; get them from the
 trusted repository's release page. Only the latest release's ISOs are retained.
 Older GitHub checksums and source archives remain, but old ISO links expire.
@@ -34,28 +36,31 @@ On an x86_64 Linux Nix builder, from this checkout:
 
 ```console
 nix build .#iso-gnome --out-link result-iso-gnome
-nix build .#iso-plasma --out-link result-iso-plasma
 ```
 
-Images are below each output's `iso/` directory. Both use `flake.lock`; there are
-no additional inputs, generators or mutable wallpaper downloads. Allow substantial
-store and temporary disk space for two desktops. Old `experimental-live-only`
+The image is below the output's `iso/` directory and uses `flake.lock`; there are
+no additional inputs, generators or mutable wallpaper downloads. A local-only
+Plasma live build remains available with `nix build .#iso-plasma --out-link result-iso-plasma`;
+it is not published. Allow substantial store and temporary disk space. Old `experimental-live-only`
 images predate the target integration and do **not** retain Peasy after installation.
 
-Boot the image and use the normal graphical installer. Its disk, encryption,
-desktop and account choices remain upstream's. After installation, remove the
+Boot the image and use the graphical installer. Its disk, encryption and account
+choices remain upstream's; the desktop chooser is narrowed to GNOME (default)
+and XFCE, retaining their upstream configuration recipes. After installation, remove the
 installation media and boot the installed disk. Peasy is configured through an
 ordinary local Nix module; no follow-up Peasy installation command is intended.
 Configure your own OpenAI credentials or reachable Ollama provider in Peasy.
 No provider account, API key or local model is bundled.
 
-`assets/peasy_bg.png` is the default wallpaper in both the live and installed
-systems. GNOME gets light/dark wallpaper defaults and a green accent. Plasma
+`assets/peasy_bg.png` is the default wallpaper in the live and installed GNOME
+systems. GNOME gets light/dark wallpaper defaults and a green accent. XFCE keeps
+its normal desktop appearance; Peasy's XFCE appearance adapter is not implemented.
+The local-only Plasma build
 applies the bundled wallpaper and green accent once after plasmashell is ready.
 A per-user marker prevents subsequent logins from overwriting the user's choices.
 These are trusted build-time defaults, not AI-controlled scripts or file paths.
 
-Both ISOs retain the NixOS UEFI/GRUB menu design and logo, with a pale green
+The ISO profiles retain the NixOS UEFI/GRUB menu design and logo, with a pale green
 background, green highlights and **Includes Peasy** below the menu. Boot entries
 also mention Peasy, including in the legacy BIOS menu. The graphical installer
 retains its NixOS logos, wording and layout, with a green sidebar and
@@ -192,8 +197,9 @@ nix build --no-link .#checks.x86_64-linux.installed-gnome
 nix build --no-link .#checks.x86_64-linux.installed-plasma
 ```
 
-`installer-target` compares original and patched Calamares configuration generation
-for both desktops, mocks external effects, and checks helper failure/retry safety.
+`installer-target` verifies the GNOME-default, GNOME/XFCE chooser and compares
+original and patched Calamares configuration generation for GNOME, XFCE and
+the retained local Plasma fixture. It mocks external effects and checks helper failure/retry safety.
 The expected generated configuration differs only by the Peasy import.
 
 `installed-gnome` (BIOS) and `installed-plasma` (UEFI) run the patched Calamares
@@ -214,9 +220,12 @@ release flags. The desktop runtime tests check the UI/tray and appearance adapte
 
 ## CI and publication
 
-The single `iso.yml` workflow uses a GNOME/Plasma matrix. Each build requires its
-desktop runtime test, a fresh offline installation of the actual ISO, and the
-release/test-harness unit tests. Timings and logs are uploaded separately from
+The single `iso.yml` workflow builds only the GNOME ISO. It requires GNOME and
+XFCE tray runtime tests, separate fresh offline GNOME installations of the same
+actual ISO under BIOS and UEFI, and the release/test-harness unit tests.
+XFCE's configuration generation and tray are tested, but its Internet-dependent
+installation is not covered by these offline ISO tests.
+Timings and logs are uploaded separately from
 the release payload. Manual dispatch produces complete ISO Actions artifacts and SHA-256
 files only; it does not publish. Tags `v*` are checked out at their exact event
 commit. `lib.isoReleaseStatus` in `flake.nix` enables release eligibility; it does
@@ -225,17 +234,18 @@ not bypass CI checks or guarantee compatibility with every physical machine.
 Desktop images can exceed GitHub's
 [2 GiB limit per release asset](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases).
 The publish job therefore uploads complete images to R2 using multipart transfers
-(a transport detail: users download a single `.iso`, not parts). It validates both
-local images before any release writes, then checks stored size/metadata and
-streams each image back from R2 to verify its full SHA-256. A public HEAD request
-also checks that the download domain serves each image at its expected size.
+(a transport detail: users download a single `.iso`, not parts). It validates the
+local GNOME image before any release writes, then checks stored size/metadata and
+streams the image back from R2 to verify its full SHA-256. A public HEAD request
+also checks that the download domain serves the image at its expected size.
 Versioned paths include the tag and exact commit; conflicting objects are never
 overwritten. No second local ISO copy is needed for publication.
 
-GitHub receives each `.iso.sha256`, `SHA256SUMS` covering both **whole images**,
+GitHub receives the `.iso.sha256`, `SHA256SUMS` covering the **whole image**,
 and `iso-downloads.json`. Release notes contain direct download links and the same
 machine-readable metadata. The website reads GitHub's latest published release,
-validates its metadata, and displays both download cards. No R2 CORS or Worker is
+validates its metadata, and displays one download card. The previous dual-image
+manifest format remains readable, but only its GNOME download is shown. No R2 CORS or Worker is
 needed. With no JavaScript, unavailable API, or a legacy release, buttons fall back
 to GitHub Releases rather than guessing nonexistent ISO URLs.
 
@@ -296,7 +306,7 @@ Local regression checks (no cloud credentials or ISO builds required):
 nix build --no-link -L .#checks.x86_64-linux.release
 ```
 
-This is the same gate used before CI builds either ISO. Python, Boto3/botocore,
+This is the same gate used before CI builds the ISO. Python, Boto3/botocore,
 Node and actionlint come from `flake.lock`, not the runner's preinstalled SDK.
 It runs the publication/retention tests, actual SDK multipart stubs, website
 checks and workflow wiring/lint checks in a network-isolated build sandbox.
@@ -305,8 +315,8 @@ Successful mocked uploads/deletions are buffered to avoid looking like real
 publication; failures still show their output. The SDK check cannot silently skip.
 
 Publication also requires the security job (privileged sandbox VM, core package
-and system-configuration checks), both desktop tray regressions, and both fresh
-offline ISO install/boot/package-install-and-remove tests. The publish job checks
+and system-configuration checks), GNOME/XFCE tray regressions, and both fresh
+BIOS/UEFI offline GNOME ISO install/boot/package-install-and-remove tests. The publish job checks
 its locked SDK again before loading R2 credentials. These are release gates,
 not proof of compatibility with every machine or of live cloud configuration.
 

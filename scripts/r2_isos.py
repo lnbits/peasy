@@ -59,8 +59,9 @@ def prepare(source, output, tag, commit, public_url):
         raise ValueError("Expected a safe v* tag and exact Git commit")
     public_url = origin(public_url)
     manifest = {"schema": 1, "tag": tag, "commit": commit, "images": []}
-    # Validate both desktops before producing any uploadable metadata.
-    for desktop in ("gnome", "plasma"):
+    # Publish one GNOME live image; the installer offers GNOME or XFCE.
+    # Keep old Plasma keys recognizable above for latest-only retention.
+    for desktop in ("gnome",):
         status = json.loads((source / f"{desktop}-iso-status.json").read_text())
         if any(status.get(key) is not True for key in
                ("releaseReady", "installedTargetHasPeasy", "installedBootVerified")):
@@ -100,15 +101,18 @@ def notes(manifest):
 {marker(manifest)}
 # Peasy {tag}
 
-Built from `{commit}`. Both desktops passed CI checks and a fresh offline
-installation/boot test. Physical-hardware testing is still recommended.
+Built from `{commit}`. The GNOME ISO passed CI checks and fresh offline
+GNOME installation/boot tests with BIOS and UEFI. Physical-hardware testing
+is still recommended.
 
 ## Download
 
 {links}
 
-These are complete, bootable images: download one, verify it, then boot it in a
-VM or write it to a USB drive. Peasy is included in the installed system.
+Download the complete, bootable ISO, verify it, then boot it in a VM or write it
+to a USB drive. The live desktop is GNOME. Choose GNOME or lightweight XFCE in
+the installer; XFCE installation requires an Internet connection.
+Peasy is included in either installed desktop.
 Configure your own AI provider afterward; no API keys are bundled.
 
 Download the matching `.iso.sha256` asset below into the same folder and run:
@@ -117,8 +121,8 @@ Download the matching `.iso.sha256` asset below into the same folder and run:
 sha256sum --check peasy-nixos-{tag}-gnome-x86_64.iso.sha256
 ```
 
-Use `plasma` instead of `gnome` for Plasma. `SHA256SUMS` contains both whole-image
-hashes. Checksums detect corruption; they are not independent proof of publisher
+`SHA256SUMS` contains the whole-image hash.
+Checksums detect corruption; they are not independent proof of publisher
 trust. Source and build instructions are available in the tagged repository.
 
 Only the latest release's ISOs are retained in R2. Older ISO links expire after

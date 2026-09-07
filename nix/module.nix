@@ -219,6 +219,9 @@ in
     ];
 
     security.polkit.enable = true;
+    # The system exporter reads this stable path. Do not rely on a desktop
+    # module linking all of /share (XFCE links only selected subdirectories).
+    environment.pathsToLink = lib.optional cfg.desktop.enable "/share/peasy";
     environment.systemPackages = [
       package
       (pkgs.writeTextDir "share/polkit-1/actions/io.github.peasy.policy" ''

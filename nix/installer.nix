@@ -12,6 +12,9 @@ let
     exec ${pkgs.python3}/bin/python3 ${script} "$@"
   '';
   extensions = pkgs.calamares-nixos-extensions.overrideAttrs (old: {
+    nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+      (pkgs.python3.withPackages (ps: [ ps.pyyaml ]))
+    ];
     patchFlags = [
       "-p1"
       "--fuzz=0"
@@ -20,6 +23,7 @@ let
     postPatch = (old.postPatch or "") + ''
       substituteInPlace modules/nixos/main.py \
         --replace-fail '@peasyTargetInstaller@' '${helper}'
+      python3 ${./installer-desktops.py} config/modules/packagechooser.conf
       # Retain upstream's modules, slides, translations and desktop previews.
       # Branding is separate from the target system configuration generator.
       cp -r branding/nixos branding/peasy

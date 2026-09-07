@@ -74,14 +74,14 @@ class R2Releases(unittest.TestCase):
     def latest(self, manifest):
         return {"tag_name": TAG, "draft": False, "prerelease": False, "body": r2_isos.notes(manifest)}
 
-    def old_key(self, storage, tag="v0.1.0"):
-        key = f"{r2_isos.PREFIX}{tag}/{COMMIT}/peasy-nixos-{tag}-gnome-x86_64.iso"
+    def old_key(self, storage, tag="v0.1.0", desktop="gnome"):
+        key = f"{r2_isos.PREFIX}{tag}/{COMMIT}/peasy-nixos-{tag}-{desktop}-x86_64.iso"
         storage.objects[key] = (b"old", {"peasy-tag": tag, "peasy-commit": COMMIT, "sha256": "b" * 64})
         return key
 
     def test_prepare_only_small_github_assets_with_whole_image_hashes(self):
         manifest, assets = self.prepare()
-        self.assertEqual(len(manifest["images"]), 2)
+        self.assertEqual([item["desktop"] for item in manifest["images"]], ["gnome"])
         self.assertEqual({item.name for item in assets}, {
             "SHA256SUMS", "iso-downloads.json", *[f"{item['name']}.sha256" for item in manifest["images"]]})
         self.assertEqual(json.loads((self.output / "iso-downloads.json").read_text()), manifest)
@@ -89,11 +89,22 @@ class R2Releases(unittest.TestCase):
             self.assertIn(f"{item['sha256']}  {item['name']}\n", (self.output / "SHA256SUMS").read_text())
         self.assertFalse(list(self.output.glob("*.iso*part*")))
 
+    def test_gnome_release_does_not_require_plasma_artifacts(self):
+        for path in self.source.iterdir():
+            if "plasma" in path.name:
+                path.unlink()
+        manifest, assets = self.prepare()
+        self.assertEqual(len(manifest["images"]), 1)
+        self.assertEqual(len(assets), 3)
+        notes = r2_isos.notes(manifest)
+        self.assertIn("XFCE installation requires an Internet connection", notes)
+        self.assertNotIn("Plasma ISO", notes)
+
     def test_bad_input_never_produces_release_assets(self):
         for tag, commit in (("v1/path", COMMIT), (TAG, "short")):
             with self.assertRaises(ValueError):
                 r2_isos.prepare(self.source, self.output, tag, commit, "https://downloads.askpeasy.com")
-        (self.source / f"peasy-nixos-{TAG}-plasma-x86_64.iso.sha256").write_text("wrong")
+        (self.source / f"peasy-nixos-{TAG}-gnome-x86_64.iso.sha256").write_text("wrong")
         with self.assertRaises(ValueError):
             self.prepare()
         self.assertEqual(list(self.output.iterdir()), [])
@@ -117,21 +128,21 @@ class R2Releases(unittest.TestCase):
         self.publish(manifest, assets, storage, github)
         self.assertFalse(github.release["draft"])
         self.assertIn(r2_isos.marker(manifest), github.release["body"])
-        self.assertEqual(len(storage.uploads), 2)
+        self.assertEqual(len(storage.uploads), 1)
         self.assertTrue(any(call[:2] == ("release", "edit") and "--latest" in call for call in github.calls))
         self.publish(manifest, assets, storage, github)
-        self.assertEqual(len(storage.uploads), 2)
+        self.assertEqual(len(storage.uploads), 1)
 
-    def test_interrupted_second_upload_stays_private_then_resumes(self):
+    def test_interrupted_upload_stays_private_then_resumes(self):
         manifest, assets = self.prepare()
         storage, github = Storage(), GitHub()
-        storage.fail_desktop = "plasma"
+        storage.fail_desktop = "gnome"
         with self.assertRaises(RuntimeError):
             self.publish(manifest, assets, storage, github)
         self.assertTrue(github.release["draft"])
         storage.fail_desktop = None
         self.publish(manifest, assets, storage, github)
-        self.assertEqual(len(storage.uploads), 2)
+        self.assertEqual(len(storage.uploads), 1)
 
     def test_corrupt_remote_bytes_stay_private_even_with_correct_metadata(self):
         manifest, assets = self.prepare()
@@ -149,7 +160,7 @@ class R2Releases(unittest.TestCase):
         storage.objects[key][1]["sha256"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
             self.deliver(storage, manifest)
-        self.assertEqual(len(storage.uploads), 2)
+        self.assertEqual(len(storage.uploads), 1)
 
     def test_published_expired_iso_never_restored(self):
         manifest, _ = self.prepare()
@@ -191,11 +202,12 @@ class R2Releases(unittest.TestCase):
         storage = Storage()
         self.deliver(storage, manifest)
         old = self.old_key(storage)
+        old_plasma = self.old_key(storage, desktop="plasma")
         unrelated = self.old_key(storage, "v0.2.0")
         storage.objects[unrelated] = (b"not ours", {})
         storage.objects["unrelated.iso"] = (b"keep", {})
         r2_isos.prune(storage, "bucket", manifest, REPO, lambda *args: json.dumps(self.latest(manifest)))
-        self.assertEqual(storage.deleted, [old])
+        self.assertEqual(storage.deleted, [old, old_plasma])
         self.assertIn(unrelated, storage.objects)
         self.assertIn("unrelated.iso", storage.objects)
         self.assertTrue(all(key in storage.objects for key in storage.uploads))

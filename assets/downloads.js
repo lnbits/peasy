@@ -15,10 +15,12 @@
     if (manifest.schema !== 1 || manifest.tag !== release.tag_name ||
         !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(manifest.commit) ||
         !release.body.includes(`<!-- peasy-iso-release:${manifest.commit} -->`) ||
-        !Array.isArray(manifest.images) || manifest.images.length !== 2 || !Array.isArray(release.assets)) {
+        !Array.isArray(manifest.images) || ![1, 2].includes(manifest.images.length) || !Array.isArray(release.assets)) {
       throw new Error('Invalid release metadata');
     }
-    const images = ['gnome', 'plasma'].map(desktop => {
+    // Accept the previous two-image format until the first single-ISO tag is published.
+    const desktops = manifest.images.length === 1 ? ['gnome'] : ['gnome', 'plasma'];
+    const images = desktops.map(desktop => {
       const matches = manifest.images.filter(item => item && item.desktop === desktop);
       if (matches.length !== 1) throw new Error('Missing or duplicate desktop');
       const item = matches[0];
@@ -48,15 +50,16 @@
       if (!response.ok) throw new Error('Release lookup unavailable');
       const release = parseRelease(await response.json());
       for (const item of release.images) {
+        if (item.desktop !== 'gnome') continue;
         const button = doc.getElementById(`download-${item.desktop}`);
         button.href = item.url;
-        button.textContent = `Download ${item.desktop === 'gnome' ? 'GNOME' : 'Plasma'} ISO ↓`;
+        button.textContent = 'Download Peasy ISO ↓';
         doc.getElementById(`checksum-${item.desktop}`).href = item.checksumURL;
         doc.getElementById(`download-${item.desktop}-meta`).textContent =
           `64-bit Intel / AMD · ${(item.size / 1024 ** 3).toFixed(2)} GiB · ${release.tag}`;
       }
       doc.getElementById('download-release').href = release.url;
-      status.textContent = `Latest release: ${release.tag}. Full images, ready to download — no parts to join.`;
+      status.textContent = `Latest release: ${release.tag}. Complete ISO, ready to download — no parts to join.`;
     } catch (_) {
       status.textContent = 'Check GitHub Releases for the latest available images and checksums.';
     } finally {

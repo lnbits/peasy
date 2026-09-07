@@ -20,17 +20,19 @@ And because NixOS has excellent rollback support, if anything goes wrong, you ca
 
 ## Install NixOS with Peasy
 
-GNOME and KDE Plasma ISO build targets include Peasy, the bundled wallpaper and
-green accent. A narrow integration with the upstream NixOS graphical installer
+The Peasy ISO boots GNOME with Peasy, the bundled wallpaper and green accent.
+GNOME is the default installer choice; optional lightweight XFCE requires Internet
+access to install. A narrow integration with the upstream NixOS graphical installer
 adds Peasy's local Nix module and bundled source to the installed system, while
 preserving the normal installer screens, partitioning and account setup.
 
-Tag releases automatically publish both installers after CI and upload verification.
-Download complete GNOME or Plasma ISOs from the links in the latest release;
+Tag releases automatically publish one GNOME ISO after CI and upload verification.
+Download the complete ISO from the link in the latest release;
 whole-image SHA-256 checksums are attached on GitHub. Only the latest release’s
 ISOs are retained in download storage.
-Installed-disk boot is verified in GNOME/BIOS and Plasma/UEFI VMs; physical-hardware
-testing remains important. See [ISO downloads, installation and validation](docs/iso.md).
+Release CI requires fresh offline GNOME installation/boot tests in BIOS and UEFI
+VMs, plus GNOME and XFCE tray checks; physical-hardware testing remains important.
+See [ISO downloads, installation and validation](docs/iso.md).
 Installing Peasy on an existing NixOS system remains supported independently below.
 
 ## Install on existing NixOS

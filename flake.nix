@@ -180,6 +180,12 @@
             module = self.nixosModules.default;
             package = self.packages.${system}.default;
           };
+          xfce-tray = import ./nix/tests/desktop-session.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+            package = self.packages.${system}.default;
+            desktop = "xfce";
+          };
           installer-target =
             let
               installer = import ./nix/installer.nix { inherit pkgs; };

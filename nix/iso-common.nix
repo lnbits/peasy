@@ -45,6 +45,8 @@
     The upstream NixOS graphical installer has a narrow Peasy integration:
     it adds /etc/nixos/peasy.nix and bundled Peasy source to the target system.
     Partitioning, accounts and the normal nixos-install flow stay upstream's.
+    GNOME is selected by default. Optional XFCE installation needs Internet
+    access; this image caches its live desktop's installed-system packages.
     See https://github.com/lnbits/peasy/blob/main/docs/iso.md for validation status.
     Peasy system Apply is disabled in this live session; search and supported
     local desktop actions remain available. Do not put production API keys on

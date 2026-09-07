@@ -1,6 +1,9 @@
 import json
 import os
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -13,6 +16,48 @@ import iso_vm
 
 
 class VMTests(unittest.TestCase):
+    def test_guest_python_lookup_under_real_bash_pipefail(self):
+        bash = shutil.which('bash')
+        self.assertIsNotNone(bash, 'Guest-command regression tests require Bash')
+        with tempfile.TemporaryDirectory(prefix='peasy python ') as temporary:
+            root = Path(temporary)
+            store, path_dir = root / 'store', root / 'path'
+            store.mkdir()
+            path_dir.mkdir()
+
+            def interpreter(path, executable=True):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('#!/bin/sh\nexit 0\n')
+                path.chmod(0o755 if executable else 0o644)
+                return path
+
+            def run(command):
+                # Execute the production shell fragment, isolating PATH and
+                # substituting only the store root for disposable fixtures.
+                command = command.replace('/nix/store/', shlex.quote(str(store)) + '/')
+                return subprocess.run([bash, '--noprofile', '--norc', '-eo', 'pipefail', '-c', command],
+                                      env={'PATH': str(path_dir), 'LC_ALL': 'C'},
+                                      capture_output=True, text=True, check=True).stdout
+
+            vm = types.SimpleNamespace(run=run)
+            with self.assertRaises(subprocess.CalledProcessError) as missing:
+                iso_vm.guest_python(vm)
+            self.assertIn('No executable Python 3', missing.exception.stderr)
+            self.assertEqual(missing.exception.stdout, '')
+
+            interpreter(store / '000-python3-invalid/bin/python3', executable=False)
+            (store / '001-python3-directory/bin/python3').mkdir(parents=True)
+            first = interpreter(store / '002-python3-valid/bin/python3')
+            self.assertEqual(iso_vm.guest_python(vm), str(first))
+
+            # Far more output than a pipe buffer if all candidates were printed.
+            for index in range(1024):
+                interpreter(store / f'zzz{index:04}-python3-{"x" * 100}/bin/python3')
+            self.assertEqual(iso_vm.guest_python(vm), str(first))
+
+            preferred = interpreter(path_dir / 'python3')
+            self.assertEqual(iso_vm.guest_python(vm), str(preferred))
+
     def test_installed_checks_reject_real_provider_and_key_paths(self):
         vm = Mock()
         vm.args.output = Path('/test-output')

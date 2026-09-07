@@ -94,11 +94,11 @@ jobs:
   build:
     needs: release-tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        desktop: [gnome, plasma]
+        desktop: [gnome]
     env:
       DESKTOP: ${{ matrix.desktop }}
       EVENT_NAME: ${{ github.event_name }}
@@ -147,7 +147,7 @@ jobs:
             echo '::error::At least 45 GiB free space is required for the ISO and installed-disk tests; use a larger runner.'
             exit 1
           }
-      - name: Static checks and this desktop's runtime regression
+      - name: Static checks and both installer desktops' tray regressions
         shell: bash
         run: |
           set -euo pipefail
@@ -163,7 +163,8 @@ jobs:
           # Installed-system acceptance runs against the actual ISO below.
           # Keep the desktop-specific tray regression as a separate check.
           nix build --no-link --max-jobs 1 \
-            ".#checks.x86_64-linux.${DESKTOP}-tray"
+            ".#checks.x86_64-linux.${DESKTOP}-tray" \
+            .#checks.x86_64-linux.xfce-tray
       - name: Build ISO and checksums
         shell: bash
         run: |
@@ -184,34 +185,38 @@ jobs:
           cd artifacts
           sha256sum "$filename" > "$filename.sha256"
           sha256sum --check "$filename.sha256"
-      - name: Fresh offline install of the actual release ISO
+      - name: Fresh offline BIOS and UEFI installs of the actual release ISO
         shell: bash
         run: |
           set -euo pipefail
           nix build .#iso-test-tools --out-link result-iso-test-tools
           mapfile -t images < <(find artifacts -maxdepth 1 -type f -name '*.iso')
           [[ ${#images[@]} == 1 ]]
-          firmware=(--firmware bios)
-          if [[ "$DESKTOP" == plasma ]]; then
-            firmware=(--firmware uefi
-              --ovmf-code "$PWD/result-iso-test-tools/FV/OVMF_CODE.fd"
-              --ovmf-vars "$PWD/result-iso-test-tools/FV/OVMF_VARS.fd")
-          fi
           # No --reuse-base, no --online, and no host-store mount. CI also
           # rejects snapshot reuse inside the driver itself.
-          python3 -B scripts/iso_vm.py --iso "${images[0]}" --desktop "$DESKTOP" \
-            "${firmware[@]}" --memory 6144 --cpus 2 \
-            --qemu "$PWD/result-iso-test-tools/bin/qemu-system-x86_64" \
-            --qemu-img "$PWD/result-iso-test-tools/bin/qemu-img" \
-            --cache-dir "$RUNNER_TEMP/peasy-iso-vm-cache" \
-            --output "$PWD/diagnostics/iso-vm"
+          for mode in bios uefi; do
+            firmware=(--firmware bios)
+            if [[ "$mode" == uefi ]]; then
+              firmware=(--firmware uefi
+                --ovmf-code "$PWD/result-iso-test-tools/FV/OVMF_CODE.fd"
+                --ovmf-vars "$PWD/result-iso-test-tools/FV/OVMF_VARS.fd")
+            fi
+            python3 -B scripts/iso_vm.py --iso "${images[0]}" --desktop "$DESKTOP" \
+              "${firmware[@]}" --memory 6144 --cpus 2 \
+              --qemu "$PWD/result-iso-test-tools/bin/qemu-system-x86_64" \
+              --qemu-img "$PWD/result-iso-test-tools/bin/qemu-img" \
+              --cache-dir "$RUNNER_TEMP/peasy-iso-vm-cache" \
+              --output "$PWD/diagnostics/iso-vm-$mode"
+          done
       - name: Preserve tray diagnostics on failure
         if: failure()
         shell: bash
         run: |
           mkdir -p diagnostics
-          drv=$(nix eval --raw ".#checks.x86_64-linux.${DESKTOP}-tray.drvPath") || exit 0
-          nix log "$drv" > "diagnostics/${DESKTOP}-tray.log" 2>&1 || true
+          for desktop in gnome xfce; do
+            drv=$(nix eval --raw ".#checks.x86_64-linux.${desktop}-tray.drvPath") || continue
+            nix log "$drv" > "diagnostics/${desktop}-tray.log" 2>&1 || true
+          done
       - name: Upload installation timings and diagnostics
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

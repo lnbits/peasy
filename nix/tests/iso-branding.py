@@ -20,6 +20,24 @@ expected_settings = yaml.safe_load(
 expected_settings["branding"] = "peasy"
 assert settings == expected_settings, "branding changed installer workflow/settings"
 
+chooser = load(extensions / "etc/calamares/modules/packagechooser.conf")
+original_chooser = load(upstream / "config/modules/packagechooser.conf")
+assert chooser["default"] == "gnome"
+assert [item["id"] for item in chooser["items"]] == ["gnome", "xfce"]
+assert {key: value for key, value in chooser.items() if key != "items"} == {
+    key: value for key, value in original_chooser.items() if key != "items"
+}
+for item in chooser["items"]:
+    original_item = next(entry for entry in original_chooser["items"] if entry["id"] == item["id"])
+    assert item["packages"] == original_item["packages"]
+    assert item["screenshot"] == original_item["screenshot"]
+    assert (extensions / "share/calamares/branding/peasy" / item["screenshot"]).is_file()
+    if item["id"] == "gnome":
+        assert item == original_item
+    else:
+        assert "lightweight" in item["name"]
+        assert "requires an Internet connection" in item["description"]
+
 original = load(upstream / "branding/nixos/branding.desc")
 desc = load(branding / "branding.desc")
 assert desc["componentName"] == "peasy"

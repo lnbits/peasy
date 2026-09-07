@@ -31,8 +31,8 @@ class ReleaseWorkflow(unittest.TestCase):
         sdk_step = next(step for step in self.jobs['publish']['steps'] if 'test_r2_sdk.py' in step.get('run', ''))
         self.assertEqual(sdk_step['env']['PEASY_REQUIRE_R2_SDK'], '1')
 
-    def test_both_desktops_and_security_gate_publication(self):
-        self.assertEqual(set(self.jobs['build']['strategy']['matrix']['desktop']), {'gnome', 'plasma'})
+    def test_single_iso_both_installer_desktops_and_security_gate_publication(self):
+        self.assertEqual(self.jobs['build']['strategy']['matrix']['desktop'], ['gnome'])
         self.assertEqual(set(self.jobs['publish']['needs']), {'build', 'security'})
         self.assertIn("github.event_name == 'push' && github.ref_type == 'tag'", self.jobs['publish']['if'])
         self.assertEqual(self.workflow['on']['push']['tags'], ['v*'])
@@ -42,9 +42,12 @@ class ReleaseWorkflow(unittest.TestCase):
         for check in ['iso-config', 'installer-target', 'wasm-imports', 'desktop-config']:
             self.assertIn(f'.#checks.x86_64-linux.{check}', build.split())
         self.assertIn('".#checks.x86_64-linux.${DESKTOP}-tray"', build)
+        self.assertIn('.#checks.x86_64-linux.xfce-tray', build.split())
         self.assertIn('scripts/iso_vm.py --iso', build)
         self.assertIn('--firmware bios', build)
         self.assertIn('--firmware uefi', build)
+        self.assertIn('for mode in bios uefi; do', build)
+        self.assertIn('diagnostics/iso-vm-$mode', build)
         # Ignore explanatory comments when checking execution flags.
         active = '\n'.join(line for line in build.splitlines() if not line.lstrip().startswith('#'))
         self.assertNotIn('--reuse-base', active)

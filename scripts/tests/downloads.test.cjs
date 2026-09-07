@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const {parseRelease, loadDownloads} = require('../../assets/downloads.js');
 const {readFileSync} = require('node:fs');
 
-function fixture() {
+function fixture(desktops = ['gnome']) {
   const tag = 'v1.2.3', commit = 'a'.repeat(40);
-  const manifest = {schema: 1, tag, commit, images: ['gnome', 'plasma'].map(desktop => {
+  const manifest = {schema: 1, tag, commit, images: desktops.map(desktop => {
     const name = `peasy-nixos-${tag}-${desktop}-x86_64.iso`;
     return {desktop, name, size: 6 * 1024 ** 3, sha256: 'b'.repeat(64),
       url: `https://downloads.askpeasy.com/peasy/releases/${tag}/${commit}/${name}`};
@@ -18,11 +18,19 @@ function fixture() {
   return {manifest, release, encode};
 }
 
-test('published full-ISO release provides both exact download and checksum links', () => {
+test('single-ISO release provides exact download and checksum links', () => {
   const parsed = parseRelease(fixture().encode());
   assert.equal(parsed.tag, 'v1.2.3');
-  assert.equal(parsed.images.length, 2);
+  assert.equal(parsed.images.length, 1);
   assert.ok(parsed.images[0].checksumURL.endsWith('.iso.sha256'));
+});
+
+test('previous dual-image releases remain readable during migration', () => {
+  const parsed = parseRelease(fixture(['gnome', 'plasma']).encode());
+  assert.deepEqual(parsed.images.map(item => item.desktop), ['gnome', 'plasma']);
+  assert.throws(() => parseRelease(fixture(['plasma']).encode()));
+  assert.throws(() => parseRelease(fixture(['gnome', 'xfce']).encode()));
+  assert.throws(() => parseRelease(fixture(['gnome', 'plasma', 'xfce']).encode()));
 });
 
 test('reject untrusted, malformed, incomplete or unpublished metadata', () => {
@@ -50,21 +58,24 @@ test('reject untrusted, malformed, incomplete or unpublished metadata', () => {
 function documentStub() {
   const elements = new Map();
   return {getElementById(id) {
+    assert.ok(!id.includes('plasma'), 'The website has only one ISO card');
     if (!elements.has(id)) elements.set(id, {textContent: '', href: 'https://github.com/lnbits/peasy/releases/latest'});
     return elements.get(id);
   }};
 }
 
-test('UI resolves both cards without HTML injection', async () => {
+test('UI resolves the single card for new and previous releases without HTML injection', async () => {
+  for (const desktops of [['gnome'], ['gnome', 'plasma']]) {
   const doc = documentStub();
   await loadDownloads(doc, async (url, options) => {
     assert.equal(options.credentials, 'omit');
     assert.equal(url, 'https://api.github.com/repos/lnbits/peasy/releases/latest');
-    return {ok: true, json: async () => fixture().encode()};
+    return {ok: true, json: async () => fixture(desktops).encode()};
   });
   assert.match(doc.getElementById('download-gnome').href, /^https:\/\/downloads.askpeasy.com\//);
-  assert.equal(doc.getElementById('download-plasma').textContent, 'Download Plasma ISO ↓');
-  assert.match(doc.getElementById('download-plasma-meta').textContent, /6.00 GiB/);
+  assert.equal(doc.getElementById('download-gnome').textContent, 'Download Peasy ISO ↓');
+  assert.match(doc.getElementById('download-gnome-meta').textContent, /6.00 GiB/);
+  }
 });
 
 test('network, rate limit and invalid metadata preserve functional release-page fallback', async () => {
@@ -83,7 +94,7 @@ test('downloads is the third major section; no-JS links are present', () => {
   assert.match(sections[0], /hero/);
   assert.match(sections[1], /id="why"/);
   assert.match(sections[2], /id="downloads"/);
-  for (const desktop of ['gnome', 'plasma']) {
-    assert.ok(html.includes(`id="download-${desktop}" href="https://github.com/lnbits/peasy/releases/latest"`));
-  }
+  assert.ok(html.includes('id="download-gnome" href="https://github.com/lnbits/peasy/releases/latest"'));
+  assert.ok(!html.includes('id="download-plasma"'));
+  assert.ok(html.includes('XFCE installation requires an Internet connection'));
 });

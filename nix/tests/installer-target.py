@@ -84,7 +84,11 @@ def capture(source, desktop, helper=None, fail_helper=False):
     cfg = written["configuration"]
     assert "./hardware-configuration.nix" in cfg
     assert 'users.users."peasytest"' in cfg
-    assert f"services.desktopManager.{desktop}.enable = true" in cfg
+    option = "services.xserver.desktopManager.xfce" if desktop == "xfce" else f"services.desktopManager.{desktop}"
+    assert f"{option}.enable = true" in cfg
+    if desktop == "xfce":
+        assert "services.xserver.displayManager.lightdm.enable = true" in cfg
+        assert "services.desktopManager.gnome.enable = true" not in cfg
     assert ("./peasy.nix" in cfg) == (helper is not None)
     if helper is not None:
         assert commands.count(["pkexec", helper, "/test-target"]) == 1
@@ -93,7 +97,7 @@ def capture(source, desktop, helper=None, fail_helper=False):
 
 
 if __name__ == "__main__":
-    for desktop in ["gnome", "plasma6"]:
+    for desktop in ["gnome", "xfce", "plasma6"]:
         original = capture(sys.argv[1], desktop)
         cfg = capture(sys.argv[2], desktop, sys.argv[3])
         # The generated system differs only by the reviewed Peasy module import.

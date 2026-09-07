@@ -23,6 +23,26 @@ import uuid
 HERE = Path(__file__).resolve().parent
 
 
+def guest_python(vm):
+    # With pipefail, `printf many-paths | head -1` can fail with SIGPIPE (141)
+    # after head has already printed a valid interpreter. Select one without
+    # a pipe, and reject unmatched globs/non-executable entries explicitly.
+    return vm.run('''
+if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+else
+    for candidate in /nix/store/*-python3-*/bin/python3; do
+        if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+            printf '%s\\n' "$candidate"
+            exit 0
+        fi
+    done
+    printf '%s\\n' 'No executable Python 3 found in the guest' >&2
+    exit 1
+fi
+''').strip()
+
+
 def digest(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -306,7 +326,7 @@ def benchmark(args):
                 vm.login()
                 result['timings_seconds']['live_boot_console'] = time.monotonic() - start
                 vm.send_file(HERE / 'iso_vm_guest.py', '/tmp/peasy-iso-vm-guest.py')
-                python = vm.run('command -v python3 || printf "%s\\n" /nix/store/*-python3-*/bin/python3 | head -1').strip()
+                python = guest_python(vm)
                 print('Running shipped Calamares installation job', flush=True)
                 start = time.monotonic()
                 try:
@@ -344,7 +364,7 @@ def benchmark(args):
             vm.login(installed=True)
             installed_checks(vm, args.desktop)
             vm.send_file(HERE.parent / 'nix/tests/installer-package.py', '/tmp/peasy-package.py')
-            python = vm.run('command -v python3 || printf "%s\\n" /nix/store/*-python3-*/bin/python3 | head -1').strip()
+            python = guest_python(vm)
             # patchelf is retained by normal configuration builders, but is not
             # a default global command. Its complete package (including manual)
             # is cached, unlike jq's executable-only transitive dependency.
