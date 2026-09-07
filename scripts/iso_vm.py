@@ -253,7 +253,9 @@ def installed_checks(vm, desktop):
     vm.run('pkaction --action-id io.github.peasy.apply --verbose | grep auth_admin')
     vm.run("if su - peasytest -c 'pkcheck --action-id io.github.peasy.apply --process $$'; then exit 1; fi")
     vm.run('test -f /etc/peasy/wallpaper.png; test -f /etc/nixos/peasy.nix; ! id nixos')
-    vm.run('test ! -e /etc/peasy/ISO-README.txt; test ! -e /home/peasytest/.config/peasy/openai-api-key')
+    vm.run('test ! -e /etc/peasy/ISO-README.txt; '
+           'test ! -e /home/peasytest/.config/peasy/openai-key; '
+           'test ! -e /home/peasytest/.config/peasy/provider.json')
     vm.control('screendump', filename=str(vm.args.output / f'{desktop}-installed.ppm'))
 
 

@@ -22,7 +22,10 @@
           default = pkgs.callPackage ./nix/package.nix { };
           peasy = pkgs.callPackage ./nix/package.nix { };
           peasy-core = pkgs.callPackage ./nix/package-core.nix { };
-          iso-release-tools = pkgs.python3.withPackages (ps: [ ps.boto3 ]);
+          iso-release-tools = pkgs.python3.withPackages (ps: [
+            ps.boto3
+            ps.pyyaml
+          ]);
         }
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           iso-gnome = self.nixosConfigurations.peasy-iso-gnome.config.system.build.isoImage;
@@ -97,6 +100,10 @@
         in
         {
           package = self.packages.${system}.default;
+          release = import ./nix/tests/release.nix {
+            inherit pkgs;
+            releaseTools = self.packages.${system}.iso-release-tools;
+          };
           core-package =
             pkgs.runCommand "peasy-core-package-check" { nativeBuildInputs = [ pkgs.gnugrep ]; }
               ''
@@ -129,6 +136,7 @@
                   ${./nix/installer-offline.nix} \
                   ${./nix/tests/desktop-config.nix} \
                   ${./nix/tests/iso-config.nix} \
+                  ${./nix/tests/release.nix} \
                   ${./nix/tests/gnome-tray.nix} \
                   ${./nix/tests/plasma-tray.nix} \
                   ${./nix/tests/desktop-session.nix} \

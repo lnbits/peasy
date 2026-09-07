@@ -293,6 +293,25 @@ rule; do not configure an age-based rule to expire completed release objects.
 Local regression checks (no cloud credentials or ISO builds required):
 
 ```console
-python3 -B -m unittest discover -s scripts/tests -v
-node --test scripts/tests/downloads.test.cjs
+nix build --no-link -L .#checks.x86_64-linux.release
 ```
+
+This is the same gate used before CI builds either ISO. Python, Boto3/botocore,
+Node and actionlint come from `flake.lock`, not the runner's preinstalled SDK.
+It runs the publication/retention tests, actual SDK multipart stubs, website
+checks and workflow wiring/lint checks in a network-isolated build sandbox.
+Tag runs also validate the non-secret R2 bucket/URL variables before ISO builds.
+Successful mocked uploads/deletions are buffered to avoid looking like real
+publication; failures still show their output. The SDK check cannot silently skip.
+
+Publication also requires the security job (privileged sandbox VM, core package
+and system-configuration checks), both desktop tray regressions, and both fresh
+offline ISO install/boot/package-install-and-remove tests. The publish job checks
+its locked SDK again before loading R2 credentials. These are release gates,
+not proof of compatibility with every machine or of live cloud configuration.
+
+The ISO harness runs the shipped Calamares installation job with supplied wizard
+choices; it does not click through every graphical installer page. Tray tests
+check processes/registration and activation, not pixel-level icon visibility.
+Keep visual live-desktop/installer checks and physical-hardware testing separate
+from the automated release gates.

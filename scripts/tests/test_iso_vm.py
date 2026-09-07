@@ -13,6 +13,15 @@ import iso_vm
 
 
 class VMTests(unittest.TestCase):
+    def test_installed_checks_reject_real_provider_and_key_paths(self):
+        vm = Mock()
+        vm.args.output = Path('/test-output')
+        iso_vm.installed_checks(vm, 'plasma')
+        commands = '\n'.join(call.args[0] for call in vm.run.call_args_list)
+        self.assertIn('test ! -e /home/peasytest/.config/peasy/openai-key;', commands)
+        self.assertIn('test ! -e /home/peasytest/.config/peasy/provider.json', commands)
+        self.assertNotIn('openai-api-key', commands)
+
     def test_every_relevant_input_invalidates_base(self):
         identity = dict(iso_sha256='a', firmware='bios', desktop='gnome', memory_mib=8192,
                         cpus=4, online=False, qemu='11.1', harness='b', guest='c',

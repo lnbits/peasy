@@ -1,5 +1,6 @@
 """Exercise the real pinned S3 SDK without network calls or real credentials."""
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
@@ -12,9 +13,11 @@ try:
     from botocore.stub import ANY, Stubber
 except ImportError:
     Stubber = None
+    if os.environ.get("PEASY_REQUIRE_R2_SDK") == "1":
+        raise RuntimeError("Required R2 SDK is missing; run the flake's release check")
 
 
-@unittest.skipIf(Stubber is None, "Run with iso-release-tools Python; also checked in the publish job")
+@unittest.skipIf(Stubber is None, "Run nix build .#checks.x86_64-linux.release for the locked SDK check")
 class LockedSDK(unittest.TestCase):
     def test_managed_multipart_upload_and_missing_object(self):
         with patch.dict("os.environ", {"R2_ACCESS_KEY_ID": "test-only-placeholder",
