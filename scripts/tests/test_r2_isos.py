@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import r2_isos
@@ -196,6 +197,46 @@ class R2Releases(unittest.TestCase):
         with patch.object(Storage, "head_object", side_effect=RuntimeError("Access denied")):
             with self.assertRaisesRegex(RuntimeError, "Access denied"):
                 r2_isos.head(Storage(), "bucket", "key")
+
+    def test_public_check_identifies_peasy_without_credentials_or_redirects(self):
+        manifest, _ = self.prepare()
+        item = manifest["images"][0]
+        with patch.object(r2_isos, "build_opener") as factory:
+            opener = factory.return_value
+            response = opener.open.return_value.__enter__.return_value
+            response.status = 200
+            response.headers = {"Content-Length": str(item["size"])}
+            r2_isos.verify_public(item)
+            factory.assert_called_once_with(r2_isos.NoRedirect)
+            request = opener.open.call_args.args[0]
+            self.assertEqual(request.full_url, item["url"])
+            self.assertEqual(request.get_method(), "HEAD")
+            self.assertEqual(dict(request.header_items()), {
+                "User-agent": "Peasy-ReleaseVerifier/1.0 (+https://github.com/lnbits/peasy)"})
+            opener.open.assert_called_once_with(request, timeout=60)
+            self.assertIsNone(r2_isos.NoRedirect().redirect_request(
+                request, None, 302, "Found", {}, "https://other.example/iso"))
+
+    def test_public_check_still_rejects_wrong_status_or_size(self):
+        manifest, _ = self.prepare()
+        item = manifest["images"][0]
+        for status, length in ((403, item["size"]), (206, item["size"]),
+                               (200, item["size"] - 1), (200, None)):
+            with self.subTest(status=status, length=length), patch.object(r2_isos, "build_opener") as factory:
+                response = factory.return_value.open.return_value.__enter__.return_value
+                response.status = status
+                response.headers = {} if length is None else {"Content-Length": str(length)}
+                with self.assertRaisesRegex(ValueError, "complete image"):
+                    r2_isos.verify_public(item)
+
+    def test_public_http_denial_is_not_bypassed(self):
+        manifest, _ = self.prepare()
+        item = manifest["images"][0]
+        with patch.object(r2_isos, "build_opener") as factory:
+            factory.return_value.open.side_effect = HTTPError(item["url"], 403, "Forbidden", {}, None)
+            with self.assertRaises(HTTPError):
+                r2_isos.verify_public(item)
+            factory.return_value.open.assert_called_once()
 
     def test_prune_only_owned_older_images_after_latest_confirmation(self):
         manifest, _ = self.prepare()

@@ -9,6 +9,7 @@ from urllib.request import build_opener, HTTPRedirectHandler, Request
 from join_iso import digest
 
 PREFIX = "peasy/releases/"
+PUBLIC_USER_AGENT = "Peasy-ReleaseVerifier/1.0 (+https://github.com/lnbits/peasy)"
 TAG = r"v[A-Za-z0-9._-]+"
 COMMIT = r"(?:[0-9a-f]{40}|[0-9a-f]{64})"
 OWNED_KEY = re.compile(
@@ -169,7 +170,10 @@ class NoRedirect(HTTPRedirectHandler):
 def verify_public(item):
     # Public-domain access is separate from authenticated S3 access; do not publish
     # a release with a disabled/misconfigured download domain. Never send credentials.
-    with build_opener(NoRedirect).open(Request(item["url"], method="HEAD"), timeout=60) as response:
+    # Identify this anonymous verifier honestly. Cloudflare can block urllib's
+    # generic Python user-agent even when the uploaded object is publicly readable.
+    request = Request(item["url"], method="HEAD", headers={"User-Agent": PUBLIC_USER_AGENT})
+    with build_opener(NoRedirect).open(request, timeout=60) as response:
         if response.status != 200 or int(response.headers.get("Content-Length", -1)) != item["size"]:
             raise ValueError("Public ISO URL is not serving the complete image")
 
