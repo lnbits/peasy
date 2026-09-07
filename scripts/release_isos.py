@@ -84,7 +84,7 @@ def gh(*args):
     return subprocess.check_output(["gh", *args], text=True).strip()
 
 
-def publish(assets, tag, commit, repo, output, run=gh):
+def publish(assets, tag, commit, repo, output, run=gh, manifest=None, deliver=None):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise ValueError("Invalid repository")
     marker = f"<!-- peasy-iso-release:{commit} -->"
@@ -113,6 +113,12 @@ def publish(assets, tag, commit, repo, output, run=gh):
             raise ValueError("GitHub returned an invalid release ID")
         if release.get("tag_name") != tag or marker not in (release.get("body") or ""):
             raise ValueError("Refusing to modify a release without the expected tag and commit marker")
+        if manifest is not None:
+            from r2_isos import marker as downloads_marker
+            if release.get("prerelease", False) is not False:
+                raise ValueError("Full ISO publication requires a stable release")
+            if downloads_marker(manifest) not in (release.get("body") or ""):
+                raise ValueError("Release download metadata differs; refusing to change its links")
         if type(release.get("draft")) is not bool or (require_draft and not release["draft"]):
             raise ValueError("Refusing to modify a release that is not a private draft")
 
@@ -152,6 +158,9 @@ tagged source. GitHub also provides the tagged source archives.
 If uploads fail, the workflow keeps an incomplete draft private. Rerun the failed
 job to resume verified uploads; do not manually publish an incomplete draft.
 """)
+        if manifest is not None:
+            from r2_isos import notes as download_notes
+            notes.write_text(download_notes(manifest))
         request = output / "release-request.json"
         request.write_text(json.dumps({
             "tag_name": tag, "target_commitish": commit, "name": f"Peasy {tag}",
@@ -178,6 +187,8 @@ job to resume verified uploads; do not manually publish an incomplete draft.
     if release.get("draft") is not True:
         if any(name not in remote for name in expected):
             raise ValueError("Refusing to modify an incomplete published release")
+        if deliver is not None:
+            deliver(True)
         print(f"Release {tag} is already published and all assets match; no changes.")
         return
     for asset in assets:
@@ -189,11 +200,13 @@ job to resume verified uploads; do not manually publish an incomplete draft.
     remote = {asset["name"]: asset for page in pages for asset in page}
     if any(name not in remote or not matches(remote[name], metadata) for name, metadata in expected.items()):
         raise ValueError("Draft assets are incomplete or failed digest verification; rerun the job")
+    if deliver is not None:
+        deliver(False)
     # A temporary draft prevents users downloading an incomplete release.
     # Publication is the final write, only after all remote digests match.
     verify_tag()
     validate(json.loads(run("api", release_endpoint)))
-    run("release", "edit", tag, "--repo", repo, "--draft=false")
+    run("release", "edit", tag, "--repo", repo, "--draft=false", *(["--latest"] if manifest else []))
     published = json.loads(run("api", release_endpoint))
     validate(published, require_draft=False)
     if published.get("draft") is not False:
@@ -209,5 +222,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="peasy-release-") as temporary:
         output = Path(temporary)
-        assets = prepare(args.artifacts, output, args.tag, args.commit)
-        publish(assets, args.tag, args.commit, os.environ["GH_REPO"], output)
+        import r2_isos
+        endpoint, bucket, public_url = r2_isos.configuration()
+        manifest, assets = r2_isos.prepare(args.artifacts, output, args.tag, args.commit, public_url)
+        storage = r2_isos.client(endpoint)
+        repo = os.environ["GH_REPO"]
+        publish(assets, args.tag, args.commit, repo, output, manifest=manifest,
+                deliver=lambda published: r2_isos.deliver(storage, bucket, args.artifacts, manifest, published))
+        r2_isos.prune(storage, bucket, manifest, repo, gh)

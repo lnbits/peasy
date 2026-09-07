@@ -17,10 +17,12 @@ def request(message):
 
 operation = sys.argv[1]
 assert operation in ["install", "remove"]
-proposal = request({"request": "propose_" + operation, "package": "hello"})["proposal"]
+package = sys.argv[2] if len(sys.argv) > 2 else "hello"
+assert package in ["hello", "patchelf"]
+proposal = request({"request": "propose_" + operation, "package": package})["proposal"]
 print(proposal["title"], flush=True)
 result = request({"request": "apply", "proposal": proposal["id"]})["result"]
 assert result["activated"], result
 packages = request({"request": "get_packages"})["packages"]
-assert ("hello" in packages) == (operation == "install"), packages
+assert (package in packages) == (operation == "install"), packages
 print(result["message"], flush=True)

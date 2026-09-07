@@ -1,0 +1,12 @@
+
+# Keep the upstream NixOS menu layout; use the existing bottom margin.
++ label {
+  left = 0
+  top = 96%
+  width = 100%
+  height = 20
+  align = "center"
+  text = "Includes Peasy"
+  font = "DejaVu Regular"
+  color = "#246347"
+}

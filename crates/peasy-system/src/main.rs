@@ -51,6 +51,8 @@ struct Args {
     #[arg(long, hide = true)]
     render_test_appimage: bool,
     #[arg(long, hide = true)]
+    render_test_setup: bool,
+    #[arg(long, hide = true)]
     activate: bool,
     #[arg(long, hide = true)]
     reconcile_managed_state: Option<PathBuf>,
@@ -76,9 +78,18 @@ fn main() -> Result<()> {
     if args.self_test_sandbox {
         return sandbox_self_test();
     }
+    if args.render_test_setup {
+        let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/example.json"
+        ))?;
+        let state = peasy_core::PackageState::default().with_setup(setup)?;
+        print!("{}", peasy_core::render_packages_module(&state)?);
+        return Ok(());
+    }
     if args.render_test_theme {
         let state = peasy_core::PackageState {
             packages: vec!["hello".into()],
+            setups: Vec::new(),
             appimages: Vec::new(),
             theme: peasy_core::ThemeSettings {
                 accent_color: Some(peasy_core::AccentColor::Blue),
@@ -91,6 +102,7 @@ fn main() -> Result<()> {
     if args.render_test_appimage {
         let state = peasy_core::PackageState {
             packages: Vec::new(),
+            setups: Vec::new(),
             appimages: vec![peasy_core::AppImagePackage {
                 id: "appimage.example.nostr-chat".into(),
                 display_name: "Nostr ${builtins.toString 7} Chat".into(),

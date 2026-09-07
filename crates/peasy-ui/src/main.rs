@@ -130,6 +130,19 @@ fn show_content(window: &adw::ApplicationWindow, root: &gtk::Box, width: i32, he
     window.set_default_size(width, height);
 }
 
+const OPENAI_PROVIDER_INDEX: u32 = 0;
+const OLLAMA_PROVIDER_INDEX: u32 = 1;
+
+fn initial_provider_selection(settings: Option<&ProviderSettings>, has_stored_key: bool) -> u32 {
+    match settings {
+        Some(ProviderSettings::OpenAi { .. }) => OPENAI_PROVIDER_INDEX,
+        Some(ProviderSettings::Ollama { .. }) => OLLAMA_PROVIDER_INDEX,
+        // Older installations may have an OpenAI key but no provider.json.
+        None if has_stored_key => OPENAI_PROVIDER_INDEX,
+        None => OLLAMA_PROVIDER_INDEX,
+    }
+}
+
 fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let (root, body) = page("Peasy settings");
     let heading = gtk::Label::new(Some("AI provider"));
@@ -138,6 +151,12 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     body.append(&heading);
 
     let provider = gtk::DropDown::from_strings(&["OpenAI", "Ollama (local)"]);
+    let settings = state.providers.load().ok().flatten();
+    let has_stored_key = state.keys.load().ok().flatten().is_some();
+    provider.set_selected(initial_provider_selection(
+        settings.as_ref(),
+        has_stored_key,
+    ));
     body.append(&provider);
 
     let openai_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -146,7 +165,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         .show_peek_icon(true)
         .build();
     openai_box.append(&key_entry);
-    let key_note = gtk::Label::new(Some(if state.keys.load().ok().flatten().is_some() {
+    let key_note = gtk::Label::new(Some(if has_stored_key {
         "A key is stored privately. Leave this empty to keep it."
     } else {
         "Your key is stored privately for this desktop user."
@@ -162,7 +181,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let remove_key = gtk::Button::with_label("Remove stored OpenAI key");
     remove_key.add_css_class("destructive-action");
     remove_key.set_halign(gtk::Align::Start);
-    remove_key.set_sensitive(state.keys.load().ok().flatten().is_some());
+    remove_key.set_sensitive(has_stored_key);
     openai_box.append(&remove_key);
 
     let ollama_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -186,23 +205,22 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     stack.add_named(&ollama_box, Some("ollama"));
     body.append(&stack);
 
-    if let Ok(Some(settings)) = state.providers.load() {
+    if let Some(settings) = settings {
         match settings {
             ProviderSettings::OpenAi { model } => openai_model.set_text(&model),
             ProviderSettings::Ollama { model, .. } => {
-                provider.set_selected(1);
                 ollama_model.set_text(&model);
             }
         }
     }
-    stack.set_visible_child_name(if provider.selected() == 1 {
+    stack.set_visible_child_name(if provider.selected() == OLLAMA_PROVIDER_INDEX {
         "ollama"
     } else {
         "openai"
     });
     let stack_clone = stack.clone();
     provider.connect_selected_notify(move |provider| {
-        stack_clone.set_visible_child_name(if provider.selected() == 1 {
+        stack_clone.set_visible_child_name(if provider.selected() == OLLAMA_PROVIDER_INDEX {
             "ollama"
         } else {
             "openai"
@@ -338,7 +356,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let window_clone = window.clone();
     save.connect_clicked(move |_| {
         let result = (|| -> Result<()> {
-            let settings = if provider.selected() == 1 {
+            let settings = if provider.selected() == OLLAMA_PROVIDER_INDEX {
                 let model = ollama_model.text().trim().to_owned();
                 if !detected_models.borrow().iter().any(|found| found == &model) {
                     anyhow::bail!(
@@ -1312,6 +1330,38 @@ fn clear_panel_status() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_selection_defaults_to_ollama_for_new_users() {
+        assert_eq!(
+            initial_provider_selection(None, false),
+            OLLAMA_PROVIDER_INDEX
+        );
+    }
+
+    #[test]
+    fn provider_selection_preserves_saved_choices() {
+        let openai = ProviderSettings::openai_default();
+        let ollama = ProviderSettings::ollama("test-model".into()).unwrap();
+        for has_stored_key in [false, true] {
+            assert_eq!(
+                initial_provider_selection(Some(&openai), has_stored_key),
+                OPENAI_PROVIDER_INDEX
+            );
+            assert_eq!(
+                initial_provider_selection(Some(&ollama), has_stored_key),
+                OLLAMA_PROVIDER_INDEX
+            );
+        }
+    }
+
+    #[test]
+    fn provider_selection_preserves_legacy_openai_setup() {
+        assert_eq!(
+            initial_provider_selection(None, true),
+            OPENAI_PROVIDER_INDEX
+        );
+    }
 
     #[test]
     fn configuration_export_contains_host_tree_and_peasy_managed_module() {

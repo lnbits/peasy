@@ -8,8 +8,22 @@
   imports = [
     ./module.nix
     ./iso-appearance.nix
+    ./iso-boot-branding.nix
   ];
   services.peasy.enable = true;
+  # nixosSystem is evaluated from a flake, but Calamares invokes traditional
+  # nixos-install. Resolve <nixpkgs> through the bundled channel, not a flake
+  # lookup that requires experimental features in the live environment.
+  nixpkgs.flake.setNixPath = false;
+
+  # The actual release medium must provide the installed desktop and its
+  # configuration builders, not merely a runnable live desktop.
+  isoImage.storeContents =
+    (import ./installer-offline.nix {
+      inherit pkgs lib;
+      package = config.services.peasy.package;
+      desktop = if config.services.desktopManager.gnome.enable then "gnome" else "plasma";
+    }).storeContents;
 
   # A pinned, fail-closed addition to upstream's configuration generator.
   # The installer UI, storage, accounts and single nixos-install flow stay intact.
@@ -24,7 +38,7 @@
     releaseReady = true;
     installedTargetHasPeasy = true;
     installedBootVerified = true;
-    reason = "Installed-disk boot verified. Tag releases publish after CI checks; oversized ISOs are distributed as verified lossless parts.";
+    reason = "Installed-disk boot verified. Tag releases publish after CI checks and whole-image R2 verification.";
   };
   environment.etc."peasy/ISO-README.txt".text = ''
     PEASY NIXOS INSTALLER

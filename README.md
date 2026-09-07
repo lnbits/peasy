@@ -26,7 +26,9 @@ adds Peasy's local Nix module and bundled source to the installed system, while
 preserving the normal installer screens, partitioning and account setup.
 
 Tag releases automatically publish both installers after CI and upload verification.
-Large images download as verified parts that must be reassembled before flashing.
+Download complete GNOME or Plasma ISOs from the links in the latest release;
+whole-image SHA-256 checksums are attached on GitHub. Only the latest release’s
+ISOs are retained in download storage.
 Installed-disk boot is verified in GNOME/BIOS and Plasma/UEFI VMs; physical-hardware
 testing remains important. See [ISO downloads, installation and validation](docs/iso.md).
 Installing Peasy on an existing NixOS system remains supported independently below.
@@ -84,7 +86,15 @@ controls. XFCE, LXQt and unknown desktops do not have appearance adapters yet.
 AI-requested wallpaper changes are not supported; ISO branding is fixed build-time
 configuration. See the [capability matrix and audit](docs/desktop-compatibility.md).
 
+Peasy's abilities are organised into **peas**: built-in modules in [`peas/`](peas/README.md), each owning its ability-specific code while sharing Peasy's existing validation, confirmation and NixOS transaction handling. Want to contribute an ability? The [peas contributor guide](peas/README.md) explains the layout, security boundaries, tests and an example prompt for adding a pea.
+
 ## Security
+
+The [system-configuration pea](peas/system_configuration/README.md) lets the AI
+combine a package with supporting packages, reviewed NixOS settings and user
+permissions—for example, setting up Virtual Machine Manager with libvirt.
+Install and uninstall use the same reviewed NixOS transaction; shared dependencies,
+administrator settings and user data are retained when removing a setup.
 
 See the [visual workflow and AI access map](docs/workflow-map.md) for how the
 AI, Wasm policy, administrator authorization and NixOS fit together.

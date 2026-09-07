@@ -1,24 +1,27 @@
+#[path = "../../../peas/appearance/system.rs"]
+mod appearance;
+#[path = "../../../peas/appimages/system.rs"]
+mod appimages;
+#[path = "../../../peas/packages/system.rs"]
+mod packages;
+#[path = "../../../peas/system_configuration/system.rs"]
+mod system_configuration;
+use packages::CachedSearch;
+
 use crate::{activation, state};
 use anyhow::{Context, Result, bail};
 use peasy_core::{
-    AppImagePackage, ApplyResult, DiffKind, DiffLine, MAX_CANDIDATES, PackageCandidate,
-    PackageOperation, PackageState, ProposalChange, ThemeSettings, module_diff, regex_escape,
-    render_packages_module, render_system_expression, validate_attribute, validate_query,
+    ApplyResult, DiffLine, PackageOperation, PackageState, ProposalChange, ThemeSettings,
+    render_packages_module, render_system_expression, validate_attribute,
 };
-use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
-const SEARCH_CACHE_CAPACITY: usize = 64;
-const SEARCH_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
-const PLATFORM_FILTER_LIMIT: usize = MAX_CANDIDATES * 4;
-const DISPLAY_CANDIDATE_LIMIT: usize = 6;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub enum RebuildTarget {
@@ -82,10 +85,6 @@ pub struct NixBackend {
 }
 
 #[derive(Clone)]
-struct CachedSearch {
-    created: Instant,
-    candidates: Vec<PackageCandidate>,
-}
 
 pub struct Preview {
     pub before: PackageState,
@@ -143,6 +142,7 @@ impl NixBackend {
             .iter()
             .cloned()
             .chain(state.appimages.iter().map(|package| package.id.clone()))
+            .chain(state.setups.iter().map(|setup| setup.package.clone()))
             .collect())
     }
 
@@ -152,372 +152,6 @@ impl NixBackend {
 
     pub fn managed_module(&self) -> Result<String> {
         render_packages_module(&self.current_state()?).map_err(Into::into)
-    }
-
-    pub fn search(&self, query: &str) -> Result<Vec<PackageCandidate>> {
-        let query = validate_query(query)?;
-        let cache_key = query.to_ascii_lowercase();
-        if let Some(cached) = self.cached_search(&cache_key) {
-            return Ok(cached);
-        }
-        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
-            anyhow::anyhow!("A Nix operation is already running; try again shortly")
-        })?;
-        let flake = format!("path:{}", self.config.nixpkgs.display());
-        let output = self.runner.run(
-            &self.config.nix,
-            &[
-                "search".into(),
-                "--json".into(),
-                "--no-write-lock-file".into(),
-                flake.into(),
-                format!(".*{}.*", regex_escape(query)).into(),
-            ],
-            None,
-        )?;
-        if !output.status.success() {
-            bail!("package search failed: {}", useful_stderr(&output));
-        }
-        let results: BTreeMap<String, Value> = serde_json::from_slice(&output.stdout)
-            .context("Nix returned invalid package-search JSON")?;
-        let legacy_prefix = format!("legacyPackages.{}.", self.config.system);
-        let packages_prefix = format!("packages.{}.", self.config.system);
-        let query_lower = query.to_ascii_lowercase();
-        let mut candidates = results
-            .into_iter()
-            .filter_map(|(key, metadata)| {
-                let attribute = key
-                    .strip_prefix(&legacy_prefix)
-                    .or_else(|| key.strip_prefix(&packages_prefix))?
-                    .to_owned();
-                validate_attribute(&attribute).ok()?;
-                let pname = metadata
-                    .get("pname")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| {
-                        attribute
-                            .rsplit('.')
-                            .next()
-                            .unwrap_or(&attribute)
-                            .to_owned()
-                    });
-                let description = metadata
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .chars()
-                    .take(240)
-                    .collect();
-                let version = metadata
-                    .get("version")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .chars()
-                    .take(64)
-                    .collect();
-                Some(PackageCandidate {
-                    attribute,
-                    name: human_name(&pname),
-                    description,
-                    version,
-                })
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
-        candidates.truncate(PLATFORM_FILTER_LIMIT);
-        let available = self.available_attributes(
-            &candidates
-                .iter()
-                .map(|candidate| candidate.attribute.clone())
-                .collect::<Vec<_>>(),
-        )?;
-        candidates.retain(|candidate| available.contains(&candidate.attribute));
-        candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
-        candidates.truncate(DISPLAY_CANDIDATE_LIMIT);
-        {
-            let mut verified = self
-                .verified_packages
-                .lock()
-                .expect("verified-packages mutex poisoned");
-            for candidate in &candidates {
-                if verified.len() >= 512 {
-                    verified.clear();
-                }
-                verified.insert(candidate.attribute.clone(), candidate.name.clone());
-            }
-        }
-        self.store_cached_search(cache_key, candidates.clone());
-        Ok(candidates)
-    }
-
-    fn cached_search(&self, key: &str) -> Option<Vec<PackageCandidate>> {
-        let mut cache = self
-            .search_cache
-            .lock()
-            .expect("search cache mutex poisoned");
-        cache.retain(|_, entry| entry.created.elapsed() < SEARCH_CACHE_TTL);
-        cache.get(key).map(|entry| entry.candidates.clone())
-    }
-
-    fn store_cached_search(&self, key: String, candidates: Vec<PackageCandidate>) {
-        let mut cache = self
-            .search_cache
-            .lock()
-            .expect("search cache mutex poisoned");
-        cache.retain(|_, entry| entry.created.elapsed() < SEARCH_CACHE_TTL);
-        if cache.len() >= SEARCH_CACHE_CAPACITY
-            && let Some(oldest) = cache
-                .iter()
-                .min_by_key(|(_, entry)| entry.created)
-                .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest);
-        }
-        cache.insert(
-            key,
-            CachedSearch {
-                created: Instant::now(),
-                candidates,
-            },
-        );
-    }
-
-    fn available_attributes(
-        &self,
-        attributes: &[String],
-    ) -> Result<std::collections::HashSet<String>> {
-        if attributes.is_empty() {
-            return Ok(Default::default());
-        }
-        let names = attributes
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<std::result::Result<Vec<_>, _>>()?
-            .join(" ");
-        let nixpkgs = peasy_core::nix_string(&self.config.nixpkgs.to_string_lossy());
-        let system = serde_json::to_string(&self.config.system)?;
-        let expression = format!(
-            r#"let
-  pkgs = import (builtins.toPath {nixpkgs}) {{ system = {system}; }};
-  lib = pkgs.lib;
-  names = [ {names} ];
-  isAvailable = name:
-    let
-      checked = builtins.tryEval (
-        let package = lib.attrByPath (lib.splitString "." name) null pkgs;
-        in package != null
-          && lib.meta.availableOn pkgs.stdenv.hostPlatform package
-          && !(package.meta.broken or false)
-      );
-    in checked.success && checked.value;
-in builtins.filter isAvailable names"#
-        );
-        let output = self.runner.run(
-            &self.config.nix,
-            &[
-                "eval".into(),
-                "--impure".into(),
-                "--json".into(),
-                "--no-write-lock-file".into(),
-                "--expr".into(),
-                expression.into(),
-            ],
-            None,
-        )?;
-        if !output.status.success() {
-            bail!(
-                "checking package compatibility failed: {}",
-                useful_stderr(&output)
-            );
-        }
-        let available: Vec<String> = serde_json::from_slice(&output.stdout)
-            .context("Nix returned invalid package-compatibility JSON")?;
-        Ok(available.into_iter().collect())
-    }
-
-    fn package_set_expression(&self) -> String {
-        // The administrator's source is already immutable in the store. A
-        // path flake needlessly snapshots/hashes it again for each lookup.
-        format!(
-            "import (builtins.toPath {}) {{ system = {}; }}",
-            peasy_core::nix_string(&self.config.nixpkgs.to_string_lossy()),
-            peasy_core::nix_string(&self.config.system),
-        )
-    }
-
-    pub fn verify(&self, attribute: &str) -> Result<String> {
-        validate_attribute(attribute)?;
-        if let Some(display_name) = self
-            .verified_packages
-            .lock()
-            .expect("verified-packages mutex poisoned")
-            .get(attribute)
-            .cloned()
-        {
-            return Ok(display_name);
-        }
-        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
-            anyhow::anyhow!("A Nix operation is already running; try again shortly")
-        })?;
-        let package = format!(
-            "(let pkgs = {}; in pkgs.lib.getAttrFromPath (pkgs.lib.splitString \".\" {}) pkgs)",
-            self.package_set_expression(),
-            peasy_core::nix_string(attribute),
-        );
-        let output = self.runner.run(
-            &self.config.nix,
-            &[
-                "eval".into(),
-                "--impure".into(),
-                "--json".into(),
-                "--no-write-lock-file".into(),
-                "--expr".into(),
-                format!("{package}.meta").into(),
-            ],
-            None,
-        )?;
-        if !output.status.success() {
-            bail!("unknown Nixpkgs package `{attribute}`");
-        }
-        let _: Value = serde_json::from_slice(&output.stdout)
-            .context("Nix returned invalid package metadata")?;
-        let pname = self.runner.run(
-            &self.config.nix,
-            &[
-                "eval".into(),
-                "--impure".into(),
-                "--raw".into(),
-                "--no-write-lock-file".into(),
-                "--expr".into(),
-                format!("{package}.pname").into(),
-            ],
-            None,
-        )?;
-        let display_name = if pname.status.success() {
-            human_name(String::from_utf8_lossy(&pname.stdout).trim())
-        } else {
-            human_name(attribute.rsplit('.').next().unwrap_or(attribute))
-        };
-        let mut verified = self
-            .verified_packages
-            .lock()
-            .expect("verified-packages mutex poisoned");
-        if verified.len() >= 512 {
-            verified.clear();
-        }
-        verified.insert(attribute.to_owned(), display_name.clone());
-        Ok(display_name)
-    }
-
-    pub fn preview_package(&self, operation: PackageOperation, package: &str) -> Result<Preview> {
-        validate_attribute(package)?;
-        if operation == PackageOperation::Remove
-            && let Some(appimage) = self
-                .current_state()?
-                .appimages
-                .iter()
-                .find(|item| item.id == package)
-                .cloned()
-        {
-            return self.preview_appimage_remove(appimage);
-        }
-        let display_name = self.verify(package)?;
-        let before = self.current_state()?;
-        if operation == PackageOperation::Remove
-            && !before.packages.iter().any(|item| item == package)
-        {
-            bail!("Peasy does not manage `{package}`");
-        }
-        let after = before.with_change(operation, package)?;
-        if before == after {
-            bail!("`{package}` is already in the requested state");
-        }
-        let title = format!(
-            "{} {display_name}",
-            match operation {
-                PackageOperation::Install => "Install",
-                PackageOperation::Remove => "Remove",
-            }
-        );
-        Ok(Preview {
-            diff: module_diff(&before, &after)?,
-            before,
-            change: ProposalChange::Package {
-                operation,
-                package: package.to_owned(),
-                display_name,
-            },
-            title,
-        })
-    }
-
-    pub fn preview_appimage_install(&self, package: AppImagePackage) -> Result<Preview> {
-        package.validate()?;
-        self.authorize_appimage(&package)?;
-        let before = self.current_state()?;
-        let after = before.with_appimage_install(&package)?;
-        if before == after {
-            bail!("that exact external AppImage is already installed");
-        }
-        let replacing = before
-            .appimages
-            .iter()
-            .any(|existing| existing.id == package.id);
-        let mut diff = appimage_review_details(&package);
-        diff.extend(module_diff(&before, &after)?);
-        Ok(Preview {
-            before,
-            change: ProposalChange::AppImage {
-                operation: PackageOperation::Install,
-                package: package.clone(),
-            },
-            title: format!(
-                "{} external {} {}",
-                if replacing { "Update" } else { "Install" },
-                package.display_name,
-                package.version
-            ),
-            diff,
-        })
-    }
-
-    fn preview_appimage_remove(&self, package: AppImagePackage) -> Result<Preview> {
-        package.validate()?;
-        let before = self.current_state()?;
-        let after = before.with_appimage_remove(&package.id)?;
-        let mut diff = appimage_review_details(&package);
-        diff.extend(module_diff(&before, &after)?);
-        Ok(Preview {
-            before,
-            change: ProposalChange::AppImage {
-                operation: PackageOperation::Remove,
-                package: package.clone(),
-            },
-            title: format!("Remove external {}", package.display_name),
-            diff,
-        })
-    }
-
-    pub fn preview_theme(&self, theme: ThemeSettings) -> Result<Preview> {
-        let before = self.current_state()?;
-        let after = before.with_theme(&theme)?;
-        if before == after {
-            bail!("that appearance is already selected");
-        }
-        let mut details = Vec::new();
-        if let Some(color) = theme.accent_color {
-            details.push(format!("{color} accent"));
-        }
-        if let Some(scheme) = theme.color_scheme {
-            details.push(format!("{scheme} mode"));
-        }
-        Ok(Preview {
-            diff: module_diff(&before, &after)?,
-            before,
-            change: ProposalChange::Theme { theme },
-            title: format!("Change appearance to {}", details.join(" and ")),
-        })
     }
 
     pub fn apply(
@@ -535,6 +169,9 @@ in builtins.filter isAvailable names"#
             bail!("proposal is stale because Peasy state changed; review a new diff");
         }
         let (proposed, message) = match change {
+            ProposalChange::Setup { operation, setup } => {
+                self.apply_setup_state(&previous, *operation, setup)?
+            }
             ProposalChange::Package {
                 operation, package, ..
             } => {
@@ -552,7 +189,17 @@ in builtins.filter isAvailable names"#
                 let proposed = previous.with_change(*operation, package)?;
                 let message = match operation {
                     PackageOperation::Install => format!("{package} installed."),
-                    PackageOperation::Remove => format!("{package} removed."),
+                    PackageOperation::Remove => {
+                        let dependents = proposed.setup_dependents(package);
+                        if dependents.is_empty() {
+                            format!("{package} removed.")
+                        } else {
+                            format!(
+                                "Independent Peasy entry for {package} removed. The package is retained for: {}.",
+                                dependents.join(", ")
+                            )
+                        }
+                    }
                 };
                 (proposed, message)
             }
@@ -759,17 +406,6 @@ in builtins.filter isAvailable names"#
     pub fn is_applying(&self) -> bool {
         self.apply_lock.try_lock().is_err()
     }
-
-    fn authorize_appimage(&self, package: &AppImagePackage) -> Result<()> {
-        let policy = peasy_core::AppImagePolicy::load(&self.config.appimage_policy)
-            .context("reading administrator AppImage policy")?;
-        if !policy.allows(package) {
-            bail!(
-                "This AppImage release has not been approved by the administrator. Add its independently verified hash to services.peasy.appImages.trustedHashes before installing."
-            );
-        }
-        Ok(())
-    }
 }
 
 fn verify_built_managed_state(system: &Path, expected: &PackageState) -> Result<()> {
@@ -783,38 +419,6 @@ fn verify_built_managed_state(system: &Path, expected: &PackageState) -> Result<
         bail!("the built generation contains different Peasy state");
     }
     Ok(())
-}
-
-fn appimage_review_details(package: &AppImagePackage) -> Vec<DiffLine> {
-    vec![
-        DiffLine {
-            kind: DiffKind::Context,
-            text: "External native application — verify the publisher before applying".into(),
-        },
-        DiffLine {
-            kind: DiffKind::Context,
-            text: format!("Repository: https://github.com/{}", package.repository),
-        },
-        DiffLine {
-            kind: DiffKind::Context,
-            text: format!(
-                "Release: {} ({})",
-                package.release_tag, package.architecture
-            ),
-        },
-        DiffLine {
-            kind: DiffKind::Context,
-            text: format!("Asset: {} ({} bytes)", package.asset_name, package.size),
-        },
-        DiffLine {
-            kind: DiffKind::Context,
-            text: format!("Download: {}", package.url),
-        },
-        DiffLine {
-            kind: DiffKind::Context,
-            text: format!("SHA-256: {}", package.hash),
-        },
-    ]
 }
 
 fn useful_stderr(output: &Output) -> String {
@@ -839,55 +443,10 @@ fn human_name(value: &str) -> String {
         .join(" ")
 }
 
-fn candidate_rank(candidate: &PackageCandidate, query: &str) -> (u8, u8, u8, u8, usize, String) {
-    let leaf = candidate
-        .attribute
-        .rsplit('.')
-        .next()
-        .unwrap_or(&candidate.attribute)
-        .to_ascii_lowercase();
-    let name = candidate.name.to_ascii_lowercase();
-    let description = candidate.description.to_ascii_lowercase();
-    let query_slug = query.split_whitespace().collect::<Vec<_>>().join("-");
-    let exact_rank = u8::from(leaf != query_slug && name != query);
-    let match_rank = if leaf == query_slug || name == query {
-        0
-    } else if leaf.starts_with(&query_slug) || name.starts_with(query) {
-        1
-    } else if leaf.contains(&query_slug) || name.contains(query) {
-        2
-    } else {
-        3
-    };
-    let non_desktop_terms = [
-        "api", "bridge", "emoji", "exporter", "font", "library", "module", "node", "plugin",
-        "python", "server",
-    ];
-    let category_penalty = non_desktop_terms
-        .iter()
-        .filter(|term| !query.contains(**term) && leaf.split(['-', '_']).any(|part| part == **term))
-        .count()
-        .min(u8::MAX as usize) as u8;
-    let desktop_rank = u8::from(
-        !leaf.contains("desktop")
-            && !leaf.contains("electron")
-            && !description.contains("desktop")
-            && !description.contains("graphical")
-            && !description.contains(" gui "),
-    );
-    (
-        exact_rank,
-        category_penalty,
-        match_rank,
-        desktop_rank,
-        candidate.attribute.len(),
-        candidate.attribute.clone(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use peasy_core::AppImagePackage;
     use std::collections::VecDeque;
     use std::os::unix::process::ExitStatusExt;
 
@@ -1071,6 +630,156 @@ mod tests {
     }
 
     #[test]
+    fn setup_build_failure_restores_every_contribution() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([
+                output(0, "{}", ""),
+                output(0, "hello", ""),
+                output(1, "", "deliberate setup build failure"),
+            ])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        let settings = peasy_core::SystemSetup {
+            packages: vec![],
+            enable: vec!["services.printing.enable".into()],
+            groups: vec![],
+        };
+        let preview = backend
+            .preview_setup("hello".into(), settings, 1000)
+            .unwrap();
+        assert!(
+            preview
+                .diff
+                .iter()
+                .any(|line| line.text.contains("services.printing.enable = true"))
+        );
+        let result = backend
+            .apply(&preview.change, &preview.before, &"e".repeat(48))
+            .unwrap();
+        assert!(!result.activated);
+        assert_eq!(backend.current_state().unwrap(), preview.before);
+        assert_eq!(runner.calls.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn setup_uninstall_preserves_shared_and_external_ownership() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::new()),
+            calls: Mutex::new(vec![]),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/example.json"
+        ))
+        .unwrap();
+        let mut other = setup.clone();
+        other.package = "virt-viewer".into();
+        let state = PackageState::default()
+            .with_change(PackageOperation::Install, "virt-manager")
+            .unwrap()
+            .with_setup(setup)
+            .unwrap()
+            .with_setup(other)
+            .unwrap();
+        assert!(state.packages.is_empty());
+        state::write_managed_atomic(&backend.config.managed_module, &state).unwrap();
+        let preview = backend
+            .preview_package(PackageOperation::Remove, "virt-manager")
+            .unwrap();
+        let ProposalChange::Setup { operation, setup } = &preview.change else {
+            panic!("must remove full setup")
+        };
+        let (after, _) = backend
+            .apply_setup_state(&preview.before, *operation, setup)
+            .unwrap();
+        assert_eq!(
+            after.effective_packages().into_iter().collect::<Vec<_>>(),
+            ["virt-viewer"]
+        );
+        assert!(
+            render_packages_module(&after)
+                .unwrap()
+                .contains("  virtualisation.libvirtd.enable = true;")
+        );
+        assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_setup_never_runs_nix_or_changes_state() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::new()),
+            calls: Mutex::new(vec![]),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        for settings in [
+            peasy_core::SystemSetup {
+                packages: vec![],
+                enable: vec!["services.openssh.enable".into()],
+                groups: vec![],
+            },
+            peasy_core::SystemSetup {
+                packages: vec![],
+                enable: vec!["virtualisation.libvirtd.enable".into()],
+                groups: vec!["wheel".into()],
+            },
+        ] {
+            assert!(
+                backend
+                    .preview_setup("hello".into(), settings, 1000)
+                    .is_err()
+            );
+        }
+        let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/example.json"
+        ))
+        .unwrap();
+        assert!(
+            backend
+                .preview_setup(setup.package, setup.settings, 0)
+                .is_err()
+        );
+        assert!(runner.calls.lock().unwrap().is_empty());
+        assert_eq!(backend.current_state().unwrap(), PackageState::default());
+    }
+
+    #[test]
+    fn failed_setup_uninstall_restores_the_complete_prior_setup() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([output(
+                1,
+                "",
+                "deliberate uninstall build failure",
+            )])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/example.json"
+        ))
+        .unwrap();
+        let before = PackageState::default().with_setup(setup).unwrap();
+        state::write_managed_atomic(&backend.config.managed_module, &before).unwrap();
+        let preview = backend
+            .preview_package(PackageOperation::Remove, "virt-manager")
+            .unwrap();
+        let result = backend
+            .apply(&preview.change, &preview.before, &"f".repeat(48))
+            .unwrap();
+        assert!(!result.activated);
+        assert_eq!(backend.current_state().unwrap(), before);
+        assert_eq!(runner.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn theme_preview_contains_the_exact_reviewable_change() {
         let temporary = tempfile::tempdir().unwrap();
         let runner = Arc::new(MockRunner {
@@ -1150,6 +859,7 @@ mod tests {
             &backend.config.managed_module,
             &PackageState {
                 packages: vec!["vlc".into()],
+                setups: Vec::new(),
                 appimages: Vec::new(),
                 theme: ThemeSettings::default(),
             },

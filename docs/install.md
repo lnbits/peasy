@@ -186,7 +186,10 @@ Enter Wi-Fi passwords only in the separate local confirmation field, never in
 the natural-language request. Credential-looking requests are refused before
 contacting the model, but arbitrary pasted secrets cannot be reliably detected.
 
-The first launch opens provider setup. OpenAI requires an API key. The key is
+The first launch opens provider setup with **Ollama (local)** selected by default.
+An existing provider choice (including older OpenAI key-only setups) is preserved.
+This does not automatically install Ollama or download a model; use the local
+setup below, or select OpenAI instead. OpenAI requires an API key. The key is
 stored for the current user in `~/.config/peasy/openai-key` with mode `0600`.
 
 For a local provider, enable Ollama:

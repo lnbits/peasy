@@ -1,72 +1,49 @@
+#[path = "../../../peas/packages/types.rs"]
+mod packages;
+pub use packages::{
+    MAX_ATTRIBUTE_BYTES, MAX_CANDIDATES, PackageCandidate, PackageOperation, RequestedVersion,
+    regex_escape, validate_attribute,
+};
+#[path = "../../../peas/appimages/types.rs"]
+mod appimages;
+pub use appimages::{
+    APPIMAGE_POLICY_PATH, AppImageArchitecture, AppImagePackage, AppImagePolicy, MAX_APPIMAGE_BYTES,
+};
+#[path = "../../../peas/appearance/types.rs"]
+mod appearance;
+pub use appearance::{AccentColor, ColorScheme, ThemeSettings};
+#[path = "../../../peas/hyprland/types.rs"]
+mod hyprland;
+pub use hyprland::{HyprlandDispatch, HyprlandSetting, HyprlandSettingChange};
+#[path = "../../../peas/wifi/types.rs"]
+mod wifi;
+pub use wifi::{MAX_SSID_BYTES, validate_ssid};
+#[path = "../../../peas/calendar/types.rs"]
+mod calendar;
+use appimages::{render_appimage_bindings, validate_github_repository};
+pub use calendar::{
+    LOCAL_DATETIME_BYTES, MAX_EVENT_TITLE_BYTES, validate_event_title, validate_local_datetime,
+};
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::fmt;
 use std::path::Path;
 use thiserror::Error;
 
+#[cfg(test)]
+#[path = "../../../peas/tests/contracts.rs"]
+mod pea_contracts;
+
+#[path = "../../../peas/appearance/desktop.rs"]
 mod desktop;
 pub use desktop::{AppearanceCapabilities, DesktopEnvironment};
 
 pub const MAX_QUERY_BYTES: usize = 160;
-pub const MAX_ATTRIBUTE_BYTES: usize = 180;
-pub const MAX_CANDIDATES: usize = 12;
-pub const MAX_SSID_BYTES: usize = 32;
-pub const MAX_EVENT_TITLE_BYTES: usize = 160;
-pub const LOCAL_DATETIME_BYTES: usize = 19;
-pub const MAX_APPIMAGE_BYTES: u64 = 1024 * 1024 * 1024;
-pub const APPIMAGE_POLICY_PATH: &str = "/etc/peasy/appimage-policy.json";
 
-/// `null` permits reviewed installs; a map enforces administrator-approved hashes.
-/// Missing policy files fail closed, including during mixed-version upgrades.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(transparent)]
-pub struct AppImagePolicy(pub Option<std::collections::BTreeMap<String, Vec<String>>>);
+#[path = "../../../peas/system_configuration/types.rs"]
+mod system_configuration;
+pub use system_configuration::{ManagedSetup, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS, SystemSetup};
 
-impl Default for AppImagePolicy {
-    fn default() -> Self {
-        Self(Some(Default::default()))
-    }
-}
-
-impl AppImagePolicy {
-    pub fn load(path: &Path) -> Result<Self, std::io::Error> {
-        use std::io::Read;
-        let file = match std::fs::File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(error) => return Err(error),
-        };
-        let mut bytes = Vec::new();
-        file.take(65537).read_to_end(&mut bytes)?;
-        if bytes.len() > 65536 {
-            return Err(std::io::Error::other("AppImage policy is too large"));
-        }
-        serde_json::from_slice(&bytes).map_err(std::io::Error::other)
-    }
-
-    pub fn allows_repository(&self, repository: &str) -> bool {
-        self.0.as_ref().is_none_or(|trusted| {
-            trusted
-                .get(&repository.to_ascii_lowercase())
-                .is_some_and(|hashes| !hashes.is_empty())
-        })
-    }
-
-    pub fn is_disabled(&self) -> bool {
-        self.0.as_ref().is_some_and(|trusted| trusted.is_empty())
-    }
-
-    pub fn allows(&self, package: &AppImagePackage) -> bool {
-        package.validate().is_ok()
-            && self.0.as_ref().is_none_or(|trusted| {
-                trusted
-                    .get(&package.repository.to_ascii_lowercase())
-                    .is_some_and(|hashes| hashes.contains(&package.hash))
-            })
-    }
-}
 const MANAGED_STATE_PREFIX: &str = "# peasy-state-json: ";
 
 #[derive(Debug, Error)]
@@ -113,625 +90,6 @@ fn normalize_model_message(mut value: String) -> Result<String, ValidationError>
     Ok(value)
 }
 
-fn validate_github_repository(value: &str) -> Result<String, ValidationError> {
-    let value = value.trim().trim_end_matches(".git");
-    let Some((owner, repository)) = value.split_once('/') else {
-        return Err(ValidationError::InvalidRequest(
-            "GitHub repository must be owner/name".into(),
-        ));
-    };
-    let valid_part = |part: &str| {
-        !part.is_empty()
-            && part.len() <= 100
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    };
-    if repository.contains('/') || !valid_part(owner) || !valid_part(repository) {
-        return Err(ValidationError::InvalidRequest(
-            "invalid GitHub repository".into(),
-        ));
-    }
-    Ok(format!(
-        "{}/{}",
-        owner.to_ascii_lowercase(),
-        repository.to_ascii_lowercase()
-    ))
-}
-
-pub fn validate_attribute(value: &str) -> Result<&str, ValidationError> {
-    if value.is_empty() {
-        return Err(ValidationError::Empty);
-    }
-    if value.len() > MAX_ATTRIBUTE_BYTES {
-        return Err(ValidationError::TooLong);
-    }
-    let valid = value.split('.').all(|part| {
-        !part.is_empty()
-            && part != "."
-            && part != ".."
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'+' | b'-'))
-    });
-    if !valid {
-        return Err(ValidationError::InvalidAttribute(value.to_owned()));
-    }
-    Ok(value)
-}
-
-pub fn validate_ssid(value: &str) -> Result<&str, ValidationError> {
-    if value.is_empty() {
-        return Err(ValidationError::Empty);
-    }
-    if value.len() > MAX_SSID_BYTES || value.chars().any(char::is_control) {
-        return Err(ValidationError::InvalidRequest(
-            "invalid Wi-Fi network name".into(),
-        ));
-    }
-    Ok(value)
-}
-
-pub fn validate_event_title(value: &str) -> Result<&str, ValidationError> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(ValidationError::Empty);
-    }
-    if value.len() > MAX_EVENT_TITLE_BYTES || value.chars().any(char::is_control) {
-        return Err(ValidationError::InvalidRequest(
-            "invalid calendar event title".into(),
-        ));
-    }
-    Ok(value)
-}
-
-pub fn validate_local_datetime(value: &str) -> Result<&str, ValidationError> {
-    let bytes = value.as_bytes();
-    if bytes.len() != LOCAL_DATETIME_BYTES
-        || !bytes.iter().enumerate().all(|(index, byte)| match index {
-            4 | 7 => *byte == b'-',
-            10 => *byte == b'T',
-            13 | 16 => *byte == b':',
-            _ => byte.is_ascii_digit(),
-        })
-    {
-        return Err(ValidationError::InvalidRequest(
-            "calendar start must be a local YYYY-MM-DDTHH:MM:SS value".into(),
-        ));
-    }
-    let number = |range: std::ops::Range<usize>| {
-        value[range]
-            .parse::<u32>()
-            .map_err(|_| ValidationError::InvalidRequest("invalid calendar date".into()))
-    };
-    let year = number(0..4)?;
-    let month = number(5..7)?;
-    let day = number(8..10)?;
-    let hour = number(11..13)?;
-    let minute = number(14..16)?;
-    let second = number(17..19)?;
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let max_day = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => 0,
-    };
-    if day == 0 || day > max_day || hour > 23 || minute > 59 || second > 59 {
-        return Err(ValidationError::InvalidRequest(
-            "calendar start is not a real local date and time".into(),
-        ));
-    }
-    Ok(value)
-}
-
-/// Escape a string for use as a literal Nix search regular expression.
-pub fn regex_escape(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if matches!(
-            ch,
-            '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '\\'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PackageCandidate {
-    pub attribute: String,
-    pub name: String,
-    pub description: String,
-    #[serde(default)]
-    pub version: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RequestedVersion {
-    Latest,
-    Exact(String),
-}
-
-impl RequestedVersion {
-    pub fn parse(value: &str) -> Result<Self, ValidationError> {
-        let value = value.trim();
-        if value.eq_ignore_ascii_case("latest") {
-            return Ok(Self::Latest);
-        }
-        if value.is_empty()
-            || value.len() > 64
-            || !value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'_')
-            })
-        {
-            return Err(ValidationError::InvalidRequest(
-                "invalid requested package version".into(),
-            ));
-        }
-        Ok(Self::Exact(value.to_owned()))
-    }
-
-    pub fn matches(&self, candidate: &str) -> bool {
-        match self {
-            Self::Latest => true,
-            Self::Exact(requested) => {
-                requested.trim_start_matches(['v', 'V']) == candidate.trim_start_matches(['v', 'V'])
-            }
-        }
-    }
-}
-
-impl fmt::Display for RequestedVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Latest => f.write_str("latest stable"),
-            Self::Exact(version) => f.write_str(version),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AppImageArchitecture {
-    X86_64,
-    Aarch64,
-}
-
-impl fmt::Display for AppImageArchitecture {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::X86_64 => "x86_64",
-            Self::Aarch64 => "aarch64",
-        })
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AppImagePackage {
-    pub id: String,
-    pub display_name: String,
-    pub repository: String,
-    pub version: String,
-    pub release_tag: String,
-    pub asset_name: String,
-    pub url: String,
-    pub hash: String,
-    pub architecture: AppImageArchitecture,
-    pub size: u64,
-}
-
-impl AppImagePackage {
-    pub fn validate(&self) -> Result<(), ValidationError> {
-        validate_attribute(&self.id)?;
-        if !self.id.starts_with("appimage.") {
-            return Err(ValidationError::InvalidRequest(
-                "external package identifier must use the appimage namespace".into(),
-            ));
-        }
-        validate_display_text(&self.display_name, 120, "AppImage display name")?;
-        validate_display_text(&self.version, 64, "AppImage version")?;
-        validate_display_text(&self.release_tag, 128, "AppImage release tag")?;
-        validate_display_text(&self.asset_name, 240, "AppImage asset name")?;
-        if !self.asset_name.to_ascii_lowercase().ends_with(".appimage") {
-            return Err(ValidationError::InvalidRequest(
-                "external release asset is not an AppImage".into(),
-            ));
-        }
-        if self.size == 0 || self.size > MAX_APPIMAGE_BYTES {
-            return Err(ValidationError::InvalidRequest(
-                "external AppImage size is outside Peasy's allowed range".into(),
-            ));
-        }
-        let mut repository = self.repository.split('/');
-        let owner = repository.next().unwrap_or_default();
-        let name = repository.next().unwrap_or_default();
-        if repository.next().is_some() || !valid_github_slug(owner) || !valid_github_slug(name) {
-            return Err(ValidationError::InvalidRequest(
-                "invalid GitHub repository identifier".into(),
-            ));
-        }
-        let expected_id = format!(
-            "appimage.{}.{}",
-            owner.to_ascii_lowercase(),
-            name.to_ascii_lowercase()
-        );
-        if self.id != expected_id {
-            return Err(ValidationError::InvalidRequest(
-                "external package identifier does not match its repository".into(),
-            ));
-        }
-        let path = self
-            .url
-            .strip_prefix("https://github.com/")
-            .ok_or_else(|| {
-                ValidationError::InvalidRequest(
-                    "external AppImages must use a GitHub HTTPS release URL".into(),
-                )
-            })?;
-        if self.url.len() > 2048
-            || self.url.contains(['?', '#', '\\', '\n', '\r', '\0'])
-            || !path.to_ascii_lowercase().starts_with(&format!(
-                "{}/{}/releases/download/",
-                owner.to_ascii_lowercase(),
-                name.to_ascii_lowercase()
-            ))
-        {
-            return Err(ValidationError::InvalidRequest(
-                "external AppImage URL does not match its GitHub repository".into(),
-            ));
-        }
-        let digest = self.hash.strip_prefix("sha256-").unwrap_or_default();
-        if digest.len() != 44
-            || !digest
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
-        {
-            return Err(ValidationError::InvalidRequest(
-                "external AppImage must have a valid SHA-256 SRI hash".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn pname(&self) -> String {
-        self.repository
-            .rsplit('/')
-            .next()
-            .unwrap_or("external-appimage")
-            .to_ascii_lowercase()
-    }
-}
-
-fn valid_github_slug(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 100
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-}
-
-fn validate_display_text(value: &str, maximum: usize, label: &str) -> Result<(), ValidationError> {
-    if value.is_empty()
-        || value.len() > maximum
-        || value
-            .chars()
-            .any(|character| character.is_control() || matches!(character, '\'' | '"'))
-    {
-        return Err(ValidationError::InvalidRequest(format!("invalid {label}")));
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AccentColor {
-    Blue,
-    Teal,
-    Green,
-    Yellow,
-    Orange,
-    Red,
-    Pink,
-    Purple,
-    Slate,
-}
-
-impl AccentColor {
-    pub fn parse(value: &str) -> Result<Self, ValidationError> {
-        match value {
-            "blue" => Ok(Self::Blue),
-            "teal" => Ok(Self::Teal),
-            "green" => Ok(Self::Green),
-            "yellow" => Ok(Self::Yellow),
-            "orange" => Ok(Self::Orange),
-            "red" => Ok(Self::Red),
-            "pink" => Ok(Self::Pink),
-            "purple" => Ok(Self::Purple),
-            "slate" => Ok(Self::Slate),
-            _ => Err(ValidationError::InvalidRequest(format!(
-                "unsupported accent colour `{value}`"
-            ))),
-        }
-    }
-}
-
-impl fmt::Display for AccentColor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Blue => "blue",
-            Self::Teal => "teal",
-            Self::Green => "green",
-            Self::Yellow => "yellow",
-            Self::Orange => "orange",
-            Self::Red => "red",
-            Self::Pink => "pink",
-            Self::Purple => "purple",
-            Self::Slate => "slate",
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ColorScheme {
-    System,
-    Light,
-    Dark,
-}
-
-impl ColorScheme {
-    pub fn parse(value: &str) -> Result<Self, ValidationError> {
-        match value {
-            "system" => Ok(Self::System),
-            "light" => Ok(Self::Light),
-            "dark" => Ok(Self::Dark),
-            _ => Err(ValidationError::InvalidRequest(format!(
-                "unsupported colour scheme `{value}`"
-            ))),
-        }
-    }
-
-    pub fn gsettings_value(self) -> &'static str {
-        match self {
-            Self::System => "default",
-            Self::Light => "prefer-light",
-            Self::Dark => "prefer-dark",
-        }
-    }
-}
-
-impl fmt::Display for ColorScheme {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::System => "system",
-            Self::Light => "light",
-            Self::Dark => "dark",
-        })
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ThemeSettings {
-    pub accent_color: Option<AccentColor>,
-    pub color_scheme: Option<ColorScheme>,
-}
-
-impl ThemeSettings {
-    pub fn is_empty(&self) -> bool {
-        self.accent_color.is_none() && self.color_scheme.is_none()
-    }
-
-    pub fn merged(&self, change: &Self) -> Self {
-        Self {
-            accent_color: change.accent_color.or(self.accent_color),
-            color_scheme: change.color_scheme.or(self.color_scheme),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HyprlandSetting {
-    GapsInner,
-    GapsOuter,
-    BorderSize,
-    CornerRadius,
-    Animations,
-    Blur,
-    ActiveOpacity,
-    InactiveOpacity,
-    NaturalScroll,
-    Layout,
-}
-
-impl HyprlandSetting {
-    pub fn parse(value: &str) -> Result<Self, ValidationError> {
-        match value {
-            "gaps_inner" => Ok(Self::GapsInner),
-            "gaps_outer" => Ok(Self::GapsOuter),
-            "border_size" => Ok(Self::BorderSize),
-            "corner_radius" => Ok(Self::CornerRadius),
-            "animations" => Ok(Self::Animations),
-            "blur" => Ok(Self::Blur),
-            "active_opacity" => Ok(Self::ActiveOpacity),
-            "inactive_opacity" => Ok(Self::InactiveOpacity),
-            "natural_scroll" => Ok(Self::NaturalScroll),
-            "layout" => Ok(Self::Layout),
-            _ => Err(ValidationError::InvalidRequest(format!(
-                "unsupported Hyprland setting `{value}`"
-            ))),
-        }
-    }
-
-    pub fn option_path(self) -> &'static str {
-        match self {
-            Self::GapsInner => "general.gaps_in",
-            Self::GapsOuter => "general.gaps_out",
-            Self::BorderSize => "general.border_size",
-            Self::CornerRadius => "decoration.rounding",
-            Self::Animations => "animations.enabled",
-            Self::Blur => "decoration.blur.enabled",
-            Self::ActiveOpacity => "decoration.active_opacity",
-            Self::InactiveOpacity => "decoration.inactive_opacity",
-            Self::NaturalScroll => "input.touchpad.natural_scroll",
-            Self::Layout => "general.layout",
-        }
-    }
-
-    pub fn legacy_option_path(self) -> String {
-        self.option_path().replace('.', ":")
-    }
-
-    pub fn normalize_value(self, value: &str) -> Result<String, ValidationError> {
-        let value = value.trim().to_ascii_lowercase();
-        match self {
-            Self::GapsInner | Self::GapsOuter => normalize_integer(&value, 0, 100),
-            Self::BorderSize => normalize_integer(&value, 0, 20),
-            Self::CornerRadius => normalize_integer(&value, 0, 100),
-            Self::Animations | Self::Blur | Self::NaturalScroll => match value.as_str() {
-                "true" | "on" | "enabled" | "enable" => Ok("true".into()),
-                "false" | "off" | "disabled" | "disable" => Ok("false".into()),
-                _ => Err(ValidationError::InvalidRequest(format!(
-                    "{} expects on or off",
-                    self.option_path()
-                ))),
-            },
-            Self::ActiveOpacity | Self::InactiveOpacity => {
-                let number: f64 = value.parse().map_err(|_| {
-                    ValidationError::InvalidRequest(format!(
-                        "{} expects a number from 0 to 1",
-                        self.option_path()
-                    ))
-                })?;
-                if !number.is_finite() || !(0.0..=1.0).contains(&number) {
-                    return Err(ValidationError::InvalidRequest(format!(
-                        "{} expects a number from 0 to 1",
-                        self.option_path()
-                    )));
-                }
-                let rendered = format!("{number:.3}");
-                Ok(rendered
-                    .trim_end_matches('0')
-                    .trim_end_matches('.')
-                    .to_owned())
-            }
-            Self::Layout => match value.as_str() {
-                "dwindle" | "master" | "scrolling" | "monocle" => Ok(value),
-                _ => Err(ValidationError::InvalidRequest(
-                    "Hyprland layout must be dwindle, master, scrolling, or monocle".into(),
-                )),
-            },
-        }
-    }
-
-    pub fn lua_value(self, normalized: &str) -> String {
-        if matches!(self, Self::Layout) {
-            format!("\"{normalized}\"")
-        } else {
-            normalized.to_owned()
-        }
-    }
-}
-
-impl fmt::Display for HyprlandSetting {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.option_path())
-    }
-}
-
-fn normalize_integer(value: &str, minimum: i32, maximum: i32) -> Result<String, ValidationError> {
-    let number: i32 = value.parse().map_err(|_| {
-        ValidationError::InvalidRequest(format!(
-            "Hyprland setting expects an integer from {minimum} to {maximum}"
-        ))
-    })?;
-    if !(minimum..=maximum).contains(&number) {
-        return Err(ValidationError::InvalidRequest(format!(
-            "Hyprland setting expects an integer from {minimum} to {maximum}"
-        )));
-    }
-    Ok(number.to_string())
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HyprlandSettingChange {
-    pub setting: HyprlandSetting,
-    pub value: String,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HyprlandDispatch {
-    SwitchWorkspace,
-    MoveWindowToWorkspace,
-    FocusDirection,
-    ToggleFloating,
-    ToggleFullscreen,
-}
-
-impl HyprlandDispatch {
-    pub fn parse(value: &str) -> Result<Self, ValidationError> {
-        match value {
-            "switch_workspace" => Ok(Self::SwitchWorkspace),
-            "move_window_to_workspace" => Ok(Self::MoveWindowToWorkspace),
-            "focus_direction" => Ok(Self::FocusDirection),
-            "toggle_floating" => Ok(Self::ToggleFloating),
-            "toggle_fullscreen" => Ok(Self::ToggleFullscreen),
-            _ => Err(ValidationError::InvalidRequest(format!(
-                "unsupported Hyprland action `{value}`"
-            ))),
-        }
-    }
-
-    pub fn normalize_argument(
-        self,
-        argument: Option<&str>,
-    ) -> Result<Option<String>, ValidationError> {
-        match self {
-            Self::SwitchWorkspace | Self::MoveWindowToWorkspace => {
-                let workspace: u8 = argument
-                    .ok_or_else(|| {
-                        ValidationError::InvalidRequest("workspace number is required".into())
-                    })?
-                    .parse()
-                    .map_err(|_| {
-                        ValidationError::InvalidRequest(
-                            "workspace must be a number from 1 to 99".into(),
-                        )
-                    })?;
-                if !(1..=99).contains(&workspace) {
-                    return Err(ValidationError::InvalidRequest(
-                        "workspace must be a number from 1 to 99".into(),
-                    ));
-                }
-                Ok(Some(workspace.to_string()))
-            }
-            Self::FocusDirection => {
-                let direction = match argument.unwrap_or_default().to_ascii_lowercase().as_str() {
-                    "left" | "l" => "l",
-                    "right" | "r" => "r",
-                    "up" | "u" => "u",
-                    "down" | "d" => "d",
-                    _ => {
-                        return Err(ValidationError::InvalidRequest(
-                            "focus direction must be left, right, up, or down".into(),
-                        ));
-                    }
-                };
-                Ok(Some(direction.into()))
-            }
-            Self::ToggleFloating | Self::ToggleFullscreen => Ok(None),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ModelAction {
@@ -753,6 +111,8 @@ pub enum ModelAction {
     InstallPackage {
         package: String,
         message: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup: Option<SystemSetup>,
     },
     RemovePackage {
         package: String,
@@ -788,6 +148,8 @@ pub enum ModelAction {
 #[serde(deny_unknown_fields)]
 pub struct ModelEnvelope {
     pub action: String,
+    #[serde(default)]
+    pub setup: Option<SystemSetup>,
     #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]
@@ -826,6 +188,11 @@ impl TryFrom<ModelEnvelope> for ModelAction {
     type Error = ValidationError;
 
     fn try_from(value: ModelEnvelope) -> Result<Self, Self::Error> {
+        if value.setup.is_some() && value.action != "install_package" {
+            return Err(ValidationError::InvalidRequest(
+                "setup requires install_package".into(),
+            ));
+        }
         match value.action.as_str() {
             "search_package" | "search_appimage" | "check_package" => {
                 let repository = if value.action == "search_appimage" {
@@ -882,7 +249,14 @@ impl TryFrom<ModelEnvelope> for ModelAction {
                         .filter(|message| !message.trim().is_empty())
                         .map(normalize_model_message)
                         .transpose()?;
-                    Ok(Self::InstallPackage { package, message })
+                    if let Some(setup) = &value.setup {
+                        setup.validate()?;
+                    }
+                    Ok(Self::InstallPackage {
+                        package,
+                        message,
+                        setup: value.setup,
+                    })
                 } else {
                     Ok(Self::RemovePackage { package })
                 }
@@ -1022,6 +396,8 @@ pub enum EngineDecision {
     Install {
         package: String,
         message: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup: Option<SystemSetup>,
     },
     Remove(String),
     SetTheme(ThemeSettings),
@@ -1042,22 +418,6 @@ pub enum EngineDecision {
     Reject(String),
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PackageOperation {
-    Install,
-    Remove,
-}
-
-impl fmt::Display for PackageOperation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Install => "install",
-            Self::Remove => "remove",
-        })
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "request", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcRequest {
@@ -1066,6 +426,7 @@ pub enum IpcRequest {
     GetTheme,
     GetManagedModule,
     ProposeInstall { package: String },
+    ProposeSetup { package: String, setup: SystemSetup },
     ProposeAppImageInstall { package: AppImagePackage },
     ProposeRemove { package: String },
     ProposeTheme { theme: ThemeSettings },
@@ -1084,6 +445,10 @@ pub struct Proposal {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProposalChange {
+    Setup {
+        operation: PackageOperation,
+        setup: ManagedSetup,
+    },
     Package {
         operation: PackageOperation,
         package: String,
@@ -1141,10 +506,22 @@ pub struct PackageState {
     pub appimages: Vec<AppImagePackage>,
     #[serde(default)]
     pub theme: ThemeSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setups: Vec<ManagedSetup>,
 }
 
 impl PackageState {
     pub fn normalize(&mut self) -> Result<(), ValidationError> {
+        let mut identities = BTreeSet::new();
+        for setup in &mut self.setups {
+            setup.normalize()?;
+            if !identities.insert(setup.package.clone()) {
+                return Err(ValidationError::InvalidRequest(
+                    "duplicate managed setup".into(),
+                ));
+            }
+        }
+        self.setups.sort_by(|a, b| a.package.cmp(&b.package));
         let mut unique = BTreeSet::new();
         for package in &self.packages {
             validate_attribute(package)?;
@@ -1184,6 +561,7 @@ impl PackageState {
             packages: packages.into_iter().collect(),
             appimages: self.appimages.clone(),
             theme: self.theme.clone(),
+            setups: self.setups.clone(),
         })
     }
 
@@ -1202,6 +580,7 @@ impl PackageState {
             packages: self.packages.clone(),
             appimages,
             theme: self.theme.clone(),
+            setups: self.setups.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -1218,6 +597,7 @@ impl PackageState {
                 .cloned()
                 .collect(),
             theme: self.theme.clone(),
+            setups: self.setups.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -1233,6 +613,7 @@ impl PackageState {
             packages: self.packages.clone(),
             appimages: self.appimages.clone(),
             theme: self.theme.merged(change),
+            setups: self.setups.clone(),
         })
     }
 }
@@ -1257,12 +638,12 @@ fn render_packages_module_version(
         package.validate()?;
     }
     let package_lines = state
-        .packages
+        .effective_packages()
         .iter()
         .map(|package| format!("      \"{package}\""))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut appearance = String::new();
+    let mut appearance = system_configuration::render(&state.setups);
     if !state.theme.is_empty() {
         appearance.push_str(if legacy_gnome {
             "\n  programs.dconf.enable = true;\n  programs.dconf.profiles.user.databases = [\n    {\n      settings.\"org/gnome/desktop/interface\" = {\n"
@@ -1315,32 +696,13 @@ pub fn parse_packages_module(source: &str) -> Result<PackageState, ValidationErr
     })?;
     state.normalize()?;
     if render_packages_module(&state)? != source
-        && render_packages_module_version(&state, true)? != source
+        && (!state.setups.is_empty() || render_packages_module_version(&state, true)? != source)
     {
         return Err(ValidationError::InvalidRequest(
             "Peasy managed module was modified outside Peasy".into(),
         ));
     }
     Ok(state)
-}
-
-fn render_appimage_bindings(
-    packages: &[AppImagePackage],
-    indent: &str,
-) -> Result<String, ValidationError> {
-    let mut rendered = String::new();
-    for package in packages {
-        package.validate()?;
-        let pname = nix_string(&package.pname());
-        let version = nix_string(&package.version);
-        let display_name = nix_string(&package.display_name);
-        let url = nix_string(&package.url);
-        let hash = nix_string(&package.hash);
-        rendered.push_str(&format!(
-            "{indent}  (let\n{indent}    wrapped = pkgs.appimageTools.wrapType2 {{\n{indent}      pname = {pname};\n{indent}      version = {version};\n{indent}      src = pkgs.fetchurl {{\n{indent}        url = {url};\n{indent}        hash = {hash};\n{indent}      }};\n{indent}    }};\n{indent}    desktop = pkgs.makeDesktopItem {{\n{indent}      name = {pname};\n{indent}      desktopName = {display_name};\n{indent}      exec = {pname};\n{indent}      icon = \"application-x-executable\";\n{indent}      categories = [ \"Network\" ];\n{indent}    }};\n{indent}  in pkgs.symlinkJoin {{\n{indent}    name = {pname};\n{indent}    paths = [ wrapped desktop ];\n{indent}  }})\n"
-        ));
-    }
-    Ok(rendered)
 }
 
 pub fn nix_string(value: &str) -> String {
@@ -1658,6 +1020,7 @@ mod tests {
             ModelAction::InstallPackage {
                 package: "opera".to_owned(),
                 message: Some("Install Opera".to_owned()),
+                setup: None,
             }
         );
     }
@@ -1666,6 +1029,7 @@ mod tests {
     fn state_is_sorted_and_rendered_as_data() {
         let mut state = PackageState {
             packages: vec!["vlc".into(), "telegram-desktop".into(), "vlc".into()],
+            setups: Vec::new(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -1688,6 +1052,7 @@ mod tests {
         ] {
             let state = PackageState {
                 packages: vec!["hello".into()],
+                setups: Vec::new(),
                 appimages: vec![],
                 theme,
             };

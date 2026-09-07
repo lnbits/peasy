@@ -77,6 +77,8 @@ pkgs.testers.runNixOSTest {
     assert profile["peasy_variant"] == "desktop"
     machine.succeed("test -f /etc/peasy/module-import-path")
     machine.succeed("test -f /run/current-system/sw/share/peasy/source/nix/module.nix")
+    machine.succeed("test -f /run/current-system/sw/share/peasy/source/peas/packages/types.rs")
+    machine.succeed("test -f /run/current-system/sw/share/peasy/source/peas/README.md")
     machine.succeed("test -f /run/current-system/sw/share/icons/hicolor/scalable/apps/io.github.peasy.Peasy.svg")
     ${
       if gnome then

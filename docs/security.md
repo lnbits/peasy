@@ -28,6 +28,17 @@ Wasm policy engine.
 
 No action variant represents a command, executable, path, HTTP request,
 arbitrary Nix expression, service definition, or general configuration edit.
+The system-configuration pea is a bounded exception for **reviewed setting
+names**, not general configuration access: an install can include up to eight
+supporting packages, eight allowlisted Boolean enable options and four
+allowlisted supplementary groups. Wasm and the daemon validate the plan. The
+daemon binds groups to the Unix-socket caller's existing account and UID;
+neither the AI nor IPC can supply a target account. Group prerequisites and
+normal-account/UID checks apply, and the review warns about powerful libvirt
+access. No arbitrary service bodies, listeners, firewall/polkit/sudo settings,
+`mkForce`, scripts or account creation are exposed. See the exact
+[catalogue and ownership rules](../peas/system_configuration/README.md).
+
 The model cannot initiate an arbitrary HTTP request: trusted client code alone
 constructs fixed `api.github.com` repository/release requests after a package
 search intent.
@@ -37,7 +48,8 @@ The provider request is assembled from a new JSON value. It may contain:
 - the current request, after a local credential-input guard;
 - current local date/time;
 - Peasy's canonical generated managed module, containing only validated package,
-  pinned AppImage, and GNOME appearance state;
+  pinned AppImage, appearance and setup state (including the locally bound
+  account name/UID for managed group contributions);
 - a bounded, allowlisted profile generated from the evaluated active NixOS
   configuration: release/platform tokens, closed desktop and Peasy-variant
   enums, and package names only;

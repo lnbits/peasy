@@ -24,6 +24,8 @@ jobs:
           persist-credentials: false
       - name: Check release packaging and publication safeguards
         run: python3 -B -m unittest discover -s scripts/tests -v
+      - name: Check website download metadata handling
+        run: node --test scripts/tests/downloads.test.cjs
 
   build:
     needs: release-tests
@@ -94,28 +96,10 @@ jobs:
             .#checks.x86_64-linux.iso-config \
             .#checks.x86_64-linux.installer-target \
             .#checks.x86_64-linux.wasm-imports
-          # Each test boots a 4–6 GiB VM. Run them sequentially on each runner;
-          # GNOME and Plasma still build on separate runners in parallel.
+          # Installed-system acceptance runs against the actual ISO below.
+          # Keep the desktop-specific tray regression as a separate check.
           nix build --no-link --max-jobs 1 \
-            ".#checks.x86_64-linux.${DESKTOP}-tray" \
-            ".#checks.x86_64-linux.installed-${DESKTOP}"
-      - name: Preserve VM diagnostics on failure
-        if: failure()
-        shell: bash
-        run: |
-          mkdir -p diagnostics
-          for check in "${DESKTOP}-tray" "installed-${DESKTOP}"; do
-            drv=$(nix eval --raw ".#checks.x86_64-linux.${check}.drvPath") || continue
-            nix log "$drv" > "diagnostics/${check}.log" 2>&1 || true
-          done
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: peasy-diagnostics-${{ matrix.desktop }}-${{ github.sha }}
-          path: diagnostics/
-          if-no-files-found: warn
-          retention-days: 7
+            ".#checks.x86_64-linux.${DESKTOP}-tray"
       - name: Build ISO and checksums
         shell: bash
         run: |
@@ -136,6 +120,42 @@ jobs:
           cd artifacts
           sha256sum "$filename" > "$filename.sha256"
           sha256sum --check "$filename.sha256"
+      - name: Fresh offline install of the actual release ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix build .#iso-test-tools --out-link result-iso-test-tools
+          mapfile -t images < <(find artifacts -maxdepth 1 -type f -name '*.iso')
+          [[ ${#images[@]} == 1 ]]
+          firmware=(--firmware bios)
+          if [[ "$DESKTOP" == plasma ]]; then
+            firmware=(--firmware uefi
+              --ovmf-code "$PWD/result-iso-test-tools/FV/OVMF_CODE.fd"
+              --ovmf-vars "$PWD/result-iso-test-tools/FV/OVMF_VARS.fd")
+          fi
+          # No --reuse-base, no --online, and no host-store mount. CI also
+          # rejects snapshot reuse inside the driver itself.
+          python3 -B scripts/iso_vm.py --iso "${images[0]}" --desktop "$DESKTOP" \
+            "${firmware[@]}" --memory 6144 --cpus 2 \
+            --qemu "$PWD/result-iso-test-tools/bin/qemu-system-x86_64" \
+            --qemu-img "$PWD/result-iso-test-tools/bin/qemu-img" \
+            --cache-dir "$RUNNER_TEMP/peasy-iso-vm-cache" \
+            --output "$PWD/diagnostics/iso-vm"
+      - name: Preserve tray diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p diagnostics
+          drv=$(nix eval --raw ".#checks.x86_64-linux.${DESKTOP}-tray.drvPath") || exit 0
+          nix log "$drv" > "diagnostics/${DESKTOP}-tray.log" 2>&1 || true
+      - name: Upload installation timings and diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: peasy-diagnostics-${{ matrix.desktop }}-${{ github.sha }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: peasy-iso-${{ matrix.desktop }}-${{ github.sha }}
@@ -148,7 +168,11 @@ jobs:
     needs: build
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
+    # Serialize different tags too: latest-only R2 cleanup must not race uploads.
+    concurrency:
+      group: peasy-iso-publication
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -161,6 +185,15 @@ jobs:
           pattern: peasy-iso-*-${{ github.sha }}
           path: artifacts
           merge-multiple: true
+      - uses: cachix/install-nix-action@b85815f71a6de0ddee80b8a80a98d43f4bcc66c7 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.34.7/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Prepare locked R2 upload tools (before loading credentials)
+        run: |
+          nix build .#iso-release-tools --out-link result-release-tools
+          ./result-release-tools/bin/python3 -B -m unittest discover -s scripts/tests -p test_r2_sdk.py -v
       - name: Package, verify and publish the complete release
         shell: bash
         env:
@@ -168,7 +201,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
         run: |
           set -euo pipefail
-          python3 -B scripts/release_isos.py \
+          ./result-release-tools/bin/python3 -B scripts/release_isos.py \
             --artifacts artifacts --tag "$TAG" --commit "$COMMIT"

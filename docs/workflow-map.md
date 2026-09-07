@@ -41,7 +41,7 @@ validates system requests. Wasm is not the only security boundary.
 |---|---|
 | Your request | Yes, after credential checks. Anything you type can disclose information. |
 | System summary | NixOS version, architecture, desktop type/version where available, Peasy variant, a bounded list of installed system-package names, and whether Hyprland is running. |
-| Peasy-managed configuration | A canonical generated representation of Peasy's managed packages, AppImages and theme, including stored AppImage source metadata. Not the whole host configuration. |
+| Peasy-managed configuration | A canonical generated representation of Peasy's managed packages, AppImages, theme and application setups (reviewed settings and caller-bound group contributions), including stored AppImage source metadata. Not the whole host configuration. |
 | Conversation context | Current local time, a recent validated package, and limited validation feedback when retrying an invalid action. |
 | Package search results | Selected Nixpkgs candidate attributes, names, versions and descriptions when resolving a package request. |
 | Home files, documents, arbitrary Nix files, environment variables | No browsing or file-reading interface is exposed to the AI. |
@@ -55,7 +55,10 @@ Peasy's request boundary, not a guarantee about a provider's internal handling.
 
 ## How an approved change reaches NixOS
 
-This path handles package/AppImage install or removal and saved desktop appearance.
+This path handles package/AppImage install or removal, generic application setup
+and uninstall, and saved desktop appearance. The [system-configuration
+pea](../peas/system_configuration/README.md) exposes reviewed enable options and
+groups, not arbitrary Nix or an account-editing interface.
 Trusted adapters apply only closed colour/mode values to GNOME or Plasma;
 capabilities vary by desktop. ISO wallpaper defaults are separate build-time
 configuration, not an AI wallpaper/file-editing capability.
@@ -63,7 +66,7 @@ configuration, not an AI wallpaper/file-editing capability.
 ```mermaid
 flowchart TD
     typed["Client sends a typed proposal request<br/>Local wheel-restricted Unix socket"]
-    typed --> daemon["peasy-system validates independently<br/>Checks package / theme / AppImage fields"]
+    typed --> daemon["peasy-system validates independently<br/>Checks packages, setups, theme and AppImages<br/>Binds group changes to the authenticated caller"]
     daemon --> proposal["Diff plus short-lived proposal token<br/>Bound to your UID and reviewed state"]
     proposal --> user{"You accept the diff?"}
     user -->|No| stop["Stop; no system change"]

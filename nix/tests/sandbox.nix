@@ -164,6 +164,14 @@ pkgs.testers.runNixOSTest {
             assert 'not authorized' in result['message'], result
             assert request({'request': 'get_managed_module'}) == before
             assert request({'request': 'apply', 'proposal': proposal['id']})['response'] == 'error'
+            setup = {'packages': [], 'enable': ['virtualisation.libvirtd.enable'], 'groups': ['libvirtd']}
+            proposal = request({'request': 'propose_setup', 'package': 'hello', 'setup': setup})['proposal']
+            assert proposal['change']['setup']['user'] == 'testuser', proposal
+            assert proposal['change']['setup']['uid'] == 1000, proposal
+            assert any('powerful' in line['text'] for line in proposal['diff']), proposal
+            result = request({'request': 'apply', 'proposal': proposal['id']})
+            assert result['response'] == 'error' and 'not authorized' in result['message'], result
+            assert request({'request': 'get_managed_module'}) == before
         elif sys.argv[1] == 'allowed':
             proposal = request({'request': 'propose_install', 'package': 'hello'})['proposal']
             result = request({'request': 'apply', 'proposal': proposal['id']})
@@ -175,6 +183,9 @@ pkgs.testers.runNixOSTest {
                 {'request': 'shell', 'command': 'touch /etc/peasy-pwned'},
                 {'request': 'propose_install', 'package': 'hello;reboot'},
                 {'request': 'apply', 'proposal': '../../etc/passwd'},
+                {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['services.openssh.enable'], 'groups': []}},
+                {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['virtualisation.libvirtd.enable'], 'groups': ['wheel']}},
+                {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['virtualisation.libvirtd.enable'], 'groups': ['libvirtd'], 'user': 'root'}},
             ]:
                 assert request(body)['response'] == 'error'
       '';

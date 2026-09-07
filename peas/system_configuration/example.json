@@ -1,0 +1,10 @@
+{
+  "package": "virt-manager",
+  "settings": {
+    "packages": [],
+    "enable": ["programs.virt-manager.enable", "virtualisation.libvirtd.enable"],
+    "groups": ["libvirtd"]
+  },
+  "user": "peasytest",
+  "uid": 1000
+}

@@ -22,10 +22,19 @@
           default = pkgs.callPackage ./nix/package.nix { };
           peasy = pkgs.callPackage ./nix/package.nix { };
           peasy-core = pkgs.callPackage ./nix/package-core.nix { };
+          iso-release-tools = pkgs.python3.withPackages (ps: [ ps.boto3 ]);
         }
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           iso-gnome = self.nixosConfigurations.peasy-iso-gnome.config.system.build.isoImage;
           iso-plasma = self.nixosConfigurations.peasy-iso-plasma.config.system.build.isoImage;
+          iso-test-tools = pkgs.symlinkJoin {
+            name = "peasy-iso-test-tools";
+            paths = [
+              pkgs.qemu_kvm
+              pkgs.qemu-utils
+              pkgs.OVMF.fd
+            ];
+          };
         }
       );
 
@@ -43,12 +52,12 @@
       };
 
       # CI requires these flags plus successful runtime tests and verified
-      # uploads before publishing. Oversized ISOs use lossless split assets.
+      # uploads before publishing. Complete ISOs are verified and hosted on R2.
       lib.isoReleaseStatus = {
         releaseReady = true;
         installedTargetHasPeasy = true;
         installedBootVerified = true;
-        reason = "Installed-disk boot verified. Tag releases publish after CI checks; oversized ISOs are distributed as verified lossless parts.";
+        reason = "Installed-disk boot verified. Tag releases publish after CI checks and whole-image R2 verification.";
       };
 
       devShells = forAllSystems (
@@ -111,10 +120,13 @@
                   ${./nix/package-core.nix} \
                   ${./nix/iso-common.nix} \
                   ${./nix/iso-appearance.nix} \
+                  ${./nix/iso-boot-branding.nix} \
+                  ${./nix/iso-branding/default.nix} \
                   ${./nix/iso-gnome.nix} \
                   ${./nix/iso-plasma.nix} \
                   ${./nix/installer.nix} \
                   ${./nix/installer-target.nix} \
+                  ${./nix/installer-offline.nix} \
                   ${./nix/tests/desktop-config.nix} \
                   ${./nix/tests/iso-config.nix} \
                   ${./nix/tests/gnome-tray.nix} \
@@ -124,6 +136,8 @@
                   ${./nix/tests/installed-instrumentation.nix} \
                   ${./nix/tests/sandbox.nix} \
                   ${./nix/tests/sandbox-system.nix} \
+                  ${./nix/tests/system-configuration.nix} \
+                  ${./nix/tests/system-configuration-eval.nix} \
                   ${./nix/tests/sandbox-system-check.nix}
             touch $out
           '';
@@ -136,6 +150,10 @@
             touch $out
           '';
           sandbox = sandboxTest;
+          system-configuration = import ./nix/tests/system-configuration.nix {
+            inherit pkgs;
+            package = corePackage;
+          };
           sandbox-fixture = import ./nix/tests/sandbox-system-check.nix {
             inherit pkgs sandboxTest;
           };
@@ -160,7 +178,7 @@
             in
             pkgs.runCommand "peasy-installer-target-check"
               {
-                nativeBuildInputs = [ pkgs.python3 ];
+                nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.pyyaml ])) ];
               }
               ''
                 mkdir -p $out
@@ -170,6 +188,11 @@
                   ${pkgs.calamares-nixos-extensions.src}/modules/nixos/main.py \
                   ${installer.extensions}/lib/calamares/modules/nixos/main.py \
                   ${installer.helper} > status.json
+                python ${./nix/tests/iso-branding.py} \
+                  ${import ./nix/iso-branding { inherit pkgs; }} \
+                  ${installer.extensions} \
+                  ${pkgs.calamares-nixos-extensions.src} \
+                  ${pkgs.nixos-grub2-theme}
               '';
           iso-config = import ./nix/tests/iso-config.nix {
             inherit pkgs;

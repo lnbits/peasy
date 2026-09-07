@@ -10,56 +10,12 @@ let
     inherit pkgs;
     source = package.src;
   };
-  # Offline NixOS glue-build inputs, following nixpkgs' installer test.
+  # Share assembly inputs with the shipped ISO. Release acceptance additionally
+  # boots that actual ISO, so this enriched fixture cannot conceal missing data.
   buildTools =
-    with pkgs;
-    [
-      stdenv
-      bintools
-      brotli
-      brotli.dev
-      brotli.lib
-      desktop-file-utils
-      docbook5
-      docbook_xsl_ns
-      hello
-      kbd.dev
-      kmod.dev
-      libarchive.dev
-      libcap-text-verifier
-      libxml2.bin
-      libxslt.bin
-      nixos-rebuild-ng
-      perlPackages.ConfigIniFiles
-      perlPackages.FileSlurp
-      perlPackages.JSON
-      perlPackages.ListCompare
-      perlPackages.XMLLibXML
-      shared-mime-info
-      sudo
-      switch-to-configuration-ng
-      texinfo
-      unionfs-fuse
-      lndir
-      shellcheck-minimal
-      systemdMinimal.out
-      grub2
-      grub2_efi
-      nixos-artwork.wallpapers.simple-dark-gray-bootloader
-      perlPackages.FileCopyRecursive
-      perlPackages.XMLSAX
-      perlPackages.XMLSAXBase
-      zstd.bin
-      mypy
-    ]
-    ++ lib.concatMap (package: map (output: package.${output}) package.outputs) [
-      # Desktop glue builds need outputs not retained by the runtime closure
-      # (for example validators and development data used to assemble wrappers).
-      pkgs.gtk3
-      pkgs.ghostscript
-      pkgs.ibus
-      pkgs.libxkbcommon
-    ];
+    (import ../installer-offline.nix {
+      inherit pkgs package desktop;
+    }).builders;
   testData = {
     inherit gnome;
     buildTools = map toString buildTools;

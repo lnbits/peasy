@@ -3,6 +3,12 @@
 Start with the [visual workflow and AI access map](workflow-map.md) for a
 diagram-led overview of the trust boundaries.
 
+Ability-specific implementations live in [`peas/`](../peas/README.md). Each pea
+groups its types, client handlers and (where needed) system proposals or pure
+Wasm policy. Existing crates compile the appropriate layer; provider access,
+closed dispatch, authorization and system transactions remain shared. The
+[peas guide](../peas/README.md) maps the files and explains how to add an ability.
+
 Peasy exposes a deliberately closed set of typed NixOS and desktop
 capabilities.
 It is not a shell, an agent framework, or an arbitrary NixOS configuration
@@ -120,6 +126,7 @@ request enum contains only:
 
 - `SearchPackages`
 - `GetPackages`
+- `ProposeSetup` (generic supporting packages, reviewed enable options and caller-bound groups; see the [system-configuration pea](../peas/system_configuration/README.md))
 - `GetTheme`
 - `ProposeInstall`
 - `ProposeAppImageInstall`

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="320" height="250" viewBox="0 0 320 250">
+  <title>NixOS — Includes Peasy</title>
+  <!-- Preserve the pinned upstream NixOS artwork. This relative reference is
+       resolved at build time, never fetched by the live installer. -->
+  <image x="60" y="8" width="200" height="200" xlink:href="nixos.svg"/>
+  <text x="160" y="240" text-anchor="middle" font-family="DejaVu Sans" font-size="22" fill="#39805f">Includes Peasy</text>
+</svg>

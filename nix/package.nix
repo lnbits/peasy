@@ -28,6 +28,7 @@ rustPlatform.buildRustPackage {
         ../Cargo.lock
         ../Cargo.toml
         ../crates
+        ../peas
         ../flake.lock
         ../flake.nix
         ../nix
@@ -81,10 +82,19 @@ rustPlatform.buildRustPackage {
   # Tests create executable mock tools while other tests launch subprocesses.
   # Run test cases serially to avoid transient ETXTBSY from concurrently
   # inherited writable descriptors. Compilation remains parallel.
-  checkFlags = [ "--test-threads=1" ];
+  checkFlags = [
+    "--test-threads=1"
+    "--include-ignored"
+  ];
 
   preBuild = ''
     cargo build --release --locked -p peasy-engine --target wasm32-unknown-unknown
+  '';
+
+  # The ignored local integration check needs an already-built Wasm guest.
+  # Package builds always provide it and run the full cross-pea contract corpus.
+  preCheck = ''
+    export PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm"
   '';
 
   postInstall = ''
@@ -106,7 +116,7 @@ rustPlatform.buildRustPackage {
       install -Dm644 assets/gnome-shell-extension/extension.js "$extension/extension.js"
       install -Dm644 assets/gnome-shell-extension/stylesheet.css "$extension/stylesheet.css"
       mkdir -p "$out/share/peasy/source"
-      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates nix wit assets \
+      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peas nix wit assets \
         "$out/share/peasy/source/"
     ''}
     ${

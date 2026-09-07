@@ -1,0 +1,107 @@
+{
+  "date": "2026-09-06",
+  "host": "Intel Core Ultra 7 255H, Linux/KVM",
+  "note": "Local observations; runs overlapped. See iso-benchmarks.md for scope and limitations.",
+  "results": [
+    {
+      "run": "gnome-v3-fresh-3",
+      "identity": {
+        "iso_sha256": "71e6a99161474763709ebee6ee1366815c6b45a861bd2f59ecb44a791d7e159e",
+        "desktop": "gnome",
+        "firmware": "bios",
+        "memory_mib": 8192,
+        "cpus": 4,
+        "online": false,
+        "qemu": "QEMU emulator version 11.1.0",
+        "harness": "c8aebd9f87ee3b39ff3923a8df28696e2810dfd13f118e3f02c088418ba45c54",
+        "guest": "66f60fd373d06a4bcd189ed0c602d06a6bd0a7afecb90575b90375375251daf0",
+        "package_test": "6460de2b5fd5bbf5969ae78762a366e5954ee4e387d879b62827fe0755542b30"
+      },
+      "iso_bytes": 3763814400,
+      "reused_base": false,
+      "passed": true,
+      "timings_seconds": {
+        "live_boot_console": 68.64831822901033,
+        "install_attempt": 233.74752522900235,
+        "install": 233.74752522900235,
+        "installed_boot_checks": 28.91173002900905,
+        "overlay_runtime_checks": 224.411219082991,
+        "total": 678.9262261840049
+      }
+    },
+    {
+      "run": "plasma-v3-fresh-2",
+      "identity": {
+        "iso_sha256": "5ed7eb85d97a6a206dcfe00436a36fbaae2c019dc7916e6182fb5c617a513d42",
+        "desktop": "plasma",
+        "firmware": "uefi",
+        "memory_mib": 8192,
+        "cpus": 4,
+        "online": false,
+        "qemu": "QEMU emulator version 11.1.0",
+        "harness": "c8aebd9f87ee3b39ff3923a8df28696e2810dfd13f118e3f02c088418ba45c54",
+        "guest": "66f60fd373d06a4bcd189ed0c602d06a6bd0a7afecb90575b90375375251daf0",
+        "package_test": "6460de2b5fd5bbf5969ae78762a366e5954ee4e387d879b62827fe0755542b30",
+        "ovmf_code": "1de0995bf1af63d2b643ef3b90a8e9f9805290a07f4c53d8f2b106fb459ed7ef",
+        "ovmf_vars": "5d2ac383371b408398accee7ec27c8c09ea5b74a0de0ceea6513388b15be5d1e"
+      },
+      "iso_bytes": 4391202816,
+      "reused_base": false,
+      "passed": true,
+      "timings_seconds": {
+        "live_boot_console": 55.96310537100362,
+        "install_attempt": 320.43769274400256,
+        "install": 320.43769274400256,
+        "installed_boot_checks": 33.84440839198942,
+        "overlay_runtime_checks": 308.03156872000545,
+        "total": 893.1167735779891
+      }
+    },
+    {
+      "run": "gnome-v3-reuse",
+      "identity": {
+        "iso_sha256": "71e6a99161474763709ebee6ee1366815c6b45a861bd2f59ecb44a791d7e159e",
+        "desktop": "gnome",
+        "firmware": "bios",
+        "memory_mib": 8192,
+        "cpus": 4,
+        "online": false,
+        "qemu": "QEMU emulator version 11.1.0",
+        "harness": "c8aebd9f87ee3b39ff3923a8df28696e2810dfd13f118e3f02c088418ba45c54",
+        "guest": "66f60fd373d06a4bcd189ed0c602d06a6bd0a7afecb90575b90375375251daf0",
+        "package_test": "6460de2b5fd5bbf5969ae78762a366e5954ee4e387d879b62827fe0755542b30"
+      },
+      "iso_bytes": 3763814400,
+      "reused_base": true,
+      "passed": true,
+      "timings_seconds": {
+        "overlay_runtime_checks": 152.21117191600206,
+        "total": 202.5778892189992
+      }
+    },
+    {
+      "run": "plasma-v3-reuse",
+      "identity": {
+        "iso_sha256": "5ed7eb85d97a6a206dcfe00436a36fbaae2c019dc7916e6182fb5c617a513d42",
+        "desktop": "plasma",
+        "firmware": "uefi",
+        "memory_mib": 8192,
+        "cpus": 4,
+        "online": false,
+        "qemu": "QEMU emulator version 11.1.0",
+        "harness": "c8aebd9f87ee3b39ff3923a8df28696e2810dfd13f118e3f02c088418ba45c54",
+        "guest": "66f60fd373d06a4bcd189ed0c602d06a6bd0a7afecb90575b90375375251daf0",
+        "package_test": "6460de2b5fd5bbf5969ae78762a366e5954ee4e387d879b62827fe0755542b30",
+        "ovmf_code": "1de0995bf1af63d2b643ef3b90a8e9f9805290a07f4c53d8f2b106fb459ed7ef",
+        "ovmf_vars": "5d2ac383371b408398accee7ec27c8c09ea5b74a0de0ceea6513388b15be5d1e"
+      },
+      "iso_bytes": 4391202816,
+      "reused_base": true,
+      "passed": true,
+      "timings_seconds": {
+        "overlay_runtime_checks": 320.3676641810016,
+        "total": 352.84626272199966
+      }
+    }
+  ]
+}

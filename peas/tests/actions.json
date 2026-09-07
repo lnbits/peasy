@@ -1,0 +1,390 @@
+[
+  {
+    "envelope": {"action":"install_package","package":"virt-manager","setup":{"packages":[],"enable":["programs.virt-manager.enable","virtualisation.libvirtd.enable"],"groups":["libvirtd"]}},
+    "input": {
+      "action": {"action":"install_package","package":"virt-manager","message":null,"setup":{"packages":[],"enable":["programs.virt-manager.enable","virtualisation.libvirtd.enable"],"groups":["libvirtd"]}},
+      "candidates": [{"attribute":"virt-manager","name":"Virtual Machine Manager","description":"Virtual machine management","version":"5.0.0"}],
+      "installed": []
+    },
+    "decision": {"decision":"install","value":{"package":"virt-manager","message":null,"setup":{"packages":[],"enable":["programs.virt-manager.enable","virtualisation.libvirtd.enable"],"groups":["libvirtd"]}}}
+  },
+  {
+    "envelope": {
+      "action": "search_package",
+      "query": "hello",
+      "package_version": "latest"
+    },
+    "input": {
+      "action": {
+        "action": "search_package",
+        "query": "hello",
+        "version": "latest"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "search",
+      "value": {
+        "query": "hello",
+        "version": "latest"
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "search_appimage",
+      "repository": "Owner/Project.git",
+      "package_version": "1.2"
+    },
+    "input": {
+      "action": {
+        "action": "search_app_image",
+        "query": "project",
+        "version": {
+          "exact": "1.2"
+        },
+        "repository": "owner/project"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "search_app_image",
+      "value": {
+        "query": "project",
+        "version": {
+          "exact": "1.2"
+        },
+        "repository": "owner/project"
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "check_package",
+      "query": "hello"
+    },
+    "input": {
+      "action": {
+        "action": "check_package",
+        "query": "hello"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "check_package",
+      "value": "hello"
+    }
+  },
+  {
+    "envelope": {
+      "action": "list_themes"
+    },
+    "input": {
+      "action": {
+        "action": "list_themes"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "list_themes"
+    }
+  },
+  {
+    "envelope": {
+      "action": "list_wifi"
+    },
+    "input": {
+      "action": {
+        "action": "list_wifi"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "list_wifi"
+    }
+  },
+  {
+    "envelope": {
+      "action": "hyprland_status"
+    },
+    "input": {
+      "action": {
+        "action": "hyprland_status"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "hyprland_status"
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "message": "A greeting"
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": "A greeting"
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "Hello",
+          "description": "A greeting",
+          "version": "2.12.2"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": "A greeting"
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "remove_package",
+      "package": "hello"
+    },
+    "input": {
+      "action": {
+        "action": "remove_package",
+        "package": "hello"
+      },
+      "candidates": [],
+      "installed": [
+        "hello"
+      ]
+    },
+    "decision": {
+      "decision": "remove",
+      "value": "hello"
+    }
+  },
+  {
+    "envelope": {
+      "action": "set_theme",
+      "theme_color": "green",
+      "theme_mode": "dark"
+    },
+    "input": {
+      "action": {
+        "action": "set_theme",
+        "theme": {
+          "accent_color": "green",
+          "color_scheme": "dark"
+        }
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "set_theme",
+      "value": {
+        "accent_color": "green",
+        "color_scheme": "dark"
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "set_hyprland_setting",
+      "hyprland_setting": "gaps_inner",
+      "hyprland_value": "8"
+    },
+    "input": {
+      "action": {
+        "action": "set_hyprland_setting",
+        "change": {
+          "setting": "gaps_inner",
+          "value": "8"
+        }
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "set_hyprland_setting",
+      "value": {
+        "setting": "gaps_inner",
+        "value": "8"
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "hyprland_dispatch",
+      "hyprland_dispatch": "switch_workspace",
+      "hyprland_argument": "2"
+    },
+    "input": {
+      "action": {
+        "action": "hyprland_dispatch",
+        "dispatch": "switch_workspace",
+        "argument": "2"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "hyprland_dispatch",
+      "value": {
+        "dispatch": "switch_workspace",
+        "argument": "2"
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "connect_wifi",
+      "ssid": "Cafe"
+    },
+    "input": {
+      "action": {
+        "action": "connect_wifi",
+        "ssid": "Cafe"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "connect_wifi",
+      "value": "Cafe"
+    }
+  },
+  {
+    "envelope": {
+      "action": "connect_bluetooth",
+      "device": "headphones"
+    },
+    "input": {
+      "action": {
+        "action": "connect_bluetooth",
+        "device": "headphones"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "connect_bluetooth",
+      "value": "headphones"
+    }
+  },
+  {
+    "envelope": {
+      "action": "create_calendar_event",
+      "event_title": "Team meeting",
+      "event_start": "2026-09-07T10:00:00",
+      "duration_minutes": 30
+    },
+    "input": {
+      "action": {
+        "action": "create_calendar_event",
+        "title": "Team meeting",
+        "start_local": "2026-09-07T10:00:00",
+        "duration_minutes": 30
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "create_calendar_event",
+      "value": {
+        "title": "Team meeting",
+        "start_local": "2026-09-07T10:00:00",
+        "duration_minutes": 30
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "explain",
+      "message": "No change."
+    },
+    "input": {
+      "action": {
+        "action": "explain",
+        "message": "No change."
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "explain",
+      "value": "No change."
+    }
+  },
+  {
+    "envelope": {
+      "action": "cancel"
+    },
+    "input": {
+      "action": {
+        "action": "cancel"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "cancel"
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello"
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null
+      },
+      "candidates": [],
+      "installed": [
+        "hello"
+      ]
+    },
+    "decision": {
+      "decision": "reject",
+      "value": "model selected a package outside the candidate set"
+    }
+  },
+  {
+    "envelope": {
+      "action": "remove_package",
+      "package": "hello"
+    },
+    "input": {
+      "action": {
+        "action": "remove_package",
+        "package": "hello"
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "Hello",
+          "description": "A greeting",
+          "version": "2.12.2"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "reject",
+      "value": "model selected a package Peasy does not manage"
+    }
+  }
+]

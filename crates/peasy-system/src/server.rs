@@ -210,6 +210,9 @@ fn dispatch(
         IpcRequest::ProposeInstall { package } => {
             propose_package(backend, proposals, uid, PackageOperation::Install, &package)
         }
+        IpcRequest::ProposeSetup { package, setup } => {
+            store_proposal(proposals, uid, backend.preview_setup(package, setup, uid)?)
+        }
         IpcRequest::ProposeAppImageInstall { package } => {
             let preview = backend.preview_appimage_install(package)?;
             store_proposal(proposals, uid, preview)
@@ -414,6 +417,32 @@ mod tests {
                 &backend,
                 &map,
                 &Authorization(true)
+            )
+            .is_err()
+        );
+        assert_eq!(runner.0.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.managed_module().unwrap(), before);
+        let mut setup_preview = preview();
+        setup_preview.change = ProposalChange::Setup {
+            operation: PackageOperation::Install,
+            setup: serde_json::from_str(include_str!(
+                "../../../peas/system_configuration/example.json"
+            ))
+            .unwrap(),
+        };
+        let IpcResponse::Proposal { proposal } = store_proposal(&map, 1000, setup_preview).unwrap()
+        else {
+            panic!()
+        };
+        assert!(
+            dispatch(
+                IpcRequest::Apply {
+                    proposal: proposal.id
+                },
+                &peer,
+                &backend,
+                &map,
+                &Authorization(false)
             )
             .is_err()
         );

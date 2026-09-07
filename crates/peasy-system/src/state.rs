@@ -84,6 +84,7 @@ mod tests {
         let managed_path = temporary.path().join("source/peasy-managed.nix");
         let active = PackageState {
             packages: vec!["vlc".into(), "hello".into()],
+            setups: Vec::new(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -102,6 +103,7 @@ mod tests {
         let managed_path = temporary.path().join("source/peasy-managed.nix");
         let original = PackageState {
             packages: vec!["hello".into()],
+            setups: Vec::new(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -110,5 +112,35 @@ mod tests {
 
         assert!(restore_managed_from_generation(&state_path, &managed_path).is_err());
         assert_eq!(load_managed(&managed_path).unwrap(), original);
+    }
+
+    #[test]
+    fn generation_reconciliation_restores_and_withdraws_setup_contributions() {
+        let temporary = tempfile::tempdir().unwrap();
+        let active = temporary.path().join("active.json");
+        let managed = temporary.path().join("managed.nix");
+        let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/example.json"
+        ))
+        .unwrap();
+        let configured = PackageState::default().with_setup(setup).unwrap();
+        fs::write(&active, serde_json::to_vec(&configured).unwrap()).unwrap();
+        restore_managed_from_generation(&active, &managed).unwrap();
+        assert_eq!(load_managed(&managed).unwrap(), configured);
+        fs::write(
+            &active,
+            serde_json::to_vec(&PackageState::default()).unwrap(),
+        )
+        .unwrap();
+        restore_managed_from_generation(&active, &managed).unwrap();
+        assert_eq!(load_managed(&managed).unwrap(), PackageState::default());
+        assert!(
+            !fs::read_to_string(&managed)
+                .unwrap()
+                .contains("extraGroups")
+        );
+        fs::write(&active, serde_json::to_vec(&configured).unwrap()).unwrap();
+        restore_managed_from_generation(&active, &managed).unwrap();
+        assert_eq!(load_managed(&managed).unwrap(), configured);
     }
 }

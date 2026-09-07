@@ -1,5 +1,12 @@
 use peasy_core::{EngineDecision, EngineInput, ModelAction};
 
+#[path = "../../../peas/packages/policy.rs"]
+mod packages;
+
+#[cfg(test)]
+#[path = "../../../peas/tests/policy.rs"]
+mod pea_contracts;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn peasy_alloc(length: u32) -> u32 {
     let mut bytes = vec![0_u8; length as usize].into_boxed_slice();
@@ -40,24 +47,12 @@ fn decide(input: EngineInput) -> EngineDecision {
         ModelAction::ListThemes => EngineDecision::ListThemes,
         ModelAction::ListWifi => EngineDecision::ListWifi,
         ModelAction::HyprlandStatus => EngineDecision::HyprlandStatus,
-        ModelAction::InstallPackage { package, message } => {
-            if input
-                .candidates
-                .iter()
-                .any(|item| item.attribute == package)
-            {
-                EngineDecision::Install { package, message }
-            } else {
-                EngineDecision::Reject("model selected a package outside the candidate set".into())
-            }
-        }
-        ModelAction::RemovePackage { package } => {
-            if input.installed.iter().any(|item| item == &package) {
-                EngineDecision::Remove(package)
-            } else {
-                EngineDecision::Reject("model selected a package Peasy does not manage".into())
-            }
-        }
+        ModelAction::InstallPackage {
+            package,
+            message,
+            setup,
+        } => packages::install(package, message, setup, &input.candidates),
+        ModelAction::RemovePackage { package } => packages::remove(package, &input.installed),
         ModelAction::SetTheme { theme } => EngineDecision::SetTheme(theme),
         ModelAction::SetHyprlandSetting { change } => EngineDecision::SetHyprlandSetting(change),
         ModelAction::HyprlandDispatch { dispatch, argument } => {
