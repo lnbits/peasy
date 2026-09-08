@@ -3,6 +3,7 @@ use clap::Parser;
 use ksni::blocking::TrayMethods;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 const APPINDICATOR_UUID: &str = "appindicatorsupport@rgcjonas.gmail.com";
 
@@ -33,8 +34,9 @@ impl ksni::Tray for PeasyTray {
         eprintln!(
             "Peasy: no StatusNotifier tray host is available yet; you can still open Peasy from the application menu."
         );
-        // Remain idle and reconnect when the panel starts; never install a host.
-        true
+        // Close this registration before the supervisor retries. In particular,
+        // a failed registration need not be followed by another owner change.
+        false
     }
 
     fn id(&self) -> String {
@@ -116,11 +118,34 @@ fn main() -> Result<()> {
             .args(["enable", APPINDICATOR_UUID])
             .status();
     }
-    let _handle = PeasyTray { ui: args.ui }
-        .assume_sni_available(true)
-        .spawn()?;
+    run_tray(args.ui)
+}
+
+fn run_tray(ui: PathBuf) -> ! {
+    let mut retry_delay = Duration::from_secs(1);
     loop {
-        std::thread::park();
+        let started = Instant::now();
+        match (PeasyTray { ui: ui.clone() })
+            .assume_sni_available(true)
+            .spawn()
+        {
+            Ok(handle) => {
+                // ksni closes the service when watcher_offline returns false.
+                // Checking the local handle also catches an ended service task;
+                // no polling traffic is sent to a healthy desktop's session bus.
+                while !handle.is_closed() {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+                handle.shutdown().wait();
+            }
+            Err(error) => eprintln!("Peasy: could not start the tray service: {error}"),
+        }
+        if started.elapsed() >= Duration::from_secs(10) {
+            retry_delay = Duration::from_secs(1);
+        }
+        eprintln!("Peasy: retrying tray registration in {retry_delay:?}");
+        std::thread::sleep(retry_delay);
+        retry_delay = (retry_delay * 2).min(Duration::from_secs(30));
     }
 }
 

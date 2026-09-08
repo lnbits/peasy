@@ -63,6 +63,49 @@ settings can still differ by user, and direct desktop changes are not claimed to
 be NixOS state. A saved system-default GNOME mode is rejected on Plasma until a
 supported explicit light/dark mode is chosen.
 
+## Application search
+
+GNOME application search follows the selected NixOS generation without copying or
+renaming desktop launchers into users' home directories. Nixpkgs' GLib profile
+watcher can notify GNOME before activation makes a new application's executable
+available. The fixed `peasy-applications-refresh` system service watches the
+containing `/run` directory for replacement of `/run/current-system`, and updates
+only the system-profile symlink's timestamp
+(not its store target) to notify that existing watcher after activation. It
+accepts no AI input and does not restart the desktop. This also covers ordinary
+switches and rollbacks while the Peasy desktop module is enabled.
+
+The GNOME VM regression test checks the running Shell's cached app list after
+install, removal and rollback, including a slow-activation negative control and
+duplicate-ID checks. Shell introspection is enabled only in that disposable
+test VM, never in the ISO or installed system.
+
+XFCE uses Garcon rather than GNOME's application cache. Its application-directory
+monitors also follow symlinks into the old immutable generation. On Peasy-enabled
+XFCE systems only, the module applies `nix/patches/garcon-nixos-generation.patch`:
+Garcon watches for replacement of `/run/current-system`, discards stale menu items,
+and emits its existing coalesced reload signal. Unrelated `/run` events are ignored.
+This uses the existing menu process, without polling, launcher copies, or panel
+restarts. The patch requires an initial rebuild of Garcon and its XFCE dependents;
+it adds no extra Peasy compilation to ordinary package installs.
+An existing XFCE session must log out and back in once after first adopting the
+patched library; subsequent application installs/removals do not require logout.
+
+The XFCE VM regression test keeps the real App Finder open and checks its visible
+search results across the same slow profile/activation sequence, removal, and
+rollback. It also checks for duplicate results and unchanged App Finder/panel
+process IDs. OCR is a test-driver dependency only, not part of the installed system.
+
+## Export dialog
+
+The graphical package supplies GTK's runtime schema paths through Nixpkgs'
+`wrapGAppsHook4`, including `org.gtk.gtk4.Settings.FileChooser`. Export must not
+depend on settings-schema paths inherited from a particular desktop or terminal.
+The desktop VM tests open and cancel the real export folder picker twice after
+launching Peasy with empty inherited data paths. They use a disposable host
+configuration and never accept an export destination. Accessibility tooling is
+only a test dependency; the headless package does not gain GTK runtime wrapping.
+
 ## Calendar and session integration
 
 Events are private `.ics` files with validated title/start/duration, escaped text,

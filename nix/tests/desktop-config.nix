@@ -25,6 +25,11 @@ let
   hyprland = evaluate { programs.hyprland.enable = true; };
   xfce = evaluate { services.xserver.desktopManager.xfce.enable = true; };
   generic = evaluate { };
+  headless = evaluate { services.peasy.desktop.enable = false; };
+  headlessXfce = evaluate {
+    services.peasy.desktop.enable = false;
+    services.xserver.desktopManager.xfce.enable = true;
+  };
   genericTray = cfg: cfg.environment.etc."xdg/autostart/peasy-tray.desktop".text;
   profile = cfg: builtins.fromJSON cfg.environment.etc."peasy/system-profile.json".text;
   validTray =
@@ -32,6 +37,7 @@ let
     !(pkgs.lib.hasInfix "OnlyShowIn" (genericTray cfg))
     && !(pkgs.lib.hasInfix "NotShowIn" (genericTray cfg))
     && pkgs.lib.hasInfix "/bin/peasy-tray --ui" (genericTray cfg);
+  appRefresh = cfg: cfg.systemd.services.peasy-applications-refresh.serviceConfig;
 in
 assert pkgs.lib.all validTray [
   gnome
@@ -54,4 +60,30 @@ assert !(plasma.services.desktopManager.gnome.enable);
 assert !(builtins.elem pkgs.gnomeExtensions.appindicator plasma.environment.systemPackages);
 assert !(builtins.elem pkgs.gnomeExtensions.appindicator hyprland.environment.systemPackages);
 assert builtins.elem pkgs.gnomeExtensions.appindicator gnome.environment.systemPackages;
+assert builtins.elem pkgs.gjs gnome.environment.systemPackages;
+assert !(headless.systemd.services ? peasy-applications-refresh);
+assert !(headless.systemd.paths ? peasy-applications-refresh);
+assert builtins.length xfce.nixpkgs.overlays == 1;
+assert pkgs.lib.all (cfg: cfg.nixpkgs.overlays == [ ]) [
+  gnome
+  plasma
+  generic
+  headlessXfce
+];
+assert pkgs.lib.all
+  (
+    cfg:
+    (appRefresh cfg).ExecStart
+    == "${pkgs.coreutils}/bin/touch --no-create --no-dereference /nix/var/nix/profiles/system"
+    && (appRefresh cfg).ProtectSystem == "strict"
+    && (appRefresh cfg).ReadWritePaths == [ "/nix/var/nix/profiles" ]
+    && cfg.systemd.services.peasy-applications-refresh.wantedBy == [ "multi-user.target" ]
+    && cfg.systemd.paths.peasy-applications-refresh.pathConfig.PathChanged == "/run"
+  )
+  [
+    gnome
+    plasma
+    xfce
+    generic
+  ];
 pkgs.runCommand "peasy-desktop-configuration-check" { } "touch $out"

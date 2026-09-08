@@ -1,0 +1,87 @@
+Garcon's directory monitors follow /run/current-system into the old store
+generation. Watch its parent for the activation switch as well, and invalidate
+cached items before using the existing, coalesced menu-reload signal. No polling,
+launcher copies, process restarts, or writes to the store are needed.
+
+--- a/garcon/garcon-menu.c
++++ b/garcon/garcon-menu.c
+@@ -208,7 +208,13 @@
+ static GarconMenuItem *
+ garcon_menu_find_file_item (GarconMenu *menu,
+                             GFile *file);
++static void
++garcon_menu_generation_changed (GarconMenu *menu,
++                                GFile *file,
++                                GFile *other_file,
++                                GFileMonitorEvent event_type,
++                                GFileMonitor *monitor);
+ 
+ 
+ 
+ struct _GarconMenuPrivate
+@@ -225,3 +231,4 @@
+   /* File and directory monitors */
+   GList *monitors;
++  GFileMonitor *generation_monitor;
+ 
+@@ -362,2 +369,3 @@
+   menu->priv->monitors = NULL;
++  menu->priv->generation_monitor = NULL;
+   menu->priv->directory = NULL;
+@@ -1858,3 +1866,15 @@
+       garcon_menu_monitor_app_dirs (menu);
++
++      /* Watch the parent, not the symlink's immutable previous target. */
++      GFile *run = g_file_new_for_path ("/run");
++      menu->priv->generation_monitor =
++        g_file_monitor_directory (run, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
++      g_object_unref (run);
++      if (menu->priv->generation_monitor != NULL)
++        {
++          g_signal_connect_swapped (menu->priv->generation_monitor, "changed",
++                                    G_CALLBACK (garcon_menu_generation_changed),
++                                    menu);
++        }
+     }
+ 
+@@ -1881,3 +1901,10 @@
+   /* Disconnect and destroy all monitors */
++  if (menu->priv->generation_monitor != NULL)
++    {
++      g_signal_handlers_disconnect_by_data (menu->priv->generation_monitor, menu);
++      g_file_monitor_cancel (menu->priv->generation_monitor);
++      g_clear_object (&menu->priv->generation_monitor);
++    }
++
+   for (lp = menu->priv->monitors; lp != NULL; lp = lp->next)
+     {
+@@ -2175,3 +2202,29 @@
+ static void
++garcon_menu_generation_changed (GarconMenu *menu,
++                                GFile *file,
++                                GFile *other_file,
++                                GFileMonitorEvent event_type,
++                                GFileMonitor *monitor)
++{
++  gchar *name = g_file_get_basename (file);
++  gchar *other_name = other_file != NULL ? g_file_get_basename (other_file) : NULL;
++  gboolean changed = g_strcmp0 (name, "current-system") == 0
++                     || g_strcmp0 (other_name, "current-system") == 0;
++  g_free (name);
++  g_free (other_name);
++
++  /* Ignore unrelated /run activity, and the temporary gap during replacement. */
++  if (!changed || !g_file_test ("/run/current-system", G_FILE_TEST_IS_DIR))
++    return;
++
++  g_mutex_lock (&menu->priv->load_lock);
++  garcon_menu_item_cache_invalidate (menu->priv->cache);
++  garcon_menu_file_emit_reload_required (menu);
++  g_mutex_unlock (&menu->priv->load_lock);
++}
++
++
++
++static void
+ garcon_menu_file_changed (GarconMenu *menu,
+                           GFile *file,

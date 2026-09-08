@@ -191,6 +191,19 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Garcon follows application-directory inodes into the immutable store;
+    # replacing /run/current-system therefore does not update XFCE's menus.
+    # Observe that switch in the existing menu process, with no polling or
+    # per-user launcher copies. Only XFCE installations need this override.
+    nixpkgs.overlays =
+      lib.mkIf (cfg.desktop.enable && config.services.xserver.desktopManager.xfce.enable)
+        [
+          (_final: prev: {
+            garcon = prev.garcon.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./patches/garcon-nixos-generation.patch ];
+            });
+          })
+        ];
     assertions = [
       {
         assertion = lib.hasPrefix "/" cfg.hostConfiguration;
@@ -241,7 +254,11 @@ in
         </policyconfig>
       '')
     ]
-    ++ lib.optional (cfg.tray.enable && gnomeEnabled) pkgs.gnomeExtensions.appindicator
+    # AppIndicator launches gjs by name to rediscover existing tray items.
+    ++ lib.optionals (cfg.tray.enable && gnomeEnabled) [
+      pkgs.gnomeExtensions.appindicator
+      pkgs.gjs
+    ]
     ++ lib.optional (
       cfg.desktop.enable && config.services.desktopManager.plasma6.enable
     ) pkgs.kdePackages.kconfig;
@@ -365,6 +382,42 @@ in
       wantedBy = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
       pathConfig.PathChanged = "/etc/peasy/theme.json";
+    };
+
+    # Nixpkgs' glib-appinfo-watch.patch monitors /nix/var/nix/profiles.
+    # nix-env updates that profile BEFORE activation updates /run/current-system
+    # (and hence PATH). If the desktop reloads in between, new Exec/TryExec
+    # commands are not runnable yet and its cached app list omits them.
+    # Notify the existing monitor again once the running generation changes.
+    # Touch only the profile SYMLINK, never its store target. No launcher copies,
+    # extra desktop IDs, per-user state, or desktop restarts are needed.
+    systemd.services.peasy-applications-refresh = lib.mkIf cfg.desktop.enable {
+      description = "Notify desktop application monitors after NixOS activation";
+      # Also notify on the upgrade that first introduces the path unit: its
+      # watcher starts after that activation has already changed the symlink.
+      wantedBy = [ "multi-user.target" ];
+      unitConfig.ConditionPathIsSymbolicLink = "/nix/var/nix/profiles/system";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.coreutils}/bin/touch --no-create --no-dereference /nix/var/nix/profiles/system";
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ "/nix/var/nix/profiles" ];
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        CapabilityBoundingSet = "";
+      };
+    };
+
+    systemd.paths.peasy-applications-refresh = lib.mkIf cfg.desktop.enable {
+      wantedBy = [ "multi-user.target" ];
+      pathConfig = {
+        # Watch the containing directory: watching the symlink itself follows
+        # its old target and misses atomic replacements. Other top-level /run
+        # changes may also send a harmless refresh; there is no saved state.
+        PathChanged = "/run";
+        Unit = "peasy-applications-refresh.service";
+      };
     };
 
     systemd.services.peasy-system = {

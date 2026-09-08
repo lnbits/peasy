@@ -7,6 +7,7 @@
   libadwaita,
   lld,
   makeWrapper,
+  wrapGAppsHook4,
   networkmanager,
   bluez,
   glib,
@@ -50,7 +51,11 @@ rustPlatform.buildRustPackage {
     makeWrapper
     pkg-config
     lld
-  ];
+  ]
+  ++ lib.optionals withGui [ wrapGAppsHook4 ];
+  # Only the GTK UI needs the graphical runtime environment. Keep the CLI,
+  # daemon, and tray wrappers unchanged, and avoid double-wrapping the UI.
+  dontWrapGApps = true;
   buildInputs = lib.optionals withGui [
     gtk4
     libadwaita
@@ -145,18 +150,22 @@ rustPlatform.buildRustPackage {
             --set-default PEASY_NIX_SYSTEM "${stdenv.hostPlatform.system}"
         ''
     }
-    ${lib.optionalString withGui ''
-      wrapProgram "$out/bin/peasy-ui" \
-        --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
-        --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \
-        --set-default PEASY_BLUETOOTHCTL "${bluez}/bin/bluetoothctl" \
-        --set-default PEASY_GIO "${glib}/bin/gio" \
-        --set-default PEASY_GSETTINGS "${glib}/bin/gsettings" \
-        --set-default PEASY_NIX "${nix}/bin/nix" \
-        --set-default PEASY_DATE "${coreutils}/bin/date" \
-        --set-default PEASY_VARIANT "desktop" \
-        --set-default PEASY_NIX_SYSTEM "${stdenv.hostPlatform.system}"
-    ''}
+  '';
+
+  # The hook collects dependency schema paths before preFixup. In particular,
+  # GTK's folder chooser aborts if its Settings.FileChooser schema is missing.
+  preFixup = lib.optionalString withGui ''
+    wrapProgram "$out/bin/peasy-ui" \
+      "''${gappsWrapperArgs[@]}" \
+      --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
+      --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \
+      --set-default PEASY_BLUETOOTHCTL "${bluez}/bin/bluetoothctl" \
+      --set-default PEASY_GIO "${glib}/bin/gio" \
+      --set-default PEASY_GSETTINGS "${glib}/bin/gsettings" \
+      --set-default PEASY_NIX "${nix}/bin/nix" \
+      --set-default PEASY_DATE "${coreutils}/bin/date" \
+      --set-default PEASY_VARIANT "desktop" \
+      --set-default PEASY_NIX_SYSTEM "${stdenv.hostPlatform.system}"
   '';
 
   doCheck = true;

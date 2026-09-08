@@ -13,6 +13,11 @@ pkgs.testers.runNixOSTest {
   name = "peasy-${desktop}-tray";
   meta.timeout = 900;
   globalTimeout = 900;
+  enableOCR = xfce;
+  extraPythonPackages = ps: pkgs.lib.optional xfce ps.pillow;
+  # Exercise the module's XFCE-only Garcon overlay with normal NixOS package
+  # evaluation, rather than the test harness's read-only shared package set.
+  node.pkgsReadOnly = !xfce;
   nodes.machine = {
     imports = [
       module
@@ -33,7 +38,29 @@ pkgs.testers.runNixOSTest {
       welcome-dialog-last-shown-version='9999999999'
     '';
     services.xserver.enable = true;
-    environment.systemPackages = [ pkgs.glib ] ++ pkgs.lib.optional plasma pkgs.kdePackages.kconfig;
+    services.gnome.at-spi2-core.enable = true;
+    # Disposable host source for the export picker test; no real host files.
+    environment.etc."nixos/configuration.nix".text = "{ ... }: { }";
+    environment.etc."peasy-test-watcher.py".source = ./tray-watcher.py;
+    environment.systemPackages = [
+      pkgs.glib
+      (pkgs.python3.withPackages (ps: [
+        ps.pyatspi
+        ps.pygobject3
+      ]))
+    ]
+    ++ pkgs.lib.optional plasma pkgs.kdePackages.kconfig;
+    # Test-only introspection of the running Shell's cached application list,
+    # following nixpkgs' GNOME test. Never enabled in the ISO/installed module.
+    systemd.user.services."org.gnome.Shell@" = pkgs.lib.mkIf gnome {
+      # Merely declaring a NixOS service adds a tool-only PATH. Omit that
+      # override so Shell keeps the normal login/session PATH under test.
+      environment.PATH = pkgs.lib.mkForce null;
+      serviceConfig.ExecStart = [
+        ""
+        "${pkgs.gnome-shell}/bin/gnome-shell --mode=%i --unsafe-mode"
+      ];
+    };
     environment.sessionVariables.GSK_RENDERER = "cairo";
     services.peasy = {
       enable = true;
@@ -115,6 +142,9 @@ pkgs.testers.runNixOSTest {
           machine.wait_until_succeeds("pgrep -u alice -f '(^|/)([.]xfce4-panel-wrapped|xfce4-panel)( |$)'", timeout=30)
         ''
     }
+    desktop_under_test = "${desktop}"
+    ${pkgs.lib.optionalString (gnome || xfce) (builtins.readFile ./desktop-search.py)}
+    ${pkgs.lib.optionalString (gnome || xfce) (builtins.readFile ./tray-recovery.py)}
     machine.screenshot("peasy-${desktop}-iso-defaults")
     machine.succeed("printf '%s\\n' '{\"accent_color\":\"purple\",\"color_scheme\":\"dark\"}' > /tmp/peasy-live-theme.json")
     ${
@@ -145,5 +175,7 @@ pkgs.testers.runNixOSTest {
     machine.wait_until_succeeds("pgrep -u alice -f '^/nix/store/[^ ]+/bin/peasy-ui'", timeout=30)
     machine.wait_until_succeeds(user("gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.NameHasOwner io.github.peasy.Peasy | grep true"))
     machine.screenshot("peasy-${desktop}-provider-setup")
+    export_probe_environment = "GI_TYPELIB_PATH=${pkgs.at-spi2-core}/lib/girepository-1.0:${pkgs.glib.out}/lib/girepository-1.0:${pkgs.gobject-introspection}/lib/girepository-1.0"
+    ${builtins.readFile ./export-dialog.py}
   '';
 }
