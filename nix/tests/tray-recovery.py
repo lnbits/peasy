@@ -87,11 +87,15 @@ stop_host()
 machine.wait_until_succeeds(user(watcher_query + " | grep false"))
 machine.succeed(user("kill " + pid))
 machine.wait_until_fails("pgrep -u alice -x peasy-tray")
+# Preserve the installed launch command, including the absolute UI path.
+# A bare peasy-ui changes argv[0] and escapes the later store-path process check.
+tray_command = next(
+    line.removeprefix("Exec=")
+    for line in autostart.splitlines()
+    if line.startswith("Exec=")
+)
 machine.succeed(
-    user(
-        "systemd-run --user --collect --unit=peasy-tray-recovery-test "
-        "peasy-tray --ui peasy-ui"
-    )
+    user("systemd-run --user --collect --unit=peasy-tray-recovery-test " + tray_command)
 )
 machine.wait_until_succeeds("pgrep -u alice -x peasy-tray")
 pid = machine.succeed("pgrep -u alice -x peasy-tray").strip()
