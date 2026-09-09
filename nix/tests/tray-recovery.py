@@ -12,15 +12,13 @@ def visible_peasy_icons():
         machine.screenshot("peasy-xfce-tray-probe")
         with Image.open(Path(machine.out_dir) / "peasy-xfce-tray-probe.png") as image:
             image = image.convert("RGB")
-            points = {
-                (x, y)
-                for y in list(range(64)) + list(range(image.height - 64, image.height))
-                for x in range(image.width)
-                if all(
-                    abs(a - b) <= 3
-                    for a, b in zip(image.getpixel((x, y)), (92, 214, 152))
-                )
-            }
+            points = set()
+            for y in list(range(64)) + list(range(image.height - 64, image.height)):
+                for x in range(image.width):
+                    pixel = image.getpixel((x, y))
+                    assert isinstance(pixel, tuple) and len(pixel) == 3
+                    if all(abs(a - b) <= 3 for a, b in zip(pixel, (92, 214, 152))):
+                        points.add((x, y))
         icons = 0
         while points:
             component = {points.pop()}
