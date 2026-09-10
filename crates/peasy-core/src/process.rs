@@ -24,11 +24,20 @@ pub fn run(command: &mut Command, timeout: Duration) -> Result<Output> {
     let overflow = Arc::new(AtomicBool::new(false));
     let reader = |stream: Box<dyn Read + Send>, limit: usize, drain_excess: bool| {
         let overflow = Arc::clone(&overflow);
+        let sink = crate::progress::current();
         thread::spawn(move || {
             if drain_excess {
                 // Drain verbose warnings without blocking a successful build;
                 // retain the final cause following Nix's evaluation trace.
-                return read_tail(stream, limit);
+                return read_tail(
+                    ProgressReader {
+                        stream,
+                        sink,
+                        pending: Vec::new(),
+                        discarding: false,
+                    },
+                    limit,
+                );
             }
             let mut bytes = Vec::new();
             let result = stream.take(limit as u64 + 1).read_to_end(&mut bytes);
@@ -91,6 +100,37 @@ pub fn run(command: &mut Command, timeout: Duration) -> Result<Output> {
     })
 }
 
+struct ProgressReader {
+    stream: Box<dyn Read + Send>,
+    sink: Option<crate::progress::Sink>,
+    pending: Vec<u8>,
+    discarding: bool,
+}
+impl Read for ProgressReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.stream.read(buf)?;
+        if let Some(sink) = &self.sink {
+            for b in &buf[..n] {
+                if *b == b'\n' {
+                    if !self.discarding
+                        && let Some(stage) = crate::progress::nix_stage(&self.pending)
+                    {
+                        sink(stage);
+                    }
+                    self.pending.clear();
+                    self.discarding = false;
+                } else if self.pending.len() < 65536 && !self.discarding {
+                    self.pending.push(*b);
+                } else {
+                    self.pending.clear();
+                    self.discarding = true;
+                }
+            }
+        }
+        Ok(n)
+    }
+}
+
 fn read_tail(mut stream: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
     let mut bytes = vec![0; limit];
     let mut next = 0;
@@ -117,6 +157,24 @@ fn read_tail(mut stream: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn progress_reader_handles_small_reads_and_discards_oversized_records() {
+        let stages = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = stages.clone();
+        let mut bytes = vec![b'x'; 70000];
+        bytes.extend_from_slice(b"\n@nix {\"action\":\"start\",\"type\":105}\n");
+        let mut reader = ProgressReader {
+            stream: Box::new(std::io::Cursor::new(bytes)),
+            sink: Some(Arc::new(move |s| observed.lock().unwrap().push(s))),
+            pending: Vec::new(),
+            discarding: false,
+        };
+        let mut small = [0; 7];
+        while reader.read(&mut small).unwrap() != 0 {}
+        assert_eq!(*stages.lock().unwrap(), [crate::OperationStage::Building]);
+        assert!(reader.pending.is_empty());
+    }
+
     #[test]
     fn cancellation_terminates_child_and_pipe_holding_descendants() {
         let temp = tempfile::tempdir().unwrap();

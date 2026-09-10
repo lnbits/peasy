@@ -335,6 +335,13 @@ impl IpcClient {
     }
 
     pub fn request(&self, request: &IpcRequest) -> Result<IpcResponse> {
+        self.request_with_progress(request, |_| {})
+    }
+    pub fn request_with_progress(
+        &self,
+        request: &IpcRequest,
+        mut progress: impl FnMut(peasy_core::OperationStage),
+    ) -> Result<IpcResponse> {
         let cancellation = Cancellation::current();
         cancellation.check()?;
         let mut stream = UnixStream::connect(&self.socket)
@@ -359,8 +366,15 @@ impl IpcClient {
                         bail!("oversized system response");
                     }
                     line.extend_from_slice(&chunk[..count]);
-                    if line.contains(&b'\n') {
-                        break;
+                    while let Some(end) = line.iter().position(|b| *b == b'\n') {
+                        let frame: Vec<_> = line.drain(..=end).collect();
+                        let response: IpcResponse =
+                            serde_json::from_slice(&frame).context("invalid system response")?;
+                        match response {
+                            IpcResponse::Progress { stage } => progress(stage),
+                            IpcResponse::Error { message } => bail!("{message}"),
+                            response => return Ok(response),
+                        }
                     }
                 }
                 Err(e)
@@ -373,12 +387,6 @@ impl IpcClient {
                 Err(e) => return Err(e.into()),
             }
         }
-        let response: IpcResponse =
-            serde_json::from_slice(&line).context("invalid system response")?;
-        if let IpcResponse::Error { message } = &response {
-            bail!("{message}");
-        }
-        Ok(response)
     }
 }
 
@@ -797,7 +805,7 @@ fn human_name(value: &str) -> String {
 }
 
 pub enum Resolution {
-    Proposal(Proposal),
+    Proposal(Box<Proposal>),
     LocalProposal(LocalProposal),
     Choose(Choice),
     Explain(String),
@@ -1121,13 +1129,35 @@ impl PeasyClient {
         }
     }
 
+    pub fn inspect(&self) -> Result<peasy_core::ServiceStatus> {
+        match self.ipc.request(&IpcRequest::Inspect)? {
+            IpcResponse::Inspection { status } => Ok(*status),
+            _ => bail!("unexpected inspection response"),
+        }
+    }
+    pub fn propose_recovery(&self) -> Result<Resolution> {
+        match self.ipc.request(&IpcRequest::ProposeRecovery)? {
+            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
+            _ => bail!("unexpected recovery response"),
+        }
+    }
     pub fn apply(&self, proposal: &Proposal) -> Result<peasy_core::ApplyResult> {
+        self.apply_with_progress(proposal, |_| {})
+    }
+    pub fn apply_with_progress(
+        &self,
+        proposal: &Proposal,
+        progress: impl FnMut(peasy_core::OperationStage),
+    ) -> Result<peasy_core::ApplyResult> {
         if let ProposalChange::Theme { theme } = &proposal.change {
             runtime_desktop_kind().validate_appearance(theme)?;
         }
-        let mut result = match self.ipc.request(&IpcRequest::Apply {
-            proposal: proposal.id.clone(),
-        })? {
+        let mut result = match self.ipc.request_with_progress(
+            &IpcRequest::ApplyWithProgress {
+                proposal: proposal.id.clone(),
+            },
+            progress,
+        )? {
             IpcResponse::Applied { result } => result,
             _ => bail!("unexpected response to Apply"),
         };
@@ -1404,6 +1434,56 @@ mod tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::sync::mpsc;
     use std::thread;
+
+    #[test]
+    fn ipc_progress_frames_can_be_fragmented_or_coalesced_with_the_result() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ipc");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            let frames = [
+                IpcResponse::Progress {
+                    stage: peasy_core::OperationStage::Authorizing,
+                },
+                IpcResponse::Progress {
+                    stage: peasy_core::OperationStage::Building,
+                },
+                IpcResponse::Status {
+                    ready: true,
+                    applying: false,
+                },
+            ]
+            .into_iter()
+            .map(|r| serde_json::to_string(&r).unwrap() + "\n")
+            .collect::<String>();
+            stream.write_all(&frames.as_bytes()[..7]).unwrap();
+            stream.write_all(&frames.as_bytes()[7..]).unwrap();
+        });
+        let mut stages = Vec::new();
+        let response = IpcClient::new(path)
+            .request_with_progress(&IpcRequest::Status, |stage| stages.push(stage))
+            .unwrap();
+        assert!(matches!(
+            response,
+            IpcResponse::Status {
+                ready: true,
+                applying: false
+            }
+        ));
+        assert_eq!(
+            stages,
+            [
+                peasy_core::OperationStage::Authorizing,
+                peasy_core::OperationStage::Building
+            ]
+        );
+        worker.join().unwrap();
+    }
 
     #[test]
     fn cancelled_ipc_closes_the_connection() {

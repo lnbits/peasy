@@ -150,12 +150,22 @@ pkgs.testers.runNixOSTest {
       '';
       environment.etc."peasy-ipc-test.py".text = ''
         import json, socket, sys
+        from pathlib import Path
         def request(body):
             with socket.socket(socket.AF_UNIX) as connection:
-                connection.settimeout(180)
+                connection.settimeout(600)
                 connection.connect('/run/peasy/peasy.sock')
                 connection.sendall((json.dumps(body) + '\n').encode())
-                return json.loads(connection.makefile().readline())
+                stream = connection.makefile()
+                stages = []
+                while True:
+                    result = json.loads(stream.readline())
+                    if result['response'] == 'progress':
+                        stages.append(result['stage'])
+                        continue
+                    if stages:
+                        result['stages'] = stages
+                    return result
         if sys.argv[1] == 'denied':
             before = request({'request': 'get_managed_module'})
             proposal = request({'request': 'propose_theme', 'theme': {'accent_color': 'blue'}})['proposal']
@@ -173,11 +183,38 @@ pkgs.testers.runNixOSTest {
             assert result['response'] == 'error' and 'not authorized' in result['message'], result
             assert request({'request': 'get_managed_module'}) == before
         elif sys.argv[1] == 'allowed':
-            proposal = request({'request': 'propose_install', 'package': 'hello'})['proposal']
-            result = request({'request': 'apply', 'proposal': proposal['id']})
+            response = request({'request': 'propose_install', 'package': 'hello'})
+            assert response['response'] == 'proposal', response
+            proposal = response['proposal']
+            assert proposal['packages'][0]['drv_path'].endswith('.drv'), proposal
+            result = request({'request': 'apply_with_progress', 'proposal': proposal['id']})
             assert result['response'] == 'applied' and result['result']['activated'], result
+            for stage in ['authorizing', 'validating', 'activating', 'completed']:
+                assert stage in result['stages'], result
             assert 'hello' in request({'request': 'get_packages'})['packages']
             assert request({'request': 'apply', 'proposal': proposal['id']})['response'] == 'error'
+        elif sys.argv[1] == 'overlay':
+            source = Path('/etc/nixos/configuration.nix')
+            original = source.read_text()
+            source.unlink()
+            def host(version):
+                overlay = 'nixpkgs.overlays = [ (final: prev: { hello = prev.hello.overrideAttrs (_: { version = "' + version + '"; }); }) ];'
+                return original.replace('{ lib, pkgs, ... }: {', '{ lib, pkgs, ... }: { ' + overlay, 1)
+            try:
+                source.write_text(host('review-fixture-1'))
+                proposal = request({'request': 'propose_install', 'package': 'hello'})['proposal']
+                assert proposal['packages'][0]['version'] == 'review-fixture-1', proposal
+                source.write_text(host('review-fixture-2'))
+                result = request({'request': 'apply', 'proposal': proposal['id']})
+                assert result['response'] == 'applied' and not result['result']['activated'], result
+                assert 'Reviewed package changed' in result['result']['message'], result
+                assert not Path('/etc/nixos/.peasy/transaction.json').exists()
+                fresh = request({'request': 'propose_install', 'package': 'hello'})['proposal']
+                assert fresh['packages'][0]['version'] == 'review-fixture-2', fresh
+                assert fresh['packages'][0]['drv_path'] != proposal['packages'][0]['drv_path']
+                request({'request': 'cancel', 'proposal': fresh['id']})
+            finally:
+                source.write_text(original)
         elif sys.argv[1] == 'hostile':
             for body in [
                 {'request': 'shell', 'command': 'touch /etc/peasy-pwned'},
@@ -283,7 +320,22 @@ pkgs.testers.runNixOSTest {
     machine.succeed("mkdir -p /etc/polkit-1/rules.d")
     machine.succeed("printf '%s\\n' 'polkit.addRule(function(action, subject) { if (action.id == \"io.github.peasy.apply\" && subject.user == \"testuser\") return polkit.Result.YES; });' > /etc/polkit-1/rules.d/00-peasy-test.rules")
     machine.succeed("systemctl restart polkit")
-    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py allowed'", timeout=300)
+    machine.succeed("python /etc/peasy-ipc-test.py overlay", timeout=900)
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py allowed'", timeout=900)
+    machine.fail("test -e /etc/nixos/.peasy/transaction.json")
+    # Exercise the same guarded build through a local flake, including an
+    # untracked managed file. This must not write a lock file as a side effect.
+    machine.succeed("systemctl stop peasy-system")
+    # Start a separate desired-state fixture: the traditional test already
+    # installed hello, and Peasy correctly refuses to propose a no-op install.
+    machine.succeed("rm /etc/nixos/.peasy/peasy-managed.nix")
+    machine.succeed("cat > /etc/nixos/flake.nix <<'EOF'\n{ outputs = { self }: { nixosConfigurations.fixture = import ${pkgs.path}/nixos/lib/eval-config.nix { system = \"${pkgs.stdenv.hostPlatform.system}\"; modules = [ ./configuration.nix ]; }; }; }\nEOF")
+    machine.succeed("mkdir -p /run/systemd/system/peasy-system.service.d")
+    machine.succeed("cat > /run/systemd/system/peasy-system.service.d/flake.conf <<'EOF'\n[Service]\nExecStart=\nExecStart=${package}/libexec/peasy-system --nix ${pkgs.nix}/bin/nix --systemctl ${pkgs.systemd}/bin/systemctl --pkcheck ${pkgs.polkit}/bin/pkcheck --nixpkgs ${pkgs.path} --system ${pkgs.stdenv.hostPlatform.system} --host-flake /etc/nixos#fixture --managed-module /etc/nixos/.peasy/peasy-managed.nix\nEOF")
+    machine.succeed("systemctl daemon-reload; systemctl start peasy-system")
+    machine.wait_for_file("/run/peasy/peasy.sock")
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py allowed'", timeout=900)
+    machine.fail("test -e /etc/nixos/flake.lock")
     machine.fail("test -e /etc/peasy-pwned")
   '';
 }

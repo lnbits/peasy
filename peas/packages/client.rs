@@ -165,7 +165,7 @@ impl PeasyClient {
         match self.ipc.request(&IpcRequest::ProposeInstall {
             package: package.to_owned(),
         })? {
-            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(*proposal)),
+            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
             _ => bail!("unexpected response to ProposeInstall"),
         }
     }
@@ -174,7 +174,7 @@ impl PeasyClient {
         match self.ipc.request(&IpcRequest::ProposeRemove {
             package: package.to_owned(),
         })? {
-            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(*proposal)),
+            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
             _ => bail!("unexpected response to ProposeRemove"),
         }
     }

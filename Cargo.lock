@@ -1743,8 +1743,10 @@ dependencies = [
  "clap",
  "gtk4",
  "libadwaita",
+ "libc",
  "peasy-client",
  "peasy-core",
+ "serde_json",
  "tempfile",
 ]
 

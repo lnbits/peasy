@@ -37,20 +37,27 @@ pub fn write_managed_atomic(path: &Path, state: &PackageState) -> Result<()> {
     {
         bail!("refusing to replace a non-regular Peasy managed module");
     }
-    let temporary = parent.join(format!(".peasy-managed-{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o644)
-        .open(&temporary)
-        .context("creating temporary Peasy managed module")?;
-    file.set_permissions(fs::Permissions::from_mode(0o644))?;
-    file.write_all(source.as_bytes())?;
-    file.sync_all()?;
-    fs::rename(&temporary, path)?;
-    let directory = OpenOptions::new().read(true).open(parent)?;
-    directory.sync_all()?;
-    Ok(())
+    let temporary = parent.join(format!(
+        ".peasy-managed-{}.tmp",
+        hex::encode(rand::random::<[u8; 12]>())
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o644)
+            .open(&temporary)
+            .context("creating temporary Peasy managed module")?;
+        file.set_permissions(fs::Permissions::from_mode(0o644))?;
+        file.write_all(source.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        let directory = OpenOptions::new().read(true).open(parent)?;
+        directory.sync_all()?;
+        Ok(())
+    })();
+    let _ = fs::remove_file(temporary);
+    result
 }
 
 pub fn restore_managed_from_generation(state_path: &Path, managed_path: &Path) -> Result<()> {

@@ -2,6 +2,7 @@ mod activation;
 mod authorization;
 mod nix_backend;
 mod process;
+mod recovery;
 mod server;
 mod state;
 
@@ -20,6 +21,10 @@ use std::sync::Arc;
 struct Args {
     #[arg(long, default_value = "/run/peasy/peasy.sock")]
     socket: PathBuf,
+    #[arg(long)]
+    identity: Option<PathBuf>,
+    #[arg(long, default_value = "/run/current-system")]
+    active_system: PathBuf,
     #[arg(long, default_value = "/run/peasy")]
     runtime_dir: PathBuf,
     #[arg(long)]
@@ -134,17 +139,15 @@ fn main() -> Result<()> {
             args.nix_env.as_deref().context("--nix-env is required")?,
         );
     }
+    let _ = args.nixos_rebuild; // Accept the previous module's CLI during upgrades.
     let rebuild_target = match (args.host_configuration, args.host_flake) {
         (Some(path), None) => RebuildTarget::Configuration { path },
-        (None, Some(reference)) => RebuildTarget::Flake {
-            reference,
-            nixos_rebuild: args
-                .nixos_rebuild
-                .context("--nixos-rebuild is required with --host-flake")?,
-        },
+        (None, Some(reference)) => RebuildTarget::Flake { reference },
         _ => anyhow::bail!("exactly one of --host-configuration or --host-flake is required"),
     };
     let config = BackendConfig {
+        identity: args.identity,
+        active_system: args.active_system,
         appimage_policy: args.appimage_policy,
         runtime_dir: args.runtime_dir,
         nix: args.nix.context("--nix is required")?,

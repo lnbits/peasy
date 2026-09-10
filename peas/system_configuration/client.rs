@@ -75,7 +75,7 @@ impl PeasyClient {
             .ipc
             .request(&IpcRequest::ProposeSetup { package, setup })?
         {
-            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(*proposal)),
+            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
             _ => bail!("unexpected response to ProposeSetup"),
         }
     }
@@ -127,6 +127,7 @@ mod tests {
                 }
             );
             let proposal = peasy_core::Proposal {
+                packages: vec![],
                 id: "a".repeat(48),
                 title: "Set up virt-manager".into(),
                 diff: vec![],

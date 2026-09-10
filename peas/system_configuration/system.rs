@@ -37,7 +37,9 @@ impl NixBackend {
             uid: bound_uid,
         };
         setup.normalize()?;
-        self.verify_setup(&setup)?;
+        let mut attributes = setup.settings.packages.clone();
+        attributes.push(setup.package.clone());
+        let packages = self.identities(&attributes)?;
         let before = self.current_state()?;
         let after = before.with_setup(setup.clone())?;
         if before == after {
@@ -46,6 +48,7 @@ impl NixBackend {
         let mut diff = module_diff(&before, &after)?;
         setup_notes(&setup, &mut diff);
         Ok(Preview {
+            packages,
             before,
             diff,
             title: format!("Set up {} and its system integration", setup.package),
@@ -62,6 +65,7 @@ impl NixBackend {
         let mut diff = module_diff(&before, &after)?;
         diff.push(DiffLine { kind: DiffKind::Context, text: "Withdraws this setup's contributions only. Shared packages, administrator configuration and user data are retained.".into() });
         Ok(Preview {
+            packages: vec![],
             before,
             diff,
             title: format!("Remove Peasy setup for {}", setup.package),
@@ -72,16 +76,6 @@ impl NixBackend {
         })
     }
 
-    fn verify_setup(&self, setup: &ManagedSetup) -> Result<()> {
-        let mut validated = setup.clone();
-        validated.normalize()?;
-        self.verify(&setup.package)?;
-        for package in &setup.settings.packages {
-            self.verify(package)?;
-        }
-        Ok(())
-    }
-
     pub(super) fn apply_setup_state(
         &self,
         previous: &PackageState,
@@ -90,7 +84,7 @@ impl NixBackend {
     ) -> Result<(PackageState, String)> {
         match operation {
             PackageOperation::Install => {
-                self.verify_setup(setup)?;
+                setup.settings.validate()?;
                 if let Some(name) = &setup.user {
                     let user = User::from_name(name)?.context("setup account no longer exists")?;
                     if Some(user.uid.as_raw()) != setup.uid {

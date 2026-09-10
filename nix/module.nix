@@ -42,6 +42,21 @@ let
   installedSystemPackages = lib.sort builtins.lessThan (
     lib.unique (map lib.getName config.environment.systemPackages)
   );
+  daemonIdentity = pkgs.writeText "peasy-daemon-identity.json" (
+    builtins.toJSON {
+      protocol = 2;
+      executable = "${package}/libexec/peasy-system";
+      nixpkgs = toString pkgs.path;
+      inherit (cfg)
+        hostConfiguration
+        hostFlake
+        configurationReadPaths
+        protectHome
+        ;
+      inherit managedModule;
+      resourceLimits = cfg.resourceLimits;
+    }
+  );
   exportConfiguration =
     if cfg.hostFlake == null then cfg.hostConfiguration else "${hostFlakeDirectory}/flake.nix";
 in
@@ -150,7 +165,7 @@ in
       default = null;
       example = "/etc/nixos/.peasy/peasy-managed.nix";
       description = ''
-        Peasy's only durable state: a generated NixOS module imported by the
+        Peasy's desired state: a generated NixOS module imported by the
         host configuration. The default places it in a Peasy-owned directory
         beside the host configuration or flake.
       '';
@@ -262,6 +277,7 @@ in
     ++ lib.optional (
       cfg.desktop.enable && config.services.desktopManager.plasma6.enable
     ) pkgs.kdePackages.kconfig;
+    environment.etc."peasy/daemon-identity.json".source = daemonIdentity;
     environment.etc."peasy/appimage-policy.json".text = builtins.toJSON cfg.appImages.trustedHashes;
 
     systemd.user.services.peasy-polkit-agent = lib.mkIf cfg.hyprland.authenticationAgent.enable {
@@ -426,8 +442,8 @@ in
       after = [ "nix-daemon.socket" ];
       requires = [ "nix-daemon.socket" ];
       # Applying a reviewed generation must not terminate the IPC request that
-      # initiated it. The daemon can pick up a changed unit on the next normal
-      # restart or boot.
+      # initiated it. The daemon drains active requests and exits when the
+      # fully switched generation advertises a new daemon identity.
       restartIfChanged = false;
       stopIfChanged = false;
       serviceConfig = {
@@ -441,10 +457,13 @@ in
             "--pkcheck ${pkgs.polkit}/bin/pkcheck"
             "--nixpkgs ${pkgs.path}"
             "--system ${pkgs.stdenv.hostPlatform.system}"
+            "--identity ${daemonIdentity}"
           ]
           ++ rebuildArguments
         );
-        Restart = "on-failure";
+        # The daemon drains requests and exits after detecting a newer active
+        # identity. Restart uses the newly loaded unit, including its Nixpkgs.
+        Restart = "always";
         RestartSec = 2;
 
         RuntimeDirectory = "peasy";

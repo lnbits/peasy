@@ -18,6 +18,7 @@ impl NixBackend {
             details.push(format!("{scheme} mode"));
         }
         Ok(Preview {
+            packages: vec![],
             diff: module_diff(&before, &after)?,
             before,
             change: ProposalChange::Theme { theme },

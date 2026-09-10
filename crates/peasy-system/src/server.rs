@@ -82,6 +82,7 @@ struct PendingProposal {
     uid: u32,
     change: ProposalChange,
     before: PackageState,
+    packages: Vec<peasy_core::PackageIdentity>,
     expires: Instant,
     running: Option<Cancellation>,
 }
@@ -123,10 +124,38 @@ impl Server {
         let listener = UnixListener::bind(&self.socket)
             .with_context(|| format!("binding {}", self.socket.display()))?;
         fs::set_permissions(&self.socket, fs::Permissions::from_mode(0o660))?;
+        listener.set_nonblocking(true)?;
         let connections = Arc::new(Mutex::new(Connections::default()));
-        for stream in listener.incoming() {
+        loop {
+            if self.backend.should_restart()
+                && connections
+                    .lock()
+                    .expect("connection mutex poisoned")
+                    .active
+                    == 0
+            {
+                // Responses have been written and operations have journalled their
+                // outcome before their guards drop. systemd starts the new unit.
+                return Ok(());
+            }
+            let stream = match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false)?;
+                    Ok(stream)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+                Err(e) => Err(e),
+            };
             match stream {
                 Ok(mut stream) => {
+                    if self.backend.should_restart() {
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+                        let _ = stream.write_all(b"{\"response\":\"error\",\"message\":\"Peasy is updating. Retry the request shortly.\"}\n");
+                        continue;
+                    }
                     let credentials = match getsockopt(&stream, sockopt::PeerCredentials) {
                         Ok(credentials) => credentials,
                         Err(_) => continue,
@@ -156,7 +185,6 @@ impl Server {
                 Err(error) => eprintln!("Peasy IPC accept failed: {error}"),
             }
         }
-        Ok(())
     }
 }
 
@@ -175,9 +203,24 @@ fn handle(
     BufReader::new(stream.try_clone()?)
         .take(64 * 1024)
         .read_line(&mut line)?;
+    let progress_stream = Arc::new(Mutex::new(stream.try_clone()?));
+    let last = Arc::new(Mutex::new(None));
+    let sink: peasy_core::progress::Sink = Arc::new(move |stage| {
+        let mut last = last.lock().expect("progress mutex poisoned");
+        if *last == Some(stage) {
+            return;
+        }
+        *last = Some(stage);
+        let mut stream = progress_stream.lock().expect("progress stream poisoned");
+        let _ = serde_json::to_writer(&mut *stream, &IpcResponse::Progress { stage });
+        let _ = stream.write_all(b"\n");
+    });
     let response = match serde_json::from_str::<IpcRequest>(&line) {
         Ok(request) => with_disconnect_cancellation(&stream, || {
-            dispatch(request, &peer, &backend, &proposals, authorizer.as_ref())
+            let progress = matches!(request, IpcRequest::ApplyWithProgress { .. }).then_some(sink);
+            peasy_core::progress::scope(progress, || {
+                dispatch(request, &peer, &backend, &proposals, authorizer.as_ref())
+            })
         })
         .unwrap_or_else(|error| IpcResponse::Error {
             message: format!("{error:#}"),
@@ -292,7 +335,7 @@ fn dispatch(
             propose_package(backend, proposals, uid, PackageOperation::Remove, &package)
         }
         IpcRequest::ProposeTheme { theme } => propose_theme(backend, proposals, uid, theme),
-        IpcRequest::Apply { proposal } => {
+        IpcRequest::Apply { proposal } | IpcRequest::ApplyWithProgress { proposal } => {
             if proposal.len() != 48 || !proposal.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 bail!("invalid proposal token");
             }
@@ -303,13 +346,20 @@ fn dispatch(
                 .expect("claimed proposal")
                 .scope(|| {
                     Cancellation::current().check()?;
+                    peasy_core::progress::report(peasy_core::OperationStage::Authorizing);
                     authorizer.authorize(peer)?;
+                    peasy_core::progress::report(peasy_core::OperationStage::Validating);
                     Cancellation::current().check()?;
                     if pending.expires < Instant::now() {
                         bail!("proposal expired during authorization; review the change again");
                     }
                     Ok(IpcResponse::Applied {
-                        result: backend.apply(&pending.change, &pending.before, &proposal)?,
+                        result: backend.apply(
+                            &pending.change,
+                            &pending.before,
+                            &proposal,
+                            &pending.packages,
+                        )?,
                     })
                 });
             proposals
@@ -319,6 +369,10 @@ fn dispatch(
             result
         }
         IpcRequest::Cancel { proposal } => cancel_proposal(proposals, &proposal, uid),
+        IpcRequest::Inspect => Ok(IpcResponse::Inspection {
+            status: Box::new(backend.inspect()?),
+        }),
+        IpcRequest::ProposeRecovery => store_proposal(proposals, uid, backend.preview_recovery()?),
         IpcRequest::Status => Ok(IpcResponse::Status {
             ready: true,
             applying: backend.is_applying(),
@@ -396,6 +450,7 @@ fn store_proposal(
         uid,
         change: preview.change.clone(),
         before: preview.before,
+        packages: preview.packages.clone(),
         expires: Instant::now() + Duration::from_secs(300),
         running: None,
     };
@@ -410,6 +465,7 @@ fn store_proposal(
     Ok(IpcResponse::Proposal {
         proposal: Box::new(Proposal {
             id,
+            packages: preview.packages,
             title: preview.title,
             change: preview.change,
             diff: preview.diff,
@@ -444,6 +500,7 @@ mod tests {
     }
     fn preview() -> crate::nix_backend::Preview {
         crate::nix_backend::Preview {
+            packages: vec![],
             before: PackageState::default(),
             change: ProposalChange::Theme {
                 theme: ThemeSettings {
@@ -532,6 +589,8 @@ mod tests {
         let runner = Arc::new(RefuseCommands(AtomicUsize::new(0)));
         let backend = NixBackend::new(
             BackendConfig {
+                identity: None,
+                active_system: "/run/current-system".into(),
                 runtime_dir: temp.path().join("run"),
                 nix: "/trusted/nix".into(),
                 systemctl: "/trusted/systemctl".into(),

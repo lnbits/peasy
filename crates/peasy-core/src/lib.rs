@@ -2,6 +2,8 @@
 pub mod cancellation;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod process;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod progress;
 
 #[path = "../../../peas/packages/types.rs"]
 mod packages;
@@ -436,6 +438,9 @@ pub enum IpcRequest {
     ProposeRemove { package: String },
     ProposeTheme { theme: ThemeSettings },
     Apply { proposal: String },
+    ApplyWithProgress { proposal: String },
+    Inspect,
+    ProposeRecovery,
     Cancel { proposal: String },
     Status,
 }
@@ -446,11 +451,16 @@ pub struct Proposal {
     pub title: String,
     pub change: ProposalChange,
     pub diff: Vec<DiffLine>,
+    #[serde(default)]
+    pub packages: Vec<PackageIdentity>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProposalChange {
+    Recovery {
+        generation: String,
+    },
     Setup {
         operation: PackageOperation,
         setup: ManagedSetup,
@@ -503,6 +513,60 @@ pub enum IpcResponse {
     Cancelled { activation_started: bool },
     Status { ready: bool, applying: bool },
     Error { message: String },
+    Progress { stage: OperationStage },
+    Inspection { status: Box<ServiceStatus> },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageIdentity {
+    pub attribute: String,
+    pub name: String,
+    pub version: String,
+    pub drv_path: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStage {
+    Authorizing,
+    Validating,
+    Downloading,
+    Building,
+    Activating,
+    Completed,
+}
+impl OperationStage {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Authorizing => "Waiting for administrator authentication…",
+            Self::Validating => "Checking the reviewed packages and configuration…",
+            Self::Downloading => "Downloading packages…",
+            Self::Building => "Building packages and the system generation…",
+            Self::Activating => "Activating the system generation…",
+            Self::Completed => "Change completed.",
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RecoveryInfo {
+    pub message: String,
+    #[serde(default)]
+    pub intended_change: Vec<DiffLine>,
+    pub intended_packages: Vec<String>,
+    pub active_generation: Option<String>,
+    pub previous_generation: Option<String>,
+    pub needs_attention: bool,
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ServiceStatus {
+    pub version: String,
+    pub protocol: u32,
+    pub executable: String,
+    pub nixpkgs: String,
+    pub restart_pending: bool,
+    pub applying: bool,
+    pub recovery: Option<RecoveryInfo>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

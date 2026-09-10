@@ -94,7 +94,7 @@ preview, panel status, system IPC, or persistent Peasy state.
 Package attribute paths are length-bounded dot-separated segments containing
 only ASCII letters, digits, `_`, `+`, and `-`. Empty/traversal segments and shell
 punctuation are rejected. The daemon still evaluates the attribute against its
-pinned Nixpkgs source before proposing it.
+effective host package set before proposing it.
 
 SSID, Bluetooth query, calendar title, local timestamp, duration, theme colour,
 and colour scheme each have dedicated validators. Wi-Fi names must match a real
@@ -209,8 +209,10 @@ module is below a protected home. Store-backed modules need no exception.
 
 The root service writes only `/run/peasy` and the dedicated `.peasy` directory
 beside the trusted host configuration. Temporary expressions, proposal staging,
-and activation requests remain private under `/run`; the only durable file it
-can replace is `.peasy/peasy-managed.nix`. It cannot write
+and activation requests remain private under `/run`. Desired configuration lives
+in `.peasy/peasy-managed.nix`; private mode-`0600` transaction and recovery records
+live beside it. The journal is synced before the proposed source is written,
+and before activation begins. It cannot write
 `configuration.nix`, `flake.lock`, hardware configuration, or unrelated `/etc`
 files. The managed file is replaced atomically, restored after a failed build,
 and the built generation must contain its exact validated state before it can
@@ -229,10 +231,16 @@ selected by the administrator. The UI copies its bounded configuration tree
 and the packaged Peasy source into a new mode-`0700` directory, writing regular
 files mode `0600`; unsafe absolute symlinks, special files, excessive entries,
 and trees over 64 MiB are rejected. The imported
-`.peasy/peasy-managed.nix` is already part of that tree; no second state export
-is synthesized. API keys and provider settings are excluded. Because
-administrator-authored Nix can contain
-secrets, users should still review an export before sharing it.
+managed state is placed at the export root under `.peasy/`, with
+`host/.peasy` linking to it so both import paths reach one file. The wrapper uses
+`/etc/nixos/configuration.nix` and `/etc/nixos/.peasy/peasy-managed.nix`, satisfying
+the module's managed-directory constraint. Relative links escaping a copied
+source tree are rejected. `INVENTORY.json` records included files and exclusions:
+Git metadata, common credential filenames, backup files and recovery records.
+Peasy's separately stored provider configuration is outside this source tree.
+There is no guarantee that arbitrary Nix files are free of private values;
+review exports before sharing. Export supports traditional configuration sources,
+not flakes or a locked package closure.
 
 The GNOME extension is only a launcher for the fixed `peasy-ui` executable. It
 does not handle request text, proposal data, provider credentials, or Wi-Fi
@@ -264,8 +272,34 @@ theme system changes from failed evaluation/build and allow returning to an
 earlier generation. Activation itself, like `nixos-rebuild switch`, can partially
 change a running system before reporting failure; it is not an atomic undo of
 all services and external effects. Inspect the error and explicitly switch to a
-known-good generation if activation fails. Peasy has no persistent state database outside the imported
-managed Nix file. Rollbacks do not undo external side effects: Wi-Fi,
+known-good generation if activation fails. Peasy retains a private journal when
+activation may have started, blocks further changes, and offers a fresh reviewed
+recovery proposal with the same UID binding and Polkit authorization as Apply.
+Recovery refuses to overlap an active activation helper. Startup restores only
+an owned pre-activation source write; it preserves concurrent administrator edits.
+The journal records intent and recovery state, not an alternative desired-state
+database. Rollbacks do not undo external side effects: Wi-Fi,
 Bluetooth, calendar, and live Hyprland changes therefore use their native
 controls rather than being described as Nix rollbacks. Peasy never
 automatically deletes old NixOS generations.
+
+## Package review and daemon upgrades
+
+Package identities are evaluated from the host's effective `pkgs`, including
+its overlays and configuration. Each proposal contains the attribute, name,
+version and derivation path. Its build expression asserts the reviewed derivation
+identity using the same host evaluation as `system.build.toplevel`. A source
+change that alters the derivation fails before activation.
+
+The module supplies an immutable daemon identity. Once `/run/current-system`
+points to a generation with a different identity, the daemon declines new work,
+drains existing requests, delivers results and exits. Systemd's `Restart=always`
+starts the newly loaded unit. Upgrades from older code need one explicit restart
+after work finishes. Inspection exposes the actual running store executable and
+Nixpkgs source, rather than relying on the application version alone.
+
+Build progress comes from Nix's structured activity records. Only fixed stage
+enums cross the progress IPC boundary; subprocess text does not become a command
+or a progress instruction. Authentication and activation stages come directly
+from their corresponding daemon operations. Failures retain the request and
+require a new proposal rather than reusing a consumed authorization token.

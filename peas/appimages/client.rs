@@ -502,7 +502,7 @@ impl PeasyClient {
             .ipc
             .request(&IpcRequest::ProposeAppImageInstall { package })?
         {
-            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(*proposal)),
+            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
             _ => bail!("unexpected response to ProposeAppImageInstall"),
         }
     }

@@ -37,7 +37,7 @@ sudo systemctl restart peasy-system
 ```
 
 The optional import lets the first rebuild succeed before the managed file
-exists. Peasy creates `.peasy/peasy-managed.nix` and uses it as its only durable
+exists. Peasy creates `.peasy/peasy-managed.nix` and uses it as its desired
 state.
 
 Log out and back in so the generic XDG autostart entry starts Peasy's single
@@ -57,8 +57,11 @@ a systemd graphical target must start their own agent. Without one, use `peasy`
 in an interactive terminal, where Peasy starts a terminal agent. Never run the
 AI-facing UI or CLI with `sudo`, and do not add passwordless Peasy Polkit rules.
 
-After upgrading, explicitly restart `peasy-system` as shown above: its automatic
-restart is intentionally disabled so a switch cannot kill its own active request.
+Peasy now finishes existing requests and restarts automatically when the active
+generation changes its daemon executable, package source, or service settings.
+When upgrading from a version without this handoff, wait for any operation to
+finish and perform the explicit restart above once. System status and recovery
+shows the running executable, protocol and Nixpkgs source.
 
 ## Development checkout in a home directory
 
@@ -215,14 +218,49 @@ peasy --setup-provider
 
 ## Upgrade
 
-Update the Peasy source or flake lock, rebuild the host, and restart the daemon:
+Update the Peasy source or flake lock, then rebuild the host:
 
 ```console
 sudo nixos-rebuild switch --no-flake
+```
+
+Use the flake rebuild command from the flake section when applicable. Peasy
+finishes existing requests, delivers their results, and exits when the fully
+switched generation advertises a new daemon identity. Systemd then starts the
+new executable with its new package source. Reopen the UI to use the new client.
+
+The first upgrade from an older daemon needs one manual restart **after any
+active operation has finished**, because old code cannot perform this handoff:
+
+```console
 sudo systemctl restart peasy-system
 ```
 
-Use the flake rebuild command from the flake section when applicable. Restarting
-after an administrator-initiated upgrade ensures the running daemon and UI use
-the same version. Peasy deliberately remains running during a change it applies
-itself so it can report the completed result.
+The UI's **System status and recovery** screen reports the running executable,
+version, protocol and package source. A configuration written before an interrupted
+build is restored on daemon startup when Peasy can establish that it still owns
+the unfinished change. If activation may have started, the screen shows the
+intended change and active/previous generation, and offers a freshly reviewed,
+authorized restoration of the previous whole system generation. Service side
+effects may need separate attention. If the previous generation is unavailable,
+select a known-good generation in the boot menu and inspect the configuration.
+
+## Package search
+
+Search scans the effective host package set, including overlays. Recent query
+results are cached for 15 minutes. Creating a proposal always resolves its
+packages again and records exact derivation paths; apply rejects a changed
+definition before activation and asks for another review.
+
+## Configuration export
+
+Settings can export a traditional `configuration.nix` host and the installed
+Peasy source. Flake exports are not supported. The generated README describes
+the restore layout, and `INVENTORY.json` lists included files and excluded paths.
+Common credential files, Git metadata, recovery records and backup files are
+excluded. Nix source may still contain inline secrets: review exports before
+sharing and keep separately excluded files in your secure backup.
+
+This is a configuration-source backup, not an exact package-closure backup.
+A traditional rebuild uses the destination's selected Nixpkgs source; hardware
+settings and external absolute imports may need adjustment.

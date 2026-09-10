@@ -74,7 +74,7 @@ impl PeasyClient {
         };
         runtime_desktop_kind().validate_appearance(&current.merged(&theme))?;
         match self.ipc.request(&IpcRequest::ProposeTheme { theme })? {
-            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(*proposal)),
+            IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
             _ => bail!("unexpected response to ProposeTheme"),
         }
     }

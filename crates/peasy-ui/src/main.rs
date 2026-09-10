@@ -7,16 +7,16 @@ use peasy_client::{
     PeasyClient, ProviderSettings, ProviderStore, Resolution, ResolveStage, list_ollama_models,
     load_model_provider,
 };
-use peasy_core::{DiffKind, Proposal};
+use peasy_core::{DiffKind, IpcRequest, IpcResponse, OperationStage, Proposal, ProposalChange};
 mod tasks;
 use std::cell::{Cell, RefCell};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Clone, Debug, Parser)]
 #[command(name = "peasy-ui")]
@@ -39,11 +39,18 @@ struct AppState {
     pending: Rc<RefCell<Option<String>>>,
     applying: Rc<Cell<bool>>,
     closing_apply: Rc<Cell<bool>>,
+    request: Rc<RefCell<String>>,
+    reviewed_change: Rc<RefCell<Option<ProposalChange>>>,
 }
 
 enum ResolveMessage {
     Progress(ResolveStage),
     Finished(std::result::Result<Box<Resolution>, String>),
+}
+
+enum ApplyMessage {
+    Progress(OperationStage),
+    Finished(std::result::Result<peasy_core::ApplyResult, String>),
 }
 
 fn main() -> Result<()> {
@@ -68,6 +75,8 @@ fn main() -> Result<()> {
         pending: Default::default(),
         applying: Default::default(),
         closing_apply: Default::default(),
+        request: Default::default(),
+        reviewed_change: Default::default(),
     };
     let application_id = if state.args.settings {
         "io.github.peasy.Peasy.Settings"
@@ -133,11 +142,10 @@ fn discard_pending(state: &AppState) {
 }
 
 fn discard_token(state: &AppState, token: String) {
-    if let Some(client) = state.client.borrow().clone() {
-        std::thread::spawn(move || {
-            let _ = client.cancel_proposal(&token);
-        });
-    }
+    let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
+    std::thread::spawn(move || {
+        let _ = ipc.request(&IpcRequest::Cancel { proposal: token });
+    });
 }
 
 fn request_apply_cancellation(window: &adw::ApplicationWindow, state: AppState) {
@@ -147,9 +155,7 @@ fn request_apply_cancellation(window: &adw::ApplicationWindow, state: AppState) 
     let Some(token) = state.pending.borrow().clone() else {
         return;
     };
-    let Some(client) = state.client.borrow().clone() else {
-        return;
-    };
+    let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
     show_working(
         window,
         "Requesting cancellation… If activation has started, it will finish safely in the background.",
@@ -157,7 +163,13 @@ fn request_apply_cancellation(window: &adw::ApplicationWindow, state: AppState) 
     let (tx, rx) = mpsc::channel();
     let expected_token = token.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(client.cancel_proposal(&token));
+        let _ = tx.send(
+            ipc.request(&IpcRequest::Cancel { proposal: token })
+                .and_then(|r| match r {
+                    IpcResponse::Cancelled { activation_started } => Ok(activation_started),
+                    _ => anyhow::bail!("unexpected cancellation response"),
+                }),
+        );
     });
     let window = window.clone();
     glib::timeout_add_local(Duration::from_millis(80), move || {
@@ -230,6 +242,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     heading.add_css_class("title-3");
     heading.set_halign(gtk::Align::Start);
     body.append(&heading);
+    add_system_status_button(&body, window, &state);
 
     let provider = gtk::DropDown::from_strings(&["OpenAI", "Ollama (local)"]);
     let settings = state.providers.load().ok().flatten();
@@ -317,13 +330,13 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let export_copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
     export_copy.set_hexpand(true);
     let export_text = gtk::Label::new(Some(
-        "Export your complete NixOS configuration and everything managed by Peasy.",
+        "Export your configuration.nix host and Peasy settings with restore instructions. Flake hosts are not supported by this export yet.",
     ));
     export_text.set_wrap(true);
     export_text.set_xalign(0.0);
     export_copy.append(&export_text);
     let export_note = gtk::Label::new(Some(
-        "Creates a portable folder with restore instructions. Credentials are not included.",
+        "Creates a private configuration backup with a file inventory. Common secret files and Git history are excluded; configuration files may still contain private values. Review before sharing.",
     ));
     export_note.set_wrap(true);
     export_note.set_xalign(0.0);
@@ -486,266 +499,8 @@ fn engine_path(args: &Args) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/run/current-system/sw/lib/peasy/peasy-engine.wasm"))
 }
 
-const HOST_CONFIGURATION_POINTER: &str = "/etc/peasy/host-configuration-path";
-const PEASY_MODULE_POINTER: &str = "/etc/peasy/module-import-path";
-const PEASY_SOURCE: &str = "/run/current-system/sw/share/peasy/source";
-const MAX_CONFIGURATION_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_EXPORT_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_EXPORT_ENTRIES: usize = 4096;
-const EXPORT_DIRECTORY: &str = "peasy-system-config";
-
-#[derive(Clone, Debug)]
-struct ConfigurationExport {
-    source: PathBuf,
-    peasy_module: PathBuf,
-    peasy_source: PathBuf,
-}
-
-#[derive(Default)]
-struct ExportSize {
-    bytes: u64,
-    entries: usize,
-}
-
-fn configuration_export(_socket: &Path) -> Result<ConfigurationExport> {
-    configuration_export_from(
-        Path::new(HOST_CONFIGURATION_POINTER),
-        Path::new(PEASY_MODULE_POINTER),
-        Path::new(PEASY_SOURCE),
-    )
-}
-
-fn configuration_export_from(
-    pointer: &Path,
-    peasy_module_pointer: &Path,
-    peasy_source: &Path,
-) -> Result<ConfigurationExport> {
-    let source = configured_source_path(pointer)?;
-    let metadata = fs::metadata(&source)
-        .with_context(|| format!("reading metadata for {}", source.display()))?;
-    if !metadata.is_file() {
-        anyhow::bail!("{} is not a regular configuration file", source.display());
-    }
-    if metadata.len() > MAX_CONFIGURATION_BYTES {
-        anyhow::bail!("configuration is larger than 4 MiB");
-    }
-    let name = source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("configured source has no portable file name")?;
-    if name != "configuration.nix" {
-        anyhow::bail!("portable system export currently requires a configuration.nix host source");
-    }
-    let peasy_module = configured_path(peasy_module_pointer, "/nix/store/peasy/nix/module.nix")?;
-    if !peasy_source.is_dir() {
-        anyhow::bail!("installed Peasy source is unavailable for the portable export");
-    }
-    Ok(ConfigurationExport {
-        source,
-        peasy_module,
-        peasy_source: peasy_source.to_owned(),
-    })
-}
-
-fn write_configuration_export(export: &ConfigurationExport, parent: &Path) -> Result<PathBuf> {
-    if !parent.is_dir() {
-        anyhow::bail!("export destination is not a directory");
-    }
-    let source_root = export
-        .source
-        .parent()
-        .context("configured source has no parent directory")?;
-    if fs::canonicalize(parent)?.starts_with(fs::canonicalize(source_root)?) {
-        anyhow::bail!("choose a destination outside the active configuration directory");
-    }
-    let destination = parent.join(EXPORT_DIRECTORY);
-    if destination.exists() {
-        anyhow::bail!(
-            "{} already exists; rename it or choose another folder",
-            destination.display()
-        );
-    }
-    let temporary = parent.join(format!(".{EXPORT_DIRECTORY}-{}", std::process::id()));
-    if temporary.exists() {
-        anyhow::bail!("a temporary Peasy export already exists");
-    }
-
-    fs::create_dir(&temporary)?;
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o700))?;
-    let result: Result<()> = (|| {
-        let host_destination = temporary.join("host");
-        let mut size = ExportSize::default();
-        copy_configuration_directory(source_root, &host_destination, &mut size)?;
-        copy_configuration_directory(&export.peasy_source, &temporary.join("peasy"), &mut size)?;
-        make_host_configuration_portable(
-            &host_destination.join("configuration.nix"),
-            &export.peasy_module,
-        )?;
-        write_private_file(
-            &temporary.join("configuration.nix"),
-            br#"# Exported by Peasy. The complete host configuration is under ./host.
-{ lib, ... }:
-{
-  imports = [
-    ./host/configuration.nix
-  ];
-  services.peasy.hostConfiguration = lib.mkForce "/etc/nixos/configuration.nix";
-  services.peasy.managedModule = lib.mkForce "/etc/nixos/host/.peasy/peasy-managed.nix";
-}
-"#,
-        )?;
-        write_private_file(
-            &temporary.join("README.txt"),
-            br#"PEASY NIXOS SYSTEM EXPORT
-
-This folder contains the complete host configuration tree under host/, including
-host/.peasy/peasy-managed.nix, plus a copy of Peasy under peasy/. API keys and provider
-credentials are deliberately excluded.
-
-To restore on another NixOS machine:
-
-  1. Review the files for machine-specific settings and private values.
-  2. From this folder, back up and replace the destination configuration:
-
-       sudo cp -a /etc/nixos /etc/nixos.before-peasy-restore
-       sudo cp -a configuration.nix host peasy /etc/nixos/
-
-  3. When restoring to different hardware, replace the bundled hardware module:
-
-       nixos-generate-config --show-hardware-config | sudo tee /etc/nixos/host/hardware-configuration.nix >/dev/null
-
-  4. Rebuild:
-
-       sudo nixos-rebuild switch --no-flake
-
-Absolute imports outside the original configuration directory must also be
-made available on the new machine or changed to portable paths before rebuilding.
-"#,
-        )?;
-        fs::rename(&temporary, &destination)?;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_dir_all(&temporary);
-        return Err(error);
-    }
-    Ok(destination)
-}
-
-fn make_host_configuration_portable(path: &Path, peasy_module: &Path) -> Result<()> {
-    let peasy_root = peasy_module
-        .parent()
-        .and_then(Path::parent)
-        .context("Peasy module path has no source root")?;
-    let peasy_root = peasy_root
-        .to_str()
-        .context("Peasy module source path is not UTF-8")?;
-    let contents =
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let portable = contents.replace(peasy_root, "/etc/nixos/peasy");
-    fs::write(path, portable)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-fn copy_configuration_directory(
-    source: &Path,
-    destination: &Path,
-    size: &mut ExportSize,
-) -> Result<()> {
-    fs::create_dir(destination)?;
-    fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        size.entries += 1;
-        if size.entries > MAX_EXPORT_ENTRIES {
-            anyhow::bail!("configuration tree contains more than {MAX_EXPORT_ENTRIES} entries");
-        }
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let metadata = fs::symlink_metadata(&source_path)?;
-        if metadata.is_dir() {
-            copy_configuration_directory(&source_path, &destination_path, size)?;
-        } else if metadata.is_file() {
-            size.bytes = size.bytes.saturating_add(metadata.len());
-            if size.bytes > MAX_EXPORT_BYTES {
-                anyhow::bail!("configuration tree is larger than 64 MiB");
-            }
-            let contents = fs::read(&source_path)
-                .with_context(|| format!("reading {}", source_path.display()))?;
-            write_private_file(&destination_path, &contents)?;
-        } else if metadata.file_type().is_symlink() {
-            let target = fs::read_link(&source_path)?;
-            if target.is_absolute() {
-                if is_nix_build_result_link(&source_path, &target) {
-                    continue;
-                }
-                anyhow::bail!(
-                    "{} is an absolute symlink and cannot be exported portably",
-                    source_path.display()
-                );
-            }
-            std::os::unix::fs::symlink(target, destination_path)?;
-        } else {
-            anyhow::bail!(
-                "{} is not a portable configuration file",
-                source_path.display()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn is_nix_build_result_link(path: &Path, target: &Path) -> bool {
-    let name = path.file_name().and_then(|name| name.to_str());
-    target.starts_with("/nix/store")
-        && name.is_some_and(|name| name == "result" || name.starts_with("result-"))
-}
-
-fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(contents)?;
-    file.sync_all()?;
-    Ok(())
-}
-
-fn configured_source_path(pointer: &Path) -> Result<PathBuf> {
-    configured_path(pointer, "/etc/nixos/configuration.nix")
-}
-
-fn configured_path(pointer: &Path, fallback: &str) -> Result<PathBuf> {
-    let source = match fs::metadata(pointer) {
-        Ok(metadata) => {
-            if !metadata.is_file() || metadata.len() > 4096 {
-                anyhow::bail!("configured export pointer is invalid");
-            }
-            let mut value = String::new();
-            OpenOptions::new()
-                .read(true)
-                .open(pointer)?
-                .take(4097)
-                .read_to_string(&mut value)?;
-            if value.len() > 4096 {
-                anyhow::bail!("configured export pointer is invalid");
-            }
-            value.trim().to_owned()
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => fallback.to_owned(),
-        Err(error) => return Err(error.into()),
-    };
-    if source.is_empty() || source.len() > 4096 || source.chars().any(char::is_control) {
-        anyhow::bail!("configured export path is invalid");
-    }
-    let source = PathBuf::from(source);
-    if !source.is_absolute() {
-        anyhow::bail!("configured export path must be absolute");
-    }
-    Ok(source)
-}
+mod export;
+use export::{configuration_export, write_configuration_export};
 
 fn refresh_ollama_models(
     state: &AppState,
@@ -830,7 +585,34 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
         .placeholder_text("install telegram…")
         .hexpand(true)
         .build();
+    entry.set_text(&state.request.borrow());
     body.append(&entry);
+    add_system_status_button(&body, window, &state);
+    let recovery_notice = gtk::Label::new(None);
+    recovery_notice.set_wrap(true);
+    recovery_notice.set_halign(gtk::Align::Start);
+    body.append(&recovery_notice);
+    let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
+    let (notice_tx, notice_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = notice_tx.send(ipc.request(&IpcRequest::Inspect));
+    });
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        match notice_rx.try_recv() {
+            Ok(Ok(IpcResponse::Inspection { status })) => {
+                if let Some(info) = status.recovery {
+                    recovery_notice.set_text(&format!(
+                        "{} Open System status and recovery for details.",
+                        info.message
+                    ));
+                }
+                glib::ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            _ => glib::ControlFlow::Break,
+        }
+    });
+
     let status = gtk::Label::new(None);
     status.set_halign(gtk::Align::Start);
     status.set_wrap(true);
@@ -844,10 +626,15 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
     let entry_clone = entry.clone();
     let status_clone = status.clone();
     send.connect_clicked(move |button| {
+        if !button.is_sensitive() {
+            return;
+        }
         let request = entry_clone.text().trim().to_owned();
         if request.is_empty() {
             return;
         }
+        *state_clone.request.borrow_mut() = request.clone();
+        state_clone.reviewed_change.borrow_mut().take();
         button.set_sensitive(false);
         status_clone.set_text("Understanding request…");
         write_panel_status("…thinking");
@@ -905,9 +692,7 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
                     glib::ControlFlow::Break
                 }
                 Ok(ResolveMessage::Finished(Err(error))) => {
-                    status.set_text(&error);
-                    write_panel_status("Peasy needs attention");
-                    button.set_sensitive(true);
+                    show_error_message(&window, state.clone(), &error);
                     glib::ControlFlow::Break
                 }
                 Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
@@ -931,7 +716,7 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
 
 fn show_resolution(window: &adw::ApplicationWindow, state: AppState, resolution: Resolution) {
     match resolution {
-        Resolution::Proposal(proposal) => show_proposal(window, state, proposal),
+        Resolution::Proposal(proposal) => show_proposal(window, state, *proposal),
         Resolution::LocalProposal(proposal) => show_local_proposal(window, state, proposal),
         Resolution::Choose(choice) => show_choices(window, state, choice),
         Resolution::Explain(message) => show_message(window, state, &message),
@@ -1007,11 +792,14 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
             let task = state_clone.tasks.borrow_mut().start();
             std::thread::spawn(move || {
                 task.work.scope(|| {
-                    let _ = tx.send(
-                        client
-                            .select(choice, index)
-                            .map_err(|error| format!("{error:#}")),
-                    );
+                    let progress_tx = tx.clone();
+                    let result = client
+                        .select_with_progress(choice, index, move |stage| {
+                            let _ = progress_tx.send(ResolveMessage::Progress(stage));
+                        })
+                        .map(Box::new)
+                        .map_err(|error| format!("{error:#}"));
+                    let _ = tx.send(ResolveMessage::Finished(result));
                 })
             });
             let window = window_clone.clone();
@@ -1020,23 +808,34 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
                 let result = rx.try_recv();
                 if task.view.is_cancelled() {
                     return match result {
-                        Ok(Ok(Resolution::Proposal(p))) => {
-                            discard_token(&state, p.id);
+                        Ok(ResolveMessage::Finished(Ok(resolution))) => {
+                            if let Resolution::Proposal(p) = *resolution {
+                                discard_token(&state, p.id);
+                            }
                             glib::ControlFlow::Break
                         }
-                        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                        Err(mpsc::TryRecvError::Empty) | Ok(ResolveMessage::Progress(_)) => {
+                            glib::ControlFlow::Continue
+                        }
                         _ => glib::ControlFlow::Break,
                     };
                 }
-                if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+                if matches!(
+                    result,
+                    Ok(ResolveMessage::Finished(_)) | Err(mpsc::TryRecvError::Disconnected)
+                ) {
                     task.view.cancel();
                 }
                 match result {
-                    Ok(Ok(resolution)) => {
-                        show_resolution(&window, state.clone(), resolution);
+                    Ok(ResolveMessage::Progress(stage)) => {
+                        show_working(&window, stage.message());
+                        glib::ControlFlow::Continue
+                    }
+                    Ok(ResolveMessage::Finished(Ok(resolution))) => {
+                        show_resolution(&window, state.clone(), *resolution);
                         glib::ControlFlow::Break
                     }
-                    Ok(Err(error)) => {
+                    Ok(ResolveMessage::Finished(Err(error))) => {
                         show_error_message(&window, state.clone(), &error);
                         glib::ControlFlow::Break
                     }
@@ -1088,7 +887,11 @@ fn show_working(window: &adw::ApplicationWindow, message: &str) {
     show_content(window, &root, 440, -1);
 }
 
-fn show_apply_progress(window: &adw::ApplicationWindow, title: &str) -> gtk::Label {
+fn show_apply_progress(
+    window: &adw::ApplicationWindow,
+    title: &str,
+    state: AppState,
+) -> (gtk::Label, gtk::Button) {
     let (root, body) = page("Applying change");
     let title = gtk::Label::new(Some(title));
     title.add_css_class("title-3");
@@ -1102,7 +905,7 @@ fn show_apply_progress(window: &adw::ApplicationWindow, title: &str) -> gtk::Lab
     spinner.set_size_request(24, 24);
     spinner.set_valign(gtk::Align::Center);
     progress.append(&spinner);
-    let status = gtk::Label::new(Some("Starting the NixOS build…"));
+    let status = gtk::Label::new(Some(OperationStage::Authorizing.message()));
     status.set_halign(gtk::Align::Start);
     status.set_wrap(true);
     status.add_css_class("heading");
@@ -1117,12 +920,17 @@ fn show_apply_progress(window: &adw::ApplicationWindow, title: &str) -> gtk::Lab
     explanation.set_xalign(0.0);
     explanation.add_css_class("dim-label");
     body.append(&explanation);
+    let cancel = gtk::Button::with_label("Cancel change");
+    let window_cancel = window.clone();
+    cancel.connect_clicked(move |_| request_apply_cancellation(&window_cancel, state.clone()));
+    body.append(&cancel);
     show_content(window, &root, 440, -1);
-    status
+    (status, cancel)
 }
 
 fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Proposal) {
     *state.pending.borrow_mut() = Some(proposal.id.clone());
+    *state.reviewed_change.borrow_mut() = Some(proposal.change.clone());
     write_panel_status(&format!("…review {}", proposal.title));
     let (root, body) = page("Review change");
     let title = gtk::Label::new(Some(&proposal.title));
@@ -1145,38 +953,51 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
     let window_apply = window.clone();
     apply.connect_clicked(move |button| {
         button.set_sensitive(false);
-        let Some(client) = state.client.borrow().clone() else {
-            show_error_message(
-                &window_apply,
-                state.clone(),
-                "AI provider is not configured. Open Peasy settings.",
-            );
-            return;
-        };
-        let progress = show_apply_progress(&window_apply, &proposal.title);
+        let client = state.client.borrow().clone();
+        let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
+        let (progress, cancel_progress) =
+            show_apply_progress(&window_apply, &proposal.title, state.clone());
         state.applying.set(true);
         state.closing_apply.set(false);
         write_panel_status(&format!("…applying {}", proposal.title));
         let proposal = proposal.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(
-                client
-                    .apply(&proposal)
-                    .map_err(|error| format!("{error:#}")),
-            );
+            let progress_tx = tx.clone();
+            let progress = move |stage| {
+                let _ = progress_tx.send(ApplyMessage::Progress(stage));
+            };
+            let result = if let Some(client) = client {
+                client.apply_with_progress(&proposal, progress)
+            } else {
+                ipc.request_with_progress(
+                    &IpcRequest::ApplyWithProgress {
+                        proposal: proposal.id,
+                    },
+                    progress,
+                )
+                .and_then(|r| match r {
+                    IpcResponse::Applied { result } => Ok(result),
+                    _ => anyhow::bail!("unexpected apply response"),
+                })
+            };
+            let _ = tx.send(ApplyMessage::Finished(
+                result.map_err(|error| format!("{error:#}")),
+            ));
         });
         let window = window_apply.clone();
         let state = state.clone();
-        let started = Instant::now();
         glib::timeout_add_local(Duration::from_millis(80), move || {
             let result = rx.try_recv();
-            if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
+            if matches!(
+                result,
+                Ok(ApplyMessage::Finished(_)) | Err(mpsc::TryRecvError::Disconnected)
+            ) {
                 state.applying.set(false);
                 state.pending.borrow_mut().take();
             }
             match result {
-                Ok(Ok(result)) => {
+                Ok(ApplyMessage::Finished(Ok(result))) => {
                     let message = if result.activated {
                         format!(
                             "✓ Configuration valid\n✓ Build successful\n✓ Activated\n\n{}",
@@ -1192,7 +1013,7 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
                     }
                     glib::ControlFlow::Break
                 }
-                Ok(Err(error)) => {
+                Ok(ApplyMessage::Finished(Err(error))) => {
                     if state.closing_apply.get() && error == "Operation cancelled" {
                         show_message(
                             &window,
@@ -1204,17 +1025,15 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
                     }
                     glib::ControlFlow::Break
                 }
-                Err(mpsc::TryRecvError::Empty) => {
-                    let elapsed = started.elapsed();
-                    if elapsed >= Duration::from_secs(30) {
-                        progress.set_text(
-                            "Still building… NixOS may be downloading or compiling packages.",
-                        );
-                    } else if elapsed >= Duration::from_secs(2) {
-                        progress.set_text("Validating and building the new NixOS generation…");
-                    }
+                Ok(ApplyMessage::Progress(stage)) => {
+                    progress.set_text(stage.message());
+                    cancel_progress.set_sensitive(!matches!(
+                        stage,
+                        OperationStage::Activating | OperationStage::Completed
+                    ));
                     glib::ControlFlow::Continue
                 }
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     show_error_message(
                         &window,
@@ -1406,26 +1225,209 @@ fn apply_local(
 
 fn show_message(window: &adw::ApplicationWindow, state: AppState, message: &str) {
     clear_panel_status();
-    render_message(window, state, message);
+    state.reviewed_change.borrow_mut().take();
+    state.request.borrow_mut().clear();
+    render_message(window, state, message, false);
 }
 
 fn show_error_message(window: &adw::ApplicationWindow, state: AppState, message: &str) {
     write_panel_status("Peasy needs attention");
-    render_message(window, state, message);
+    render_message(window, state, message, true);
 }
 
-fn render_message(window: &adw::ApplicationWindow, state: AppState, message: &str) {
+fn render_message(window: &adw::ApplicationWindow, state: AppState, message: &str, error: bool) {
     let (root, body) = page("Peasy");
     let label = gtk::Label::new(Some(message));
     label.set_wrap(true);
     label.set_halign(gtk::Align::Start);
     body.append(&label);
+    if error {
+        let copy = gtk::Button::with_label("Copy diagnostics");
+        let diagnostics = message.to_owned();
+        let display = gtk::prelude::WidgetExt::display(window);
+        copy.connect_clicked(move |_| display.clipboard().set_text(&diagnostics));
+        body.append(&copy);
+        let retry = gtk::Button::with_label(if state.reviewed_change.borrow().is_some() {
+            "Review again"
+        } else {
+            "Retry request"
+        });
+        let retry_window = window.clone();
+        let retry_state = state.clone();
+        retry.connect_clicked(move |_| review_again(&retry_window, retry_state.clone()));
+        body.append(&retry);
+        add_system_status_button(&body, window, &state);
+    }
     let done = gtk::Button::with_label("Done");
     done.set_halign(gtk::Align::End);
     let window_clone = window.clone();
     done.connect_clicked(move |_| show_prompt(&window_clone, state.clone()));
     body.append(&done);
     show_content(window, &root, 440, -1);
+}
+
+fn add_system_status_button(body: &gtk::Box, window: &adw::ApplicationWindow, state: &AppState) {
+    let button = gtk::Button::with_label("System status and recovery");
+    let window = window.clone();
+    let state = state.clone();
+    button
+        .connect_clicked(move |_| run_system_request(&window, state.clone(), IpcRequest::Inspect));
+    body.append(&button);
+}
+
+fn review_again(window: &adw::ApplicationWindow, state: AppState) {
+    let change = state.reviewed_change.borrow().clone();
+    let request = match change {
+        None => {
+            show_prompt(window, state);
+            return;
+        }
+        Some(ProposalChange::Recovery { .. }) => IpcRequest::ProposeRecovery,
+        Some(ProposalChange::Package {
+            operation, package, ..
+        }) => match operation {
+            peasy_core::PackageOperation::Install => IpcRequest::ProposeInstall { package },
+            peasy_core::PackageOperation::Remove => IpcRequest::ProposeRemove { package },
+        },
+        Some(ProposalChange::Setup { operation, setup }) => match operation {
+            peasy_core::PackageOperation::Install => IpcRequest::ProposeSetup {
+                package: setup.package,
+                setup: setup.settings,
+            },
+            peasy_core::PackageOperation::Remove => IpcRequest::ProposeRemove {
+                package: setup.package,
+            },
+        },
+        Some(ProposalChange::Theme { theme }) => IpcRequest::ProposeTheme { theme },
+        Some(ProposalChange::AppImage { operation, package }) => match operation {
+            peasy_core::PackageOperation::Install => IpcRequest::ProposeAppImageInstall { package },
+            peasy_core::PackageOperation::Remove => IpcRequest::ProposeRemove {
+                package: package.id,
+            },
+        },
+    };
+    run_system_request(window, state, request);
+}
+
+fn run_system_request(window: &adw::ApplicationWindow, state: AppState, request: IpcRequest) {
+    state.tasks.borrow_mut().close();
+    show_working(window, "Checking system state…");
+    let task = state.tasks.borrow_mut().start();
+    let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        task.work.scope(|| {
+            let _ = tx.send(ipc.request(&request).map_err(|e| format!("{e:#}")));
+        })
+    });
+    let window = window.clone();
+    glib::timeout_add_local(Duration::from_millis(80), move || {
+        let result = match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+            Err(_) => Err("System status worker stopped".into()),
+            Ok(result) => result,
+        };
+        if task.view.is_cancelled() {
+            if let Ok(IpcResponse::Proposal { proposal }) = result {
+                discard_token(&state, proposal.id);
+            }
+            return glib::ControlFlow::Break;
+        }
+        task.view.cancel();
+        match result {
+            Ok(IpcResponse::Proposal { proposal }) => {
+                show_proposal(&window, state.clone(), *proposal)
+            }
+            Ok(IpcResponse::Inspection { status }) => {
+                show_system_status(&window, state.clone(), *status)
+            }
+            Ok(_) => show_error_message(&window, state.clone(), "Unexpected system response"),
+            Err(error) => show_error_message(&window, state.clone(), &error),
+        }
+        glib::ControlFlow::Break
+    });
+}
+
+fn show_system_status(
+    window: &adw::ApplicationWindow,
+    state: AppState,
+    status: peasy_core::ServiceStatus,
+) {
+    let (root, body) = page("System status and recovery");
+    let mut message = if status.restart_pending {
+        "Peasy is finishing existing work before updating.\n\n".to_owned()
+    } else {
+        "".to_owned()
+    };
+    message.push_str(&format!(
+        "Service version: {}\nProtocol: {}\nRunning executable: {}\nPackage source: {}",
+        status.version, status.protocol, status.executable, status.nixpkgs
+    ));
+    if let Some(recovery) = status.recovery {
+        message.push_str(&format!(
+            "\n\n{}\nActive generation: {}\nPrevious generation: {}\nRequested packages: {}",
+            recovery.message,
+            recovery
+                .active_generation
+                .as_deref()
+                .unwrap_or("unavailable"),
+            recovery
+                .previous_generation
+                .as_deref()
+                .unwrap_or("unavailable"),
+            recovery.intended_packages.join(", ")
+        ));
+        if !recovery.intended_change.is_empty() {
+            message.push_str("\n\nIntended configuration change (up to 100 lines):\n");
+            for line in &recovery.intended_change {
+                let prefix = match line.kind {
+                    peasy_core::DiffKind::Add => "+",
+                    peasy_core::DiffKind::Remove => "-",
+                    peasy_core::DiffKind::Context => " ",
+                };
+                message.push_str(&format!("{prefix} {}\n", line.text));
+            }
+        }
+        if recovery.needs_attention && recovery.previous_generation.is_some() && !status.applying {
+            let recover = gtk::Button::with_label("Review restoring the previous generation");
+            let w = window.clone();
+            let s = state.clone();
+            recover.connect_clicked(move |_| {
+                run_system_request(&w, s.clone(), IpcRequest::ProposeRecovery)
+            });
+            body.append(&recover);
+        }
+    } else if status.applying {
+        message.push_str("\n\nA system change is running.");
+    } else {
+        message.push_str("\n\nNo interrupted operation needs recovery.");
+    }
+    let label = gtk::Label::new(Some(&message));
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    label.set_selectable(true);
+    let scroll = gtk::ScrolledWindow::builder()
+        .min_content_height(240)
+        .max_content_height(500)
+        .child(&label)
+        .build();
+    body.append(&scroll);
+    let refresh = gtk::Button::with_label("Refresh status");
+    let w = window.clone();
+    let s = state.clone();
+    refresh.connect_clicked(move |_| run_system_request(&w, s.clone(), IpcRequest::Inspect));
+    body.append(&refresh);
+    let done = gtk::Button::with_label("Back");
+    let w = window.clone();
+    done.connect_clicked(move |_| {
+        if state.client.borrow().is_some() {
+            show_prompt(&w, state.clone());
+        } else {
+            show_provider_settings(&w, state.clone());
+        }
+    });
+    body.append(&done);
+    show_content(window, &root, 520, -1);
 }
 
 fn panel_runtime_directory() -> Option<PathBuf> {
@@ -1533,99 +1535,6 @@ mod tests {
         assert_eq!(
             initial_provider_selection(None, true),
             OPENAI_PROVIDER_INDEX
-        );
-    }
-
-    #[test]
-    fn configuration_export_contains_host_tree_and_peasy_managed_module() {
-        let temp = tempfile::tempdir().unwrap();
-        let host = temp.path().join("source");
-        fs::create_dir(&host).unwrap();
-        let source = host.join("configuration.nix");
-        let pointer = temp.path().join("host-configuration-path");
-        let original_peasy_root = temp.path().join("original-peasy");
-        let original_module = original_peasy_root.join("nix/module.nix");
-        let contents = format!(
-            "{{ pkgs, ... }}: {{ imports = [ {} ./.peasy/peasy-managed.nix ]; environment.systemPackages = [ pkgs.vlc ]; }}\n",
-            original_module.display()
-        );
-        fs::write(&source, &contents).unwrap();
-        fs::write(host.join("hardware-configuration.nix"), b"{ ... }: {}\n").unwrap();
-        std::os::unix::fs::symlink(
-            "/nix/store/00000000000000000000000000000000-build-result",
-            host.join("result"),
-        )
-        .unwrap();
-        fs::create_dir(host.join(".peasy")).unwrap();
-        fs::write(
-            host.join(".peasy/peasy-managed.nix"),
-            b"{ pkgs, ... }: { environment.systemPackages = [ pkgs.firefox ]; }\n",
-        )
-        .unwrap();
-        fs::write(&pointer, format!("{}\n", source.display())).unwrap();
-        let peasy_source = temp.path().join("peasy-source");
-        fs::create_dir_all(peasy_source.join("nix")).unwrap();
-        fs::write(peasy_source.join("nix/module.nix"), b"{ ... }: {}\n").unwrap();
-        let module_pointer = temp.path().join("module-import-path");
-        fs::write(
-            &module_pointer,
-            original_module.to_string_lossy().as_bytes(),
-        )
-        .unwrap();
-
-        let export = configuration_export_from(&pointer, &module_pointer, &peasy_source).unwrap();
-        let selected = temp.path().join("selected");
-        fs::create_dir(&selected).unwrap();
-        let destination = write_configuration_export(&export, &selected).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(destination.join("host/configuration.nix")).unwrap(),
-            contents.replace(original_peasy_root.to_str().unwrap(), "/etc/nixos/peasy")
-        );
-        assert!(
-            destination
-                .join("host/hardware-configuration.nix")
-                .is_file()
-        );
-        assert!(
-            fs::read_to_string(destination.join("host/.peasy/peasy-managed.nix"))
-                .unwrap()
-                .contains("pkgs.firefox")
-        );
-        assert!(
-            fs::read_to_string(destination.join("configuration.nix"))
-                .unwrap()
-                .contains("./host/configuration.nix")
-        );
-        assert!(destination.join("README.txt").is_file());
-        assert!(destination.join("peasy/nix/module.nix").is_file());
-        assert!(!destination.join("host/result").exists());
-    }
-
-    #[test]
-    fn configuration_export_rejects_relative_and_oversized_sources() {
-        let temp = tempfile::tempdir().unwrap();
-        let pointer = temp.path().join("host-configuration-path");
-        fs::write(&pointer, "../configuration.nix\n").unwrap();
-        assert!(
-            configuration_export_from(
-                &pointer,
-                Path::new("/missing-module-pointer"),
-                Path::new("/missing-peasy-source"),
-            )
-            .is_err()
-        );
-
-        let source = temp.path().join("configuration.nix");
-        fs::write(&source, vec![b'x'; MAX_CONFIGURATION_BYTES as usize + 1]).unwrap();
-        fs::write(&pointer, source.to_string_lossy().as_bytes()).unwrap();
-        assert!(
-            configuration_export_from(
-                &pointer,
-                Path::new("/missing-module-pointer"),
-                Path::new("/missing-peasy-source"),
-            )
-            .is_err()
         );
     }
 }

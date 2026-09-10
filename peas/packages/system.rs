@@ -7,7 +7,7 @@ const DISPLAY_CANDIDATE_LIMIT: usize = 6;
 use super::{NixBackend, Preview, human_name, useful_stderr};
 use anyhow::{Context, Result, bail};
 use peasy_core::{
-    MAX_CANDIDATES, PackageCandidate, PackageOperation, ProposalChange, module_diff, regex_escape,
+    MAX_CANDIDATES, PackageCandidate, PackageOperation, ProposalChange, module_diff,
     validate_attribute, validate_query,
 };
 use serde_json::Value;
@@ -26,15 +26,19 @@ impl NixBackend {
         let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
             anyhow::anyhow!("A Nix operation is already running; try again shortly")
         })?;
-        let flake = format!("path:{}", self.config.nixpkgs.display());
         let output = self.runner.run(
             &self.config.nix,
             &[
                 "search".into(),
                 "--json".into(),
+                "--impure".into(),
                 "--no-write-lock-file".into(),
-                flake.into(),
-                format!(".*{}.*", regex_escape(query)).into(),
+                "--expr".into(),
+                self.package_set_expression()?.into(),
+                // With --expr, Nix still expects an attribute selector
+                // before its regex arguments. Select the whole package set.
+                "".into(),
+                format!(".*{}.*", peasy_core::regex_escape(query)).into(),
             ],
             None,
         )?;
@@ -51,7 +55,8 @@ impl NixBackend {
             .filter_map(|(key, metadata)| {
                 let attribute = key
                     .strip_prefix(&legacy_prefix)
-                    .or_else(|| key.strip_prefix(&packages_prefix))?
+                    .or_else(|| key.strip_prefix(&packages_prefix))
+                    .unwrap_or(&key)
                     .to_owned();
                 validate_attribute(&attribute).ok()?;
                 let pname = metadata
@@ -87,29 +92,32 @@ impl NixBackend {
                 })
             })
             .collect::<Vec<_>>();
+        candidates.retain(|c| {
+            c.attribute.to_lowercase().contains(&query_lower)
+                || c.name.to_lowercase().contains(&query_lower)
+                || c.description.to_lowercase().contains(&query_lower)
+        });
         candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
         candidates.truncate(PLATFORM_FILTER_LIMIT);
-        let available = self.available_attributes(
+        let available = self.identities_unlocked(
             &candidates
                 .iter()
-                .map(|candidate| candidate.attribute.clone())
+                .map(|c| c.attribute.clone())
                 .collect::<Vec<_>>(),
+            false,
         )?;
-        candidates.retain(|candidate| available.contains(&candidate.attribute));
-        candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
-        candidates.truncate(DISPLAY_CANDIDATE_LIMIT);
-        {
-            let mut verified = self
-                .verified_packages
-                .lock()
-                .expect("verified-packages mutex poisoned");
-            for candidate in &candidates {
-                if verified.len() >= 512 {
-                    verified.clear();
-                }
-                verified.insert(candidate.attribute.clone(), candidate.name.clone());
+        candidates.retain(|c| available.iter().any(|p| p.attribute == c.attribute));
+        for candidate in &mut candidates {
+            if let Some(p) = available
+                .iter()
+                .find(|p| p.attribute == candidate.attribute)
+            {
+                candidate.version = p.version.clone();
+                candidate.name = p.name.clone();
             }
         }
+        candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
+        candidates.truncate(DISPLAY_CANDIDATE_LIMIT);
         self.store_cached_search(cache_key, candidates.clone());
         Ok(candidates)
     }
@@ -146,35 +154,78 @@ impl NixBackend {
         );
     }
 
-    pub(super) fn available_attributes(
+    pub(super) fn host_expression(&self) -> Result<String> {
+        use peasy_core::nix_string;
+        match &self.config.rebuild_target {
+            super::RebuildTarget::Configuration { path } => {
+                let rendered = peasy_core::render_system_expression(
+                    &self.config.nixpkgs,
+                    path,
+                    &self.config.system,
+                )?;
+                Ok(rendered.replace("evaluated.config.system.build.toplevel", "evaluated"))
+            }
+            super::RebuildTarget::Flake { reference, .. } => {
+                let hostname;
+                let (directory, name) = if let Some(parts) = reference.split_once('#') {
+                    parts
+                } else {
+                    hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+                        .context("reading the host name for the flake configuration")?;
+                    (reference.as_str(), hostname.trim())
+                };
+                if name.is_empty() {
+                    bail!("host flake must name a NixOS configuration");
+                }
+                Ok(format!(
+                    "(builtins.getFlake {}).nixosConfigurations.{}",
+                    nix_string(&format!("path:{directory}")),
+                    nix_string(name)
+                ))
+            }
+        }
+    }
+
+    pub(super) fn package_set_expression(&self) -> Result<String> {
+        Ok(format!("({}).pkgs", self.host_expression()?))
+    }
+
+    pub fn identities(&self, attributes: &[String]) -> Result<Vec<peasy_core::PackageIdentity>> {
+        if attributes.is_empty() {
+            return Ok(vec![]);
+        }
+        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A Nix operation is already running; try again shortly")
+        })?;
+        self.identities_unlocked(attributes, true)
+    }
+
+    pub(super) fn identities_unlocked(
         &self,
         attributes: &[String],
-    ) -> Result<std::collections::HashSet<String>> {
+        required: bool,
+    ) -> Result<Vec<peasy_core::PackageIdentity>> {
         if attributes.is_empty() {
-            return Ok(Default::default());
+            return Ok(vec![]);
+        }
+        for name in attributes {
+            validate_attribute(name)?;
         }
         let names = attributes
             .iter()
-            .map(serde_json::to_string)
-            .collect::<std::result::Result<Vec<_>, _>>()?
+            .map(|n| peasy_core::nix_string(n))
+            .collect::<Vec<_>>()
             .join(" ");
-        let nixpkgs = peasy_core::nix_string(&self.config.nixpkgs.to_string_lossy());
-        let system = serde_json::to_string(&self.config.system)?;
         let expression = format!(
-            r#"let
-  pkgs = import (builtins.toPath {nixpkgs}) {{ system = {system}; }};
-  lib = pkgs.lib;
-  names = [ {names} ];
-  isAvailable = name:
-    let
-      checked = builtins.tryEval (
-        let package = lib.attrByPath (lib.splitString "." name) null pkgs;
-        in package != null
-          && lib.meta.availableOn pkgs.stdenv.hostPlatform package
-          && !(package.meta.broken or false)
-      );
-    in checked.success && checked.value;
-in builtins.filter isAvailable names"#
+            r#"let pkgs = {}; lib = pkgs.lib;
+          identify = attribute: let p = lib.attrByPath (lib.splitString "." attribute) null pkgs;
+            checked = builtins.tryEval (builtins.deepSeq result result);
+            result = if p != null && lib.isDerivation p && lib.meta.availableOn pkgs.stdenv.hostPlatform p && !(p.meta.broken or false)
+              then {{ inherit attribute; name = p.pname or attribute; version = p.version or ""; drv_path = p.drvPath; }} else null;
+          in if checked.success then checked.value else null;
+        in builtins.filter (p: p != null) (map identify [ {} ])"#,
+            self.package_set_expression()?,
+            names
         );
         let output = self.runner.run(
             &self.config.nix,
@@ -189,88 +240,39 @@ in builtins.filter isAvailable names"#
             None,
         )?;
         if !output.status.success() {
+            bail!("checking host packages failed: {}", useful_stderr(&output));
+        }
+        let mut identities: Vec<peasy_core::PackageIdentity> =
+            serde_json::from_slice(&output.stdout).context("invalid host package identities")?;
+        for p in &mut identities {
+            validate_attribute(&p.attribute)?;
+            if !attributes.contains(&p.attribute)
+                || !p.drv_path.starts_with("/nix/store/")
+                || !p.drv_path.ends_with(".drv")
+                || p.drv_path.len() > 512
+                || p.name.len() > 240
+                || p.version.len() > 64
+            {
+                bail!("invalid package identity");
+            }
+            p.name = human_name(&p.name);
+        }
+        if required
+            && attributes
+                .iter()
+                .any(|name| !identities.iter().any(|p| &p.attribute == name))
+        {
             bail!(
-                "checking package compatibility failed: {}",
-                useful_stderr(&output)
+                "A requested package is unavailable in the host configuration; review the selection again"
             );
         }
-        let available: Vec<String> = serde_json::from_slice(&output.stdout)
-            .context("Nix returned invalid package-compatibility JSON")?;
-        Ok(available.into_iter().collect())
+        identities.sort_by(|a, b| a.attribute.cmp(&b.attribute));
+        Ok(identities)
     }
 
-    pub(super) fn package_set_expression(&self) -> String {
-        // The administrator's source is already immutable in the store. A
-        // path flake needlessly snapshots/hashes it again for each lookup.
-        format!(
-            "import (builtins.toPath {}) {{ system = {}; }}",
-            peasy_core::nix_string(&self.config.nixpkgs.to_string_lossy()),
-            peasy_core::nix_string(&self.config.system),
-        )
-    }
-
+    #[cfg(test)]
     pub fn verify(&self, attribute: &str) -> Result<String> {
-        validate_attribute(attribute)?;
-        if let Some(display_name) = self
-            .verified_packages
-            .lock()
-            .expect("verified-packages mutex poisoned")
-            .get(attribute)
-            .cloned()
-        {
-            return Ok(display_name);
-        }
-        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
-            anyhow::anyhow!("A Nix operation is already running; try again shortly")
-        })?;
-        let package = format!(
-            "(let pkgs = {}; in pkgs.lib.getAttrFromPath (pkgs.lib.splitString \".\" {}) pkgs)",
-            self.package_set_expression(),
-            peasy_core::nix_string(attribute),
-        );
-        let output = self.runner.run(
-            &self.config.nix,
-            &[
-                "eval".into(),
-                "--impure".into(),
-                "--json".into(),
-                "--no-write-lock-file".into(),
-                "--expr".into(),
-                format!("{package}.meta").into(),
-            ],
-            None,
-        )?;
-        if !output.status.success() {
-            bail!("unknown Nixpkgs package `{attribute}`");
-        }
-        let _: Value = serde_json::from_slice(&output.stdout)
-            .context("Nix returned invalid package metadata")?;
-        let pname = self.runner.run(
-            &self.config.nix,
-            &[
-                "eval".into(),
-                "--impure".into(),
-                "--raw".into(),
-                "--no-write-lock-file".into(),
-                "--expr".into(),
-                format!("{package}.pname").into(),
-            ],
-            None,
-        )?;
-        let display_name = if pname.status.success() {
-            human_name(String::from_utf8_lossy(&pname.stdout).trim())
-        } else {
-            human_name(attribute.rsplit('.').next().unwrap_or(attribute))
-        };
-        let mut verified = self
-            .verified_packages
-            .lock()
-            .expect("verified-packages mutex poisoned");
-        if verified.len() >= 512 {
-            verified.clear();
-        }
-        verified.insert(attribute.to_owned(), display_name.clone());
-        Ok(display_name)
+        Ok(self.identities(&[attribute.to_owned()])?.remove(0).name)
     }
 
     pub fn preview_package(&self, operation: PackageOperation, package: &str) -> Result<Preview> {
@@ -296,7 +298,15 @@ in builtins.filter isAvailable names"#
         {
             return self.preview_appimage_remove(appimage);
         }
-        let display_name = self.verify(package)?;
+        let packages = if operation == PackageOperation::Install {
+            self.identities(&[package.to_owned()])?
+        } else {
+            vec![]
+        };
+        let display_name = packages
+            .first()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| human_name(package));
         let before = self.current_state()?;
         if operation == PackageOperation::Remove
             && !before.packages.iter().any(|item| item == package)
@@ -325,7 +335,17 @@ in builtins.filter isAvailable names"#
                 },
             });
         }
+        for p in &packages {
+            diff.push(peasy_core::DiffLine {
+                kind: peasy_core::DiffKind::Context,
+                text: format!(
+                    "{} {} (reviewed derivation {})",
+                    p.name, p.version, p.drv_path
+                ),
+            });
+        }
         Ok(Preview {
+            packages,
             diff,
             before,
             change: ProposalChange::Package {

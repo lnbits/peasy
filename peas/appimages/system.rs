@@ -21,6 +21,7 @@ impl NixBackend {
         let mut diff = appimage_review_details(&package);
         diff.extend(module_diff(&before, &after)?);
         Ok(Preview {
+            packages: vec![],
             before,
             change: ProposalChange::AppImage {
                 operation: PackageOperation::Install,
@@ -43,6 +44,7 @@ impl NixBackend {
         let mut diff = appimage_review_details(&package);
         diff.extend(module_diff(&before, &after)?);
         Ok(Preview {
+            packages: vec![],
             before,
             change: ProposalChange::AppImage {
                 operation: PackageOperation::Remove,

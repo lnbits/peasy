@@ -275,11 +275,11 @@ fn finish_panel(
                 }))?;
                 match read_panel_command(input)? {
                     PanelCommand::Apply { password: None } => {
-                        send_panel_event(&json!({
-                            "event": "progress",
-                            "message": "Testing and applying the NixOS configuration…"
-                        }))?;
-                        let result = client.apply(&proposal)?;
+                        let result = client.apply_with_progress(&proposal, |stage| {
+                            let _ = send_panel_event(
+                                &json!({ "event": "progress", "message": stage.message() }),
+                            );
+                        })?;
                         if !result.activated {
                             anyhow::bail!(result.message);
                         }
@@ -404,7 +404,7 @@ fn handle(client: &PeasyClient, request: &str) -> Result<()> {
 
 fn finish(client: &PeasyClient, resolution: Resolution) -> Result<()> {
     match resolution {
-        Resolution::Proposal(proposal) => confirm_and_apply(client, proposal),
+        Resolution::Proposal(proposal) => confirm_and_apply(client, *proposal),
         Resolution::LocalProposal(proposal) => confirm_and_apply_local(client, proposal),
         Resolution::Choose(choice) => {
             let index = choose(&choice)?;
@@ -461,9 +461,8 @@ fn confirm_and_apply(client: &PeasyClient, proposal: Proposal) -> Result<()> {
         println!("Cancelled.");
         return Ok(());
     }
-    println!("\nTesting configuration...");
     let _agent = TerminalAgent::start()?;
-    let result = client.apply(&proposal)?;
+    let result = client.apply_with_progress(&proposal, |stage| eprintln!("{}", stage.message()))?;
     if result.configuration_valid {
         println!("✓ Configuration valid");
     }

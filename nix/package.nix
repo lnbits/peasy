@@ -1,5 +1,6 @@
 {
   lib,
+  path,
   stdenv,
   rustPlatform,
   pkg-config,
@@ -99,6 +100,9 @@ rustPlatform.buildRustPackage {
   # The ignored local integration check needs an already-built Wasm guest.
   # Package builds always provide it and run the full cross-pea contract corpus.
   preCheck = ''
+    export PEASY_TEST_NIX="${nix}/bin/nix-instantiate"
+    export PEASY_TEST_NIXPKGS="${path}"
+    export PEASY_TEST_SYSTEM="${stdenv.hostPlatform.system}"
     export PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm"
   '';
 
