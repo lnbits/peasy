@@ -425,6 +425,9 @@ pub enum EngineDecision {
     Reject(String),
 }
 
+/// Kept stable so clients can recognize the existing protocol's restart response.
+pub const IPC_RESTARTING_MESSAGE: &str = "Peasy is updating. Retry the request shortly.";
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "request", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcRequest {

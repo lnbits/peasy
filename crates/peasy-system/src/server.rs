@@ -153,7 +153,11 @@ impl Server {
                 Ok(mut stream) => {
                     if self.backend.should_restart() {
                         let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
-                        let _ = stream.write_all(b"{\"response\":\"error\",\"message\":\"Peasy is updating. Retry the request shortly.\"}\n");
+                        let response = IpcResponse::Error {
+                            message: peasy_core::IPC_RESTARTING_MESSAGE.into(),
+                        };
+                        let _ = serde_json::to_writer(&mut stream, &response);
+                        let _ = stream.write_all(b"\n");
                         continue;
                     }
                     let credentials = match getsockopt(&stream, sockopt::PeerCredentials) {

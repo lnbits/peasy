@@ -96,3 +96,28 @@ disk reads. Those experimental VM storage changes were removed. The VM search
 now has an explicit 15-minute deadline and asserts the parsed response type and
 exact `hello` attribute. A complete security VM and full offline ISO installation
 still need a fresh CI run; neither is claimed to have passed locally.
+
+### Reconnecting after activation (2026-09-10)
+
+CI run `34509218250` passed the security job and offline installation, then
+successfully activated Patchelf. Its immediate package-list read raced the
+daemon's controlled exit and received a connection reset. The cache's HTTP 418
+warning was separate: the build and installation continued successfully.
+
+The installer acceptance helper now gives package-list reads a 15-second
+reconnection deadline. The app client also retries observational requests during
+that window on a missing/refused socket, a dropped connection or the existing
+"Peasy is updating" response. Application errors and malformed complete responses
+still fail immediately. Proposals, applies, recovery proposals and cancellation
+requests are never replayed automatically. Client cancellation remains responsive,
+and the reconnect window does not impose a new timeout on healthy package searches.
+
+Regression coverage exercises install and remove verification across connection
+loss, interrupted response frames, restart replies, unavailable sockets, retry
+expiry, cancellation and mutation responses that must not be replayed. The release
+check explicitly includes the production installer helper in its Nix sandbox.
+All 98 native client/core/daemon tests passed (two existing integration tests remain
+ignored), along with all 57 Python tests, seven website tests and workflow lint in
+the pinned Nix release check. Clippy for the changed Rust crates passed with
+warnings denied; Rust/Nix formatting and patch whitespace checks also passed.
+The full ISO VM test still needs a fresh CI run.

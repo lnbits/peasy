@@ -342,11 +342,56 @@ impl IpcClient {
         request: &IpcRequest,
         mut progress: impl FnMut(peasy_core::OperationStage),
     ) -> Result<IpcResponse> {
+        self.request_with_restart_grace(request, &mut progress, Duration::from_secs(15))
+    }
+
+    fn request_with_restart_grace(
+        &self,
+        request: &IpcRequest,
+        progress: &mut impl FnMut(peasy_core::OperationStage),
+        grace: Duration,
+    ) -> Result<IpcResponse> {
+        // Only observational requests may be replayed. In particular, losing an
+        // apply response does not mean activation failed or is safe to repeat.
+        let read_only = matches!(
+            request,
+            IpcRequest::GetPackages
+                | IpcRequest::GetTheme
+                | IpcRequest::GetManagedModule
+                | IpcRequest::SearchPackages { .. }
+                | IpcRequest::Inspect
+                | IpcRequest::Status
+        );
+        let deadline = std::time::Instant::now() + grace;
+        loop {
+            match self.request_once(request, progress) {
+                Err(error) if read_only && restart_connection_error(&error) => {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(error.context("Peasy did not reconnect after restarting"));
+                    }
+                    Cancellation::current().check()?;
+                    std::thread::sleep(remaining.min(Duration::from_millis(100)));
+                    Cancellation::current().check()?;
+                    if std::time::Instant::now() >= deadline {
+                        return Err(error.context("Peasy did not reconnect after restarting"));
+                    }
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn request_once(
+        &self,
+        request: &IpcRequest,
+        progress: &mut impl FnMut(peasy_core::OperationStage),
+    ) -> Result<IpcResponse> {
         let cancellation = Cancellation::current();
         cancellation.check()?;
         let mut stream = UnixStream::connect(&self.socket)
             .with_context(|| format!("connecting to {}", self.socket.display()))?;
-        serde_json::to_writer(&mut stream, request)?;
+        stream.write_all(&serde_json::to_vec(request)?)?;
         stream.write_all(b"\n")?;
         stream.set_read_timeout(Some(Duration::from_millis(100)))?;
         let started = std::time::Instant::now();
@@ -360,7 +405,13 @@ impl IpcClient {
             }
             let mut chunk = [0; 8192];
             match stream.read(&mut chunk) {
-                Ok(0) => bail!("system service closed the connection"),
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "system service closed the connection",
+                    )
+                    .into());
+                }
                 Ok(count) => {
                     if line.len() + count > 2 * 1024 * 1024 {
                         bail!("oversized system response");
@@ -372,6 +423,15 @@ impl IpcClient {
                             serde_json::from_slice(&frame).context("invalid system response")?;
                         match response {
                             IpcResponse::Progress { stage } => progress(stage),
+                            IpcResponse::Error { message }
+                                if message == peasy_core::IPC_RESTARTING_MESSAGE =>
+                            {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::ConnectionAborted,
+                                    message,
+                                )
+                                .into());
+                            }
                             IpcResponse::Error { message } => bail!("{message}"),
                             response => return Ok(response),
                         }
@@ -389,6 +449,23 @@ impl IpcClient {
         }
     }
 }
+
+fn restart_connection_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound
+                | std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof
+        )
+    })
+}
+
+#[cfg(test)]
+mod ipc_tests;
 
 struct OpenAi {
     client: reqwest::Client,
