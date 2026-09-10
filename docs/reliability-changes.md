@@ -60,3 +60,39 @@ cover the current direct-search implementation.
 No live host generation, service or provider configuration is changed by these
 checks. They do not replace the full graphical desktop/installer VM matrix or
 hardware testing before a release.
+
+### Follow-up CI fixes (2026-09-10)
+
+Direct search now wraps the effective host package set in `legacyPackages` so
+Nix skips individual failing entries, including Nixpkgs' deliberate evaluation
+sentinel. The host package set itself is forced first so invalid host definitions
+still return an error. A real-Nix regression test covers failing top-level and
+nested entries, broken metadata, retained package metadata and invalid hosts;
+it uses a dummy store so it also runs inside the package build sandbox.
+
+The export integration test now runs as `checks.export`, explicitly included in
+the ISO CI job, using the production exporter in a small Rust harness. Keeping
+`pkgs.path` out of the application derivation restores identical live-ISO and
+installed-channel packages, allowing offline installation to reuse the bundled
+binary. The check also asserts source-path independence for desktop and core
+packages. Local evaluation with the actual bundled channel and copied Peasy
+source confirmed identical derivations; embedding the test source path reproduced
+different derivations before the fix.
+
+The 109 native tests passed, followed by the final search regression and workspace
+Clippy with warnings denied. Rust/Nix formatting and patch whitespace checks
+passed. The separate Nix export check passed all four tests, including real NixOS
+restore evaluation. A full pinned-Nixpkgs search returned `hello`; a separate
+instance of the fixed daemon then returned a real host overlay's overridden
+`hello` version through IPC in 30 seconds, using only temporary configuration,
+state and socket paths and disabled activation tools.
+
+The focused release daemon passed all 34 tests inside Nix's build sandbox. The
+local security VM passed the initial configuration and filesystem restrictions,
+but its full search did not complete: a bounded diagnostic run showed Nix
+waiting in `p9_virtio_zc_request`/`p9_client_rpc` for most of the request. Larger
+9p transfers did not resolve the delay; a local store image also stalled on host
+disk reads. Those experimental VM storage changes were removed. The VM search
+now has an explicit 15-minute deadline and asserts the parsed response type and
+exact `hello` attribute. A complete security VM and full offline ISO installation
+still need a fresh CI run; neither is claimed to have passed locally.

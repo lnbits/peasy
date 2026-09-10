@@ -100,6 +100,7 @@
         in
         {
           package = self.packages.${system}.default;
+          export = import ./nix/tests/export.nix { inherit pkgs; };
           release = import ./nix/tests/release.nix {
             inherit pkgs;
             releaseTools = self.packages.${system}.iso-release-tools;
@@ -135,6 +136,7 @@
                   ${./nix/installer-target.nix} \
                   ${./nix/installer-offline.nix} \
                   ${./nix/tests/desktop-config.nix} \
+                  ${./nix/tests/export.nix} \
                   ${./nix/tests/iso-config.nix} \
                   ${./nix/tests/release.nix} \
                   ${./nix/tests/gnome-tray.nix} \

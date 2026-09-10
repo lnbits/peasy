@@ -1,6 +1,5 @@
 {
   lib,
-  path,
   stdenv,
   rustPlatform,
   pkg-config,
@@ -91,6 +90,10 @@ rustPlatform.buildRustPackage {
   checkFlags = [
     "--test-threads=1"
     "--include-ignored"
+    # Run this separately in checks.export: embedding pkgs.path here changes
+    # the package identity between a flake and the ISO's bundled channel.
+    "--skip"
+    "exported_configuration_passes_real_nixos_assertions"
   ];
 
   preBuild = ''
@@ -101,7 +104,7 @@ rustPlatform.buildRustPackage {
   # Package builds always provide it and run the full cross-pea contract corpus.
   preCheck = ''
     export PEASY_TEST_NIX="${nix}/bin/nix-instantiate"
-    export PEASY_TEST_NIXPKGS="${path}"
+    export PEASY_TEST_NIX_CLI="${nix}/bin/nix"
     export PEASY_TEST_SYSTEM="${stdenv.hostPlatform.system}"
     export PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm"
   '';

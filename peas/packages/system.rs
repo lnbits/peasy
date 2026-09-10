@@ -34,9 +34,10 @@ impl NixBackend {
                 "--impure".into(),
                 "--no-write-lock-file".into(),
                 "--expr".into(),
-                self.package_set_expression()?.into(),
+                search_expression(&self.package_set_expression()?, &self.config.system).into(),
                 // With --expr, Nix still expects an attribute selector
-                // before its regex arguments. Select the whole package set.
+                // before its regex arguments. Keep the legacyPackages prefix
+                // visible to the search walker by selecting the root.
                 "".into(),
                 format!(".*{}.*", peasy_core::regex_escape(query)).into(),
             ],
@@ -358,6 +359,16 @@ impl NixBackend {
     }
 }
 
+fn search_expression(package_set: &str, system: &str) -> String {
+    // Nix search tolerates individual evaluation failures under legacyPackages.
+    // Searching a bare host pkgs expression instead aborts on Nixpkgs' deliberate
+    // failing entries. Wrap the effective host set without reimporting Nixpkgs.
+    format!(
+        "let pkgs = {package_set}; in builtins.seq pkgs {{ legacyPackages.{} = pkgs; }}",
+        peasy_core::nix_string(system)
+    )
+}
+
 fn candidate_rank(candidate: &PackageCandidate, query: &str) -> (u8, u8, u8, u8, usize, String) {
     let leaf = candidate
         .attribute
@@ -407,4 +418,69 @@ fn candidate_rank(candidate: &PackageCandidate, query: &str) -> (u8, u8, u8, u8,
 pub(super) struct CachedSearch {
     created: Instant,
     candidates: Vec<PackageCandidate>,
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_NIX_CLI; package builds run this"]
+    fn real_nix_search_skips_failing_entries_but_reports_a_broken_package_set() {
+        let nix = std::env::var("PEASY_TEST_NIX_CLI").expect("Nix CLI required");
+        let cache = tempfile::tempdir().unwrap();
+        // These are inert search metadata, with no store writes or builds.
+        let fixture = r#"let
+          hello = { type = "derivation"; name = "hello-1.0";
+            meta.description = "host overlay fixture"; };
+        in {
+          AAAAAASomeThingsFailToEvaluate = throw "unavailable root entry";
+          inherit hello;
+          badMetadata = hello // { meta.description = throw "unavailable metadata"; };
+          nested = {
+            recurseForDerivations = true;
+            broken = throw "unavailable nested entry";
+            hello = hello // { name = "hello-2.0"; };
+          };
+        }"#;
+        let search = |packages: &str| {
+            Command::new(&nix)
+                .args([
+                    "--extra-experimental-features",
+                    "nix-command",
+                    "--store",
+                    "dummy://",
+                    "search",
+                    "--json",
+                    "--expr",
+                    &search_expression(packages, "x86_64-linux"),
+                    "",
+                    "hello",
+                ])
+                .env("XDG_CACHE_HOME", cache.path())
+                .output()
+                .unwrap()
+        };
+        let output = search(fixture);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let results: BTreeMap<String, Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(results.len(), 2, "{results:?}");
+        assert_eq!(
+            results["legacyPackages.x86_64-linux.hello"]["description"],
+            "host overlay fixture"
+        );
+        assert_eq!(
+            results["legacyPackages.x86_64-linux.nested.hello"]["version"],
+            "2.0"
+        );
+        // A broken host definition must still be reported, not an empty result.
+        let output = search("throw \"invalid host package set\"");
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid host package set"));
+    }
 }

@@ -379,7 +379,7 @@ fn configured_path(pointer: &Path, fallback: &str) -> Result<PathBuf> {
 mod tests {
     use super::*;
     #[test]
-    #[ignore = "requires PEASY_TEST_NIX and PEASY_TEST_NIXPKGS; package builds run this"]
+    #[ignore = "requires PEASY_TEST_NIX and PEASY_TEST_NIXPKGS; checks.export runs this"]
     fn exported_configuration_passes_real_nixos_assertions() {
         let temp = tempfile::tempdir().unwrap();
         let host = temp.path().join("source");

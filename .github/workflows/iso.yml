@@ -155,6 +155,7 @@ jobs:
           nix flake check --no-build
           nix build --no-link \
             .#checks.x86_64-linux.formatting \
+            .#checks.x86_64-linux.export \
             .#checks.x86_64-linux.sandbox-fixture \
             .#checks.x86_64-linux.desktop-config \
             .#checks.x86_64-linux.iso-config \

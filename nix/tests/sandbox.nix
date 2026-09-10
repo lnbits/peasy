@@ -231,6 +231,9 @@ pkgs.testers.runNixOSTest {
       virtualisation.memorySize = 8192;
     };
   testScript = ''
+    import json
+    from datetime import timedelta
+
     start_all()
     machine.wait_for_unit("peasy-system.service")
     machine.wait_for_file("/run/peasy/peasy.sock")
@@ -301,11 +304,13 @@ pkgs.testers.runNixOSTest {
       "pid=$(systemctl show -p MainPID --value peasy-system.service); nsenter -t $pid -m -- cat /home/testuser/private.txt"
     )
     search = machine.succeed(
-      "printf '%s\\n' '{\"request\":\"search_packages\",\"query\":\"hello\"}' | socat -t 120 STDIO,ignoreeof UNIX-CONNECT:/run/peasy/peasy.sock"
+      "printf '%s\\n' '{\"request\":\"search_packages\",\"query\":\"hello\"}' | socat -t 120 STDIO,ignoreeof UNIX-CONNECT:/run/peasy/peasy.sock",
+      timeout=timedelta(minutes=15),
     )
     print(search)
-    assert '"search_results"' in search
-    assert 'hello' in search
+    search_result = json.loads(search)
+    assert search_result.get("response") == "search_results", search_result
+    assert any(c["attribute"] == "hello" for c in search_result["candidates"]), search_result
     machine.succeed("systemctl start peasy-sandbox-probe.service")
     machine.succeed("journalctl -u peasy-sandbox-probe.service | grep 'home-read=denied etc-write=denied'")
     machine.fail("test -e /etc/peasy-security-test")
