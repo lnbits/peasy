@@ -1,0 +1,1 @@
+Use list_wifi for nearby networks and connect_wifi for the requested SSID. The host resolves it against discovered networks. Passwords must be collected separately in the local input and never included in model output.

@@ -283,6 +283,10 @@ fn finish_panel(
                         if !result.activated {
                             anyhow::bail!(result.message);
                         }
+                        if let Some(next) = client.resume_after_apply(&proposal)? {
+                            resolution = next;
+                            continue;
+                        }
                         send_panel_event(&json!({
                             "event": "done",
                             "message": result.message,
@@ -297,14 +301,7 @@ fn finish_panel(
                 }
             }
             Resolution::LocalProposal(proposal) => {
-                let password_required = matches!(
-                    &proposal.action,
-                    LocalAction::Wifi {
-                        password: None,
-                        password_required: true,
-                        ..
-                    }
-                );
+                let password_required = proposal.password_required();
                 send_panel_event(&json!({
                     "event": "review",
                     "title": proposal.title,
@@ -321,6 +318,7 @@ fn finish_panel(
                             anyhow::bail!("invalid Wi-Fi password");
                         }
                         let progress = match &proposal.action {
+                            LocalAction::Network { .. } => "Changing network connections…",
                             LocalAction::Wifi { .. } => "Connecting to Wi-Fi…",
                             LocalAction::Bluetooth { .. } => "Connecting Bluetooth device…",
                             LocalAction::Calendar { .. } => "Opening calendar event…",
@@ -471,6 +469,9 @@ fn confirm_and_apply(client: &PeasyClient, proposal: Proposal) -> Result<()> {
     }
     if result.activated {
         println!("✓ Activated\n\n{}", result.message);
+        if let Some(next) = client.resume_after_apply(&proposal)? {
+            return finish(client, next);
+        }
     } else {
         anyhow::bail!(result.message);
     }
@@ -506,6 +507,9 @@ fn confirm_and_apply_local(client: &PeasyClient, proposal: LocalProposal) -> Res
         return Ok(());
     }
     let supplied_password = match &proposal.action {
+        LocalAction::Network { .. } if proposal.password_required() => {
+            Some(rpassword::prompt_password("Wi-Fi password: ")?)
+        }
         LocalAction::Wifi {
             password: None,
             password_required: true,
@@ -514,6 +518,7 @@ fn confirm_and_apply_local(client: &PeasyClient, proposal: LocalProposal) -> Res
         _ => None,
     };
     let progress = match &proposal.action {
+        LocalAction::Network { .. } => "Changing network connections…",
         LocalAction::Wifi { .. } => "Connecting to Wi-Fi...",
         LocalAction::Bluetooth { .. } => "Connecting Bluetooth device...",
         LocalAction::Calendar { .. } => "Opening calendar event...",

@@ -1,13 +1,33 @@
 # Peas: Peasy's abilities
 
-A pea is a built-in, reviewed ability, organised in one folder. This is a source
-layout, not a downloadable plugin system: adding a folder does not enable code
-automatically. Peas are explicitly wired into Peasy's existing Rust crates and
-compiled with the application. No new process, permissions, configuration file
-or runtime registration mechanism is introduced.
+A pea describes a domain and the guarded changes the AI can propose. Native host
+adapters live in these folders and compile into the appropriate Rust crates.
+Separately packaged `pea.json` files supply domain instructions, capability
+metadata and schemas using that versioned host API. Adding a Rust folder never
+automatically enables code. See [package loading](../docs/pea-packages.md) for
+on-demand discovery, Nix pins and installation.
 
-The initial split moves existing functionality without changing prompts, action
-names, JSON formats, review messages, command arguments, defaults or persistence.
+## Design a domain, not a recipe
+
+A pea describes a domain's resources, observable state, and guarded changes.
+Peasy discovers bounded, nonsecret facts about the computer; the AI reasons from
+those facts and the user's intent to a structured proposal. Trusted code validates
+resource identity, supported values, permissions and preconditions, renders the
+actual effects for review, executes the confirmed proposal, and handles recovery.
+
+Do not route on request keywords or implement one workflow for each example.
+A networking pea exposes interfaces, profiles, addressing and activation; a
+hotspot is one composition of those primitives. Examples are acceptance cases,
+not the capability's scope. Give the model the schema and constraints, rather
+than hardcoding its decisions in Rust. Missing facts should trigger a bounded
+read-only discovery step and another model turn.
+
+A schema is a format boundary, not authorization. Validate again against current
+resources before mutation. Define ownership, persistence, secrets, partial failure,
+undo and unsupported requirements explicitly. Never expand the schema into an
+arbitrary command, property bag, file writer or Nix evaluator. New value types and
+privileged effects require reviewed host implementations. Keep AI/provider access,
+review, authorization and transactions in the shared host.
 
 ## Existing peas
 
@@ -17,6 +37,7 @@ names, JSON formats, review messages, command arguments, defaults or persistence
 | [system_configuration](system_configuration/) | Generic package setup and uninstall: supporting packages, reviewed NixOS enable options and caller-bound groups | `types.rs`, `client.rs`, `system.rs` |
 | [appimages](appimages/) | GitHub discovery, release/architecture selection, prefetch/hash, reviewed install/update/remove, administrator policy | `types.rs`, `client.rs`, `system.rs` |
 | [appearance](appearance/) | Supported theme choices, declarative accents/light/dark settings, live GNOME/Plasma application | `types.rs`, `desktop.rs`, `client.rs`, `adapters.rs`, `system.rs` |
+| [networking](networking/) | Discover NetworkManager resources; compose persistent profiles and reviewed live connection changes | `types.rs`, `client.rs`, `system.rs` |
 | [wifi](wifi/) | List nearby networks and connect using a separately supplied local password | `types.rs`, `client.rs` |
 | [bluetooth](bluetooth/) | Discover matching devices, connect and pair when needed | `client.rs` |
 | [calendar](calendar/) | Validate local dates, prepare private iCalendar files, open the default calendar handler | `types.rs`, `client.rs` |
@@ -71,13 +92,13 @@ step that another pea can accidentally omit.
 
 ## Security and compatibility rules
 
-Peas are trusted application code, **not security sandboxes for third-party Rust**.
+Native pea adapters are trusted application code, **not security sandboxes for third-party Rust**.
 A malicious source contribution could misuse its owning process's authority;
 it requires normal review and a rebuild. There is no claim that sibling Rust
 modules isolate credentials from malicious contributors.
 
 The AI still receives only constructed data and returns a closed typed action.
-It cannot choose a pea file, executable, shell command, Nix expression or an
+It can select a compatible official pea id, but cannot choose a pea file, executable, shell command, Nix expression or an
 arbitrary setting/path. Wasm has no imports, WASI, filesystem or network access.
 Per-user operations keep their existing review/confirmation flow. System Apply
 still requires daemon-side administrator authorization and a UID-bound proposal.
@@ -94,7 +115,15 @@ event was saved, and live Hyprland changes are not persistent NixOS settings.
 
 ## Adding a pea
 
-1. Define a small capability, supported desktops, read/write effects, confirmation
+First check whether the installed host API already exposes the required resources
+and changes. If it does, author a data package with domain instructions, the exact
+host schema and declared permissions; update the official catalogue and Nix
+package output. Follow [package authoring](../docs/pea-packages.md#authoring-and-compatibility).
+A new native primitive needs the host work below. Do not add native dispatch for
+an example that existing primitives can already express.
+
+
+1. Define a domain and its reusable resources and typed changes, supported desktops, read/write effects, confirmation
    requirements and failure behaviour. Start with the least authority needed.
 2. Add `peas/<name>/client.rs` and tests. Add `types.rs`, `system.rs` or `policy.rs`
    only when that responsibility is actually needed. Use explicit imports and
@@ -102,10 +131,11 @@ event was saved, and live Hyprland changes are not persistent NixOS settings.
 3. Register source modules in their owning crates. Extend the closed
    `ModelAction`, `ModelEnvelope` validation and `EngineDecision` as necessary.
    Wire exhaustive matches in the engine and client. Do not add a catch-all
-   command action or dynamic dispatcher.
+   command action or dynamic native-code dispatcher.
 4. Add model instructions/schema fields deliberately. Keep existing meanings and
    names; retain `additionalProperties: false`, bounded data and local validation.
-   Update `tests/model-schema.json`, the prompt fixtures and `tests/actions.json`
+   Regenerate `tests/model-schema.json` and the pea package schemas with the core
+   catalogue generator; update the prompt fixtures and `tests/actions.json`
    only for intentional additions. Existing action fixtures must still pass.
 5. For a session change, add a typed `LocalAction`, reviewable `LocalProposal`,
    and fixed execution handler reached only through the existing confirmation

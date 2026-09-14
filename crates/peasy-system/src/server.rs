@@ -322,6 +322,12 @@ fn dispatch(
         IpcRequest::GetManagedModule => Ok(IpcResponse::ManagedModule {
             module: backend.managed_module()?,
         }),
+        IpcRequest::ProposePea { pin, enable } => {
+            store_proposal(proposals, uid, backend.preview_pea(pin, enable)?)
+        }
+        IpcRequest::ProposeNetwork { plan } => {
+            store_proposal(proposals, uid, backend.preview_network(plan)?)
+        }
         IpcRequest::ProposeInstall { package } => {
             propose_package(backend, proposals, uid, PackageOperation::Install, &package)
         }
@@ -602,6 +608,8 @@ mod tests {
                 system: "x86_64-linux".into(),
                 managed_module: temp.path().join("source/peasy.nix"),
                 appimage_policy: temp.path().join("policy.json"),
+                pea_policy: temp.path().join("pea-policy.json"),
+                network_profiles_dir: temp.path().join("network-profiles"),
                 rebuild_target: RebuildTarget::Configuration {
                     path: "/etc/nixos/configuration.nix".into(),
                 },

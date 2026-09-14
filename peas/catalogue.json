@@ -1,0 +1,134 @@
+{
+  "format": 1,
+  "peas": [
+    {
+      "package": {
+        "id": "appearance",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "appearance"
+        ],
+        "hash": "77109bca8ea87f08b87b3e2cc1695502d456be6e45cd3e8293429ef633c50bf3"
+      },
+      "capabilities": [
+        "Inspect and configure supported desktop colours and light or dark appearance"
+      ]
+    },
+    {
+      "package": {
+        "id": "appimages",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "packages"
+        ],
+        "hash": "279e6c89d9bbd42529f10552f177bb44b79b34287bde5dafe8cfc58f4b394149"
+      },
+      "capabilities": [
+        "Discover and install pinned upstream AppImage releases"
+      ]
+    },
+    {
+      "package": {
+        "id": "bluetooth",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "bluetooth"
+        ],
+        "hash": "01e6b30f3d1691c8c40b027514363c9fb06a48498aef704f3e9aa3985963cbb3"
+      },
+      "capabilities": [
+        "Discover and connect or pair Bluetooth devices"
+      ]
+    },
+    {
+      "package": {
+        "id": "calendar",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "calendar"
+        ],
+        "hash": "ddef9d57036b1b24702faf7ef7184252735e222639d6d4dd989bc600130a2ede"
+      },
+      "capabilities": [
+        "Prepare local calendar events for import"
+      ]
+    },
+    {
+      "package": {
+        "id": "hyprland",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "hyprland"
+        ],
+        "hash": "e8ba58ec9dcdd3d8984e1bed6a76cb9c47b4a58888a770562451c186113d1606"
+      },
+      "capabilities": [
+        "Inspect and control supported live Hyprland settings and window actions"
+      ]
+    },
+    {
+      "package": {
+        "id": "networking",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "network.read",
+          "network.session",
+          "network.system"
+        ],
+        "hash": "85602afd53dcff362c3f9c86f024817fb820b8187f2a570e506afa772b7500da"
+      },
+      "capabilities": [
+        "Inspect interfaces, connection profiles, IPv4 addressing and routes",
+        "Configure DHCP, static IPv4, DNS, shared connectivity, Wi-Fi modes and profile activation"
+      ]
+    },
+    {
+      "package": {
+        "id": "packages",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "packages"
+        ],
+        "hash": "791aa4fdce6ef2590e9109c9f07d6f9eb5b61080f0d8f3e2f21697f6c0ba03d4"
+      },
+      "capabilities": [
+        "Find, install and remove Nixpkgs applications and their reviewed system integration"
+      ]
+    },
+    {
+      "package": {
+        "id": "system_configuration",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "packages"
+        ],
+        "hash": "a255e7f0134b86c8cbc63ff16d8cfb96e54876c68ee7c6169a4d0d4be3ec9be7"
+      },
+      "capabilities": [
+        "Configure application dependencies, reviewed NixOS enable options and caller-bound groups"
+      ]
+    },
+    {
+      "package": {
+        "id": "wifi",
+        "version": "1.0.0",
+        "host_api": 1,
+        "permissions": [
+          "wifi"
+        ],
+        "hash": "31ac3d13631f7b1298274b9fbc77e4b954c10da0f8653c4ec77078351521d885"
+      },
+      "capabilities": [
+        "Discover nearby Wi-Fi networks and connect to an exact SSID"
+      ]
+    }
+  ]
+}

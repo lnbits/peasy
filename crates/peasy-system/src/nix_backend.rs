@@ -2,8 +2,12 @@
 mod appearance;
 #[path = "../../../peas/appimages/system.rs"]
 mod appimages;
+#[path = "../../../peas/networking/system.rs"]
+mod networking;
 #[path = "../../../peas/packages/system.rs"]
 mod packages;
+#[path = "pea.rs"]
+mod pea;
 #[path = "../../../peas/system_configuration/system.rs"]
 mod system_configuration;
 use packages::CachedSearch;
@@ -34,6 +38,8 @@ pub struct BackendConfig {
     pub identity: Option<PathBuf>,
     pub active_system: PathBuf,
     pub appimage_policy: PathBuf,
+    pub pea_policy: PathBuf,
+    pub network_profiles_dir: PathBuf,
     pub runtime_dir: PathBuf,
     pub nix: PathBuf,
     pub systemctl: PathBuf,
@@ -205,6 +211,26 @@ impl NixBackend {
         }
         let (proposed, message) = match change {
             ProposalChange::Recovery { .. } => unreachable!(),
+            ProposalChange::Pea { pin, enable } => {
+                if *enable {
+                    self.verify_pea(pin)?;
+                }
+                (
+                    previous.with_pea(pin, *enable)?,
+                    format!(
+                        "Pea {} {}.",
+                        pin.id,
+                        if *enable { "enabled" } else { "disabled" }
+                    ),
+                )
+            }
+            ProposalChange::Network { plan } => {
+                self.validate_network_ownership(&previous, plan)?;
+                (
+                    previous.with_network(plan)?,
+                    "Network profiles saved. Active connections may need reactivation.".into(),
+                )
+            }
             ProposalChange::Setup { operation, setup } => {
                 self.apply_setup_state(&previous, *operation, setup)?
             }
@@ -1028,6 +1054,8 @@ mod tests {
             identity: None,
             active_system: runtime_dir.join("active-system"),
             appimage_policy: runtime_dir.join("appimage-policy.json"),
+            pea_policy: runtime_dir.join("pea-policy.json"),
+            network_profiles_dir: runtime_dir.join("network-profiles"),
             runtime_dir,
             nix: "/trusted/nix".into(),
             systemctl: "/trusted/systemctl".into(),
@@ -1188,6 +1216,68 @@ mod tests {
         assert_eq!(calls[1][0], "build");
         assert!(calls[1].iter().any(|argument| argument == "--file"));
         assert!(!calls[1].iter().any(|argument| argument == "--flake"));
+    }
+
+    #[test]
+    fn network_build_failure_and_stale_reviews_preserve_prior_profiles() {
+        let temp = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([output(1, "", "network fixture failure")])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
+        let plan: peasy_core::NetworkPlan =
+            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+        let preview = backend.preview_network(plan.clone()).unwrap();
+        let result = backend
+            .apply(&preview.change, &preview.before, &"a".repeat(48), &[])
+            .unwrap();
+        assert!(!result.activated);
+        assert_eq!(backend.current_state().unwrap(), PackageState::default());
+        let changed = PackageState::default().with_network(&plan).unwrap();
+        state::write_managed_atomic(&backend.config.managed_module, &changed).unwrap();
+        assert!(
+            backend
+                .apply(&preview.change, &preview.before, &"b".repeat(48), &[])
+                .is_err()
+        );
+        assert_eq!(runner.calls.lock().unwrap().len(), 1);
+        assert_eq!(backend.current_state().unwrap(), changed);
+    }
+
+    #[test]
+    fn pea_policy_and_hash_failure_precede_state_changes() {
+        use peasy_core::pea::{PeaPin, PeaPolicy};
+        let temp = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([output(1, "", "hash mismatch")])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
+        let pin = PeaPin {
+            id: "networking".into(),
+            version: "1".into(),
+            revision: "a".repeat(40),
+            hash: "b".repeat(64),
+            host_api: 1,
+            permissions: vec!["network.read".into()],
+        };
+        assert!(backend.preview_pea(pin.clone(), true).is_err());
+        assert!(runner.calls.lock().unwrap().is_empty());
+        fs::write(
+            &backend.config.pea_policy,
+            serde_json::to_vec(&PeaPolicy {
+                allow_official: true,
+                allowed_permissions: vec!["network.read".into()],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(backend.preview_pea(pin.clone(), true).is_err());
+        assert_eq!(backend.current_state().unwrap(), PackageState::default());
+        let calls = runner.calls.lock().unwrap();
+        assert!(calls[0].iter().any(|arg| arg == "--expected-hash"));
+        assert_eq!(calls[0].last().unwrap(), &OsString::from(pin.url()));
     }
 
     #[test]
@@ -1431,6 +1521,8 @@ mod tests {
             &PackageState {
                 packages: vec!["vlc".into()],
                 setups: Vec::new(),
+                networks: Vec::new(),
+                peas: Vec::new(),
                 appimages: Vec::new(),
                 theme: ThemeSettings::default(),
             },

@@ -1,12 +1,62 @@
 [
   {
-    "envelope": {"action":"install_package","package":"virt-manager","setup":{"packages":[],"enable":["programs.virt-manager.enable","virtualisation.libvirtd.enable"],"groups":["libvirtd"]}},
+    "envelope": {
+      "action": "install_package",
+      "package": "virt-manager",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.virt-manager.enable",
+          "virtualisation.libvirtd.enable"
+        ],
+        "groups": [
+          "libvirtd"
+        ]
+      }
+    },
     "input": {
-      "action": {"action":"install_package","package":"virt-manager","message":null,"setup":{"packages":[],"enable":["programs.virt-manager.enable","virtualisation.libvirtd.enable"],"groups":["libvirtd"]}},
-      "candidates": [{"attribute":"virt-manager","name":"Virtual Machine Manager","description":"Virtual machine management","version":"5.0.0"}],
+      "action": {
+        "action": "install_package",
+        "package": "virt-manager",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.virt-manager.enable",
+            "virtualisation.libvirtd.enable"
+          ],
+          "groups": [
+            "libvirtd"
+          ]
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "virt-manager",
+          "name": "Virtual Machine Manager",
+          "description": "Virtual machine management",
+          "version": "5.0.0"
+        }
+      ],
       "installed": []
     },
-    "decision": {"decision":"install","value":{"package":"virt-manager","message":null,"setup":{"packages":[],"enable":["programs.virt-manager.enable","virtualisation.libvirtd.enable"],"groups":["libvirtd"]}}}
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "virt-manager",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.virt-manager.enable",
+            "virtualisation.libvirtd.enable"
+          ],
+          "groups": [
+            "libvirtd"
+          ]
+        }
+      }
+    }
   },
   {
     "envelope": {
@@ -385,6 +435,195 @@
     "decision": {
       "decision": "reject",
       "value": "model selected a package Peasy does not manage"
+    }
+  },
+  {
+    "envelope": {
+      "action": "inspect_network"
+    },
+    "input": {
+      "action": {
+        "action": "inspect_network"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "inspect_network"
+    }
+  },
+  {
+    "envelope": {
+      "action": "discover_peas"
+    },
+    "input": {
+      "action": {
+        "action": "discover_peas"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "discover_peas"
+    }
+  },
+  {
+    "envelope": {
+      "action": "use_pea",
+      "pea_id": "networking"
+    },
+    "input": {
+      "action": {
+        "action": "use_pea",
+        "id": "networking"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "use_pea",
+      "value": "networking"
+    }
+  },
+  {
+    "envelope": {
+      "action": "configure_network",
+      "network": {
+        "scope": "system",
+        "profiles": [
+          {
+            "id": "wired",
+            "interface": "enp1s0",
+            "kind": "ethernet",
+            "wifi_mode": null,
+            "ssid": null,
+            "ipv4": "manual",
+            "addresses": [
+              "192.168.10.2/24"
+            ],
+            "gateway": "192.168.10.1",
+            "dns": [
+              "1.1.1.1"
+            ],
+            "autoconnect": true
+          }
+        ],
+        "remove": [],
+        "activate": null,
+        "deactivate": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "configure_network",
+        "plan": {
+          "scope": "system",
+          "profiles": [
+            {
+              "id": "wired",
+              "interface": "enp1s0",
+              "kind": "ethernet",
+              "wifi_mode": null,
+              "ssid": null,
+              "ipv4": "manual",
+              "addresses": [
+                "192.168.10.2/24"
+              ],
+              "gateway": "192.168.10.1",
+              "dns": [
+                "1.1.1.1"
+              ],
+              "autoconnect": true
+            }
+          ],
+          "remove": [],
+          "activate": null,
+          "deactivate": null
+        }
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "configure_network",
+      "value": {
+        "scope": "system",
+        "profiles": [
+          {
+            "id": "wired",
+            "interface": "enp1s0",
+            "kind": "ethernet",
+            "wifi_mode": null,
+            "ssid": null,
+            "ipv4": "manual",
+            "addresses": [
+              "192.168.10.2/24"
+            ],
+            "gateway": "192.168.10.1",
+            "dns": [
+              "1.1.1.1"
+            ],
+            "autoconnect": true
+          }
+        ],
+        "remove": [],
+        "activate": null,
+        "deactivate": null
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "configure_network",
+      "network": {
+        "scope": "session",
+        "profiles": [],
+        "remove": [],
+        "activate": "12345678-1234-1234-1234-123456789abc",
+        "deactivate": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "configure_network",
+        "plan": {
+          "scope": "session",
+          "profiles": [],
+          "remove": [],
+          "activate": "12345678-1234-1234-1234-123456789abc",
+          "deactivate": null
+        }
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "configure_network",
+      "value": {
+        "scope": "session",
+        "profiles": [],
+        "remove": [],
+        "activate": "12345678-1234-1234-1234-123456789abc",
+        "deactivate": null
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "disable_pea",
+      "pea_id": "networking"
+    },
+    "input": {
+      "action": {
+        "action": "disable_pea",
+        "id": "networking"
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "disable_pea",
+      "value": "networking"
     }
   }
 ]

@@ -162,3 +162,9 @@ packages, the headless closure, Wasm imports, and the NixOS VM regressions.
 ## License
 
 MIT
+
+Networking requests use the [generic networking pea](peas/networking/README.md):
+Peasy discovers interfaces and connections, the AI proposes guarded profile or
+activation changes, and you review the effects. Compatible abilities can also be
+found in the official [pea catalogue](docs/pea-packages.md) and installed as
+immutable Nix data packages, with their revisions and hashes retained in system state.

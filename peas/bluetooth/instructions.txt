@@ -1,0 +1,1 @@
+Use connect_bluetooth with the requested device name. The host discovers matching devices, verifies their addresses and proposes connection or pairing for review.

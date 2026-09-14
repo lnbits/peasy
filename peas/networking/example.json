@@ -1,0 +1,34 @@
+{
+  "scope": "system",
+  "profiles": [
+    {
+      "id": "wireless",
+      "interface": "wlan0",
+      "kind": "wifi",
+      "wifi_mode": "ap",
+      "ssid": "Local ${notNix} Network",
+      "ipv4": "shared",
+      "addresses": [],
+      "gateway": null,
+      "dns": [],
+      "autoconnect": false
+    },
+    {
+      "id": "wired",
+      "interface": "eth0",
+      "kind": "ethernet",
+      "wifi_mode": null,
+      "ssid": null,
+      "ipv4": "auto",
+      "addresses": [],
+      "gateway": null,
+      "dns": [
+        "1.1.1.1"
+      ],
+      "autoconnect": true
+    }
+  ],
+  "remove": [],
+  "activate": "wireless",
+  "deactivate": null
+}

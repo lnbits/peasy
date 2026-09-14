@@ -1,3 +1,7 @@
+#[path = "../../../peas/networking/client.rs"]
+mod networking;
+mod pea;
+pub use networking::NetworkSnapshot;
 mod http;
 pub use peasy_core::cancellation::Cancellation;
 
@@ -42,8 +46,7 @@ use anyhow::{Context, Result, bail};
 use peasy_core::{AppearanceCapabilities, DesktopEnvironment as DesktopKind};
 use peasy_core::{
     DiffLine, EngineDecision, EngineInput, HyprlandDispatch, HyprlandSettingChange, IpcRequest,
-    IpcResponse, LOCAL_DATETIME_BYTES, MAX_ATTRIBUTE_BYTES, MAX_EVENT_TITLE_BYTES, MAX_QUERY_BYTES,
-    MAX_SSID_BYTES, ModelAction, ModelEnvelope, PackageCandidate, Proposal, ProposalChange,
+    IpcResponse, ModelAction, ModelEnvelope, PackageCandidate, Proposal, ProposalChange,
     RequestedVersion, ThemeSettings, ValidationError,
 };
 use peasy_engine_host::EngineHost;
@@ -581,10 +584,12 @@ impl OpenAi {
             "model": self.model,
             "store": false,
             "instructions": format!(
-                "{} {} {}",
+                "{} {} {} {} {}",
                 model_instructions(),
                 agent_capability_guide(),
-                system_configuration::instructions()
+                system_configuration::instructions(),
+                networking::instructions(),
+                pea::instructions()
             ),
             "input": boundary,
             "text": { "format": {
@@ -674,10 +679,12 @@ impl Ollama {
         let schema = model_schema();
         let schema_text = serde_json::to_string(&schema)?;
         let system = format!(
-            "{} {} {} Return only JSON matching this schema exactly: {}",
+            "{} {} {} {} {} Return only JSON matching this schema exactly: {}",
             model_instructions(),
             agent_capability_guide(),
             system_configuration::instructions(),
+            networking::instructions(),
+            pea::instructions(),
             schema_text
         );
         let body = json!({
@@ -733,7 +740,27 @@ impl ModelBackend {
         theme: &ThemeSettings,
         recent_package: Option<&PackageCandidate>,
     ) -> Result<ModelAction> {
-        let mut agent_feedback = None;
+        self.interpret_with_feedback(
+            user_request,
+            managed_configuration,
+            candidates,
+            installed,
+            theme,
+            recent_package,
+            None,
+        )
+    }
+    fn interpret_with_feedback(
+        &self,
+        user_request: &str,
+        managed_configuration: &str,
+        candidates: Option<&[PackageCandidate]>,
+        installed: Option<&[String]>,
+        theme: &ThemeSettings,
+        recent_package: Option<&PackageCandidate>,
+        context: Option<&str>,
+    ) -> Result<ModelAction> {
+        let mut agent_feedback = context.map(str::to_owned);
         for attempt in 0..2 {
             let result = match self {
                 Self::OpenAi(client) => client.interpret(
@@ -759,7 +786,8 @@ impl ModelBackend {
                 Ok(action) => return Ok(action),
                 Err(error) if attempt == 0 && error.downcast_ref::<ValidationError>().is_some() => {
                     agent_feedback = Some(format!(
-                        "Your previous proposed action was invalid: {error}. Re-evaluate the original request and return a complete valid action."
+                        "{} Your previous proposed action was invalid: {error}. Re-evaluate the original request and return a complete valid action.",
+                        context.unwrap_or("")
                     ));
                 }
                 Err(error) => return Err(error),
@@ -839,31 +867,7 @@ fn agent_capability_guide() -> &'static str {
 }
 
 fn model_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "setup": system_configuration::schema(),
-            "action": { "type": "string", "description": "Choose the capability that best fulfills the user's actual request.", "enum": ["search_package", "search_appimage", "check_package", "list_themes", "list_wifi", "hyprland_status", "install_package", "remove_package", "set_theme", "set_hyprland_setting", "hyprland_dispatch", "connect_wifi", "connect_bluetooth", "create_calendar_event", "explain", "cancel"] },
-            "query": { "type": ["string", "null"], "description": "Concise package, application, project, device, or upstream search name; never the whole user sentence.", "maxLength": MAX_QUERY_BYTES },
-            "package": { "type": ["string", "null"], "description": "Exact package attribute from package_candidates or peasy_installed_packages.", "maxLength": MAX_ATTRIBUTE_BYTES },
-            "package_version": { "type": ["string", "null"], "maxLength": 64 },
-            "repository": { "type": ["string", "null"], "description": "Exact GitHub owner/repository for an upstream AppImage when known.", "maxLength": 201 },
-            "message": { "type": ["string", "null"], "description": "Concise user-facing explanation when useful.", "maxLength": 400 },
-            "theme_color": { "type": ["string", "null"], "enum": ["blue", "teal", "green", "yellow", "orange", "red", "pink", "purple", "slate", null] },
-            "theme_mode": { "type": ["string", "null"], "enum": ["system", "light", "dark", null] },
-            "ssid": { "type": ["string", "null"], "maxLength": MAX_SSID_BYTES },
-            "device": { "type": ["string", "null"], "maxLength": MAX_QUERY_BYTES },
-            "event_title": { "type": ["string", "null"], "description": "Concise calendar event title inferred from the request.", "maxLength": MAX_EVENT_TITLE_BYTES },
-            "event_start": { "type": ["string", "null"], "description": "Local date and time in exactly YYYY-MM-DDTHH:MM:SS format, resolved relative to current_local_time.", "minLength": LOCAL_DATETIME_BYTES, "maxLength": LOCAL_DATETIME_BYTES },
-            "duration_minutes": { "type": ["integer", "null"], "minimum": 5, "maximum": 1440 },
-            "hyprland_setting": { "type": ["string", "null"], "enum": ["gaps_inner", "gaps_outer", "border_size", "corner_radius", "animations", "blur", "active_opacity", "inactive_opacity", "natural_scroll", "layout", null] },
-            "hyprland_value": { "type": ["string", "null"], "maxLength": 32 },
-            "hyprland_dispatch": { "type": ["string", "null"], "enum": ["switch_workspace", "move_window_to_workspace", "focus_direction", "toggle_floating", "toggle_fullscreen", null] },
-            "hyprland_argument": { "type": ["string", "null"], "maxLength": 32 }
-        },
-        "required": ["action", "query", "package", "package_version", "repository", "message", "theme_color", "theme_mode", "ssid", "device", "event_title", "event_start", "duration_minutes", "hyprland_setting", "hyprland_value", "hyprland_dispatch", "hyprland_argument", "setup"]
-    })
+    peasy_core::model_response_schema()
 }
 
 fn human_name(value: &str) -> String {
@@ -932,6 +936,10 @@ pub struct LocalProposal {
 
 #[derive(Clone)]
 pub enum LocalAction {
+    Network {
+        plan: peasy_core::NetworkPlan,
+        snapshot: NetworkSnapshot,
+    },
     Wifi {
         ssid: String,
         password: Option<String>,
@@ -953,6 +961,27 @@ pub enum LocalAction {
         dispatch: HyprlandDispatch,
         argument: Option<String>,
     },
+}
+
+impl LocalProposal {
+    pub fn password_required(&self) -> bool {
+        match &self.action {
+            LocalAction::Wifi {
+                password,
+                password_required,
+                ..
+            } => password.is_none() && *password_required,
+            LocalAction::Network { plan, snapshot } => {
+                plan.password_required()
+                    || plan.activate.as_ref().is_some_and(|id| {
+                        snapshot.connections.iter().any(|c| {
+                            &c.uuid == id && matches!(c.kind.as_str(), "802-11-wireless" | "wifi")
+                        })
+                    })
+            }
+            _ => false,
+        }
+    }
 }
 
 pub struct LocalResult {
@@ -1006,6 +1035,10 @@ pub struct Choice {
     pub candidates: Vec<ChoiceItem>,
 }
 
+enum FollowUp {
+    Pea { request: String, id: String },
+}
+
 pub struct PeasyClient {
     ipc: IpcClient,
     engine: EngineHost,
@@ -1013,10 +1046,15 @@ pub struct PeasyClient {
     github: GitHubDiscovery,
     tools: LocalTools,
     recent_package: Mutex<Option<PackageCandidate>>,
+    pea_resume: Mutex<std::collections::HashMap<String, FollowUp>>,
 }
 
 impl PeasyClient {
     pub fn cancel_proposal(&self, proposal: &str) -> Result<bool> {
+        self.pea_resume
+            .lock()
+            .expect("pea resume mutex")
+            .remove(proposal);
         match self.ipc.request(&IpcRequest::Cancel {
             proposal: proposal.into(),
         })? {
@@ -1061,6 +1099,7 @@ impl PeasyClient {
                 nix: tool_path("PEASY_NIX", "/run/current-system/sw/bin/nix"),
             },
             recent_package: Mutex::new(None),
+            pea_resume: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -1072,6 +1111,15 @@ impl PeasyClient {
     where
         F: FnMut(ResolveStage),
     {
+        self.resolve_with_pea(request, None, &mut progress)
+    }
+
+    fn resolve_with_pea(
+        &self,
+        request: &str,
+        pea_id: Option<&str>,
+        progress: &mut impl FnMut(ResolveStage),
+    ) -> Result<Resolution> {
         progress(ResolveStage::Understanding);
         let (model_request, wifi_password) = redact_wifi_password(request)?;
         let installed = match self.ipc.request(&IpcRequest::GetPackages)? {
@@ -1096,14 +1144,67 @@ impl PeasyClient {
             .lock()
             .expect("recent package mutex poisoned")
             .clone();
-        let action = self.model.interpret(
-            &model_request,
-            &managed_configuration,
-            None,
-            Some(&installed),
-            &theme,
-            recent_package.as_ref(),
-        )?;
+        let state = peasy_core::parse_packages_module(&managed_configuration).unwrap_or_default();
+        let enabled = self.enabled_peas(&state)?;
+        let available = json!({"available_peas":enabled.iter().map(|p| json!({"id":p.id,"capabilities":p.capabilities})).collect::<Vec<_>>()});
+        let mut action = if let Some(id) = pea_id {
+            ModelAction::UsePea { id: id.into() }
+        } else {
+            self.model.interpret_with_feedback(
+                &model_request,
+                &managed_configuration,
+                None,
+                Some(&installed),
+                &theme,
+                recent_package.as_ref(),
+                Some(&available.to_string()),
+            )?
+        };
+        match &action {
+            ModelAction::DisablePea { id } => {
+                let pin = state
+                    .peas
+                    .iter()
+                    .find(|p| &p.id == id)
+                    .context("Peasy does not manage that pea")?;
+                return match self.ipc.request(&IpcRequest::ProposePea {
+                    pin: pin.clone(),
+                    enable: false,
+                })? {
+                    IpcResponse::Proposal { proposal } => Ok(Resolution::Proposal(proposal)),
+                    _ => bail!("unexpected disable-pea response"),
+                };
+            }
+            ModelAction::DiscoverPeas => {
+                return self.discover_pea(
+                    &model_request,
+                    &managed_configuration,
+                    &installed,
+                    &theme,
+                    None,
+                );
+            }
+            ModelAction::UsePea { id } => {
+                if let Some(manifest) = enabled.iter().find(|p| &p.id == id) {
+                    action = self.interpret_pea(
+                        manifest,
+                        &model_request,
+                        &managed_configuration,
+                        &installed,
+                        &theme,
+                    )?;
+                } else {
+                    return self.discover_pea(
+                        &model_request,
+                        &managed_configuration,
+                        &installed,
+                        &theme,
+                        Some(id),
+                    );
+                }
+            }
+            _ => {}
+        }
         match self.engine.resolve(&EngineInput {
             action,
             candidates: recent_package.into_iter().collect(),
@@ -1116,7 +1217,7 @@ impl PeasyClient {
                 &installed,
                 &theme,
                 &managed_configuration,
-                &mut progress,
+                progress,
             ),
             EngineDecision::SearchAppImage {
                 query,
@@ -1130,7 +1231,38 @@ impl PeasyClient {
                 progress(ResolveStage::SearchingPackages);
                 self.check_package(&query)
             }
+            EngineDecision::DiscoverPeas
+            | EngineDecision::UsePea(_)
+            | EngineDecision::DisablePea(_) => {
+                bail!("pea discovery must pass the native catalogue gate")
+            }
             EngineDecision::ListThemes => Ok(Resolution::Explain(theme_choices())),
+            EngineDecision::InspectNetwork => {
+                let snapshot = self.network_snapshot()?;
+                let feedback = serde_json::to_string(
+                    &json!({"network_snapshot": snapshot, "instruction": "Answer the original request using these resources. Return explain or configure_network; do not repeat discovery."}),
+                )?;
+                let action = self.model.interpret_with_feedback(
+                    &model_request,
+                    &managed_configuration,
+                    None,
+                    Some(&installed),
+                    &theme,
+                    None,
+                    Some(&feedback),
+                )?;
+                match self.engine.resolve(&EngineInput {
+                    action,
+                    candidates: vec![],
+                    installed,
+                })? {
+                    EngineDecision::ConfigureNetwork(plan) => self.propose_network(plan),
+                    EngineDecision::Explain(message) => Ok(Resolution::Explain(message)),
+                    EngineDecision::Cancel => Ok(Resolution::Cancel),
+                    _ => bail!("network discovery requires a network plan or explanation"),
+                }
+            }
+            EngineDecision::ConfigureNetwork(plan) => self.propose_network(plan),
             EngineDecision::ListWifi => self.list_wifi(),
             EngineDecision::HyprlandStatus => self.hyprland_status(),
             EngineDecision::Install { package, setup, .. } => {
@@ -1271,6 +1403,9 @@ impl PeasyClient {
             bail!("invalid Wi-Fi password");
         }
         match &proposal.action {
+            LocalAction::Network { plan, snapshot } => {
+                self.apply_network(plan, snapshot, supplied_password)
+            }
             LocalAction::Wifi {
                 ssid,
                 password,
@@ -1650,7 +1785,7 @@ mod tests {
         assert!(validate_ollama_url("http://user@127.0.0.1:11434").is_err());
     }
 
-    fn serve_json_once(response: Value) -> (String, mpsc::Receiver<(String, Value)>) {
+    pub(crate) fn serve_json_once(response: Value) -> (String, mpsc::Receiver<(String, Value)>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (tx, rx) = mpsc::channel();

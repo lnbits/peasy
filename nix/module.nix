@@ -62,6 +62,38 @@ let
 in
 {
   options.services.peasy = {
+    peas.allowOfficial = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Allow discovery and reviewed installation of data-only peas from lnbits/peasy. Pea revisions and hashes are pinned in managed state.";
+    };
+    peas.allowedPermissions = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.enum [
+          "network.read"
+          "network.session"
+          "network.system"
+          "packages"
+          "appearance"
+          "wifi"
+          "bluetooth"
+          "calendar"
+          "hyprland"
+        ]
+      );
+      default = [
+        "network.read"
+        "network.session"
+        "network.system"
+        "packages"
+        "appearance"
+        "wifi"
+        "bluetooth"
+        "calendar"
+        "hyprland"
+      ];
+      description = "Maximum host capabilities official pea packages may request. Every mutation still uses the normal review and authorization flow.";
+    };
     enable = lib.mkEnableOption "Peasy natural-language NixOS and desktop assistant";
 
     desktop.enable = lib.mkOption {
@@ -206,6 +238,26 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    environment.etc."peasy/pea-policy.json".text = builtins.toJSON {
+      allow_official = cfg.peas.allowOfficial;
+      allowed_permissions = cfg.peas.allowedPermissions;
+    };
+    # Reload declarative keyfiles after /etc changes, including removals and rollback.
+    # Existing active connections keep their settings until explicitly reactivated.
+    systemd.services.peasy-network-profiles = lib.mkIf config.networking.networkmanager.enable {
+      wantedBy = [ "multi-user.target" ];
+      after = [ "NetworkManager.service" ];
+      requires = [ "NetworkManager.service" ];
+      restartTriggers = lib.optional (
+        config.environment.etc ? "peasy/state.json"
+      ) config.environment.etc."peasy/state.json".source;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${config.networking.networkmanager.package}/bin/nmcli connection reload";
+      };
+    };
+
     # Garcon follows application-directory inodes into the immutable store;
     # replacing /run/current-system therefore does not update XFCE's menus.
     # Observe that switch in the existing menu process, with no polling or

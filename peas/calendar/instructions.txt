@@ -1,0 +1,1 @@
+Reason from the requested event and current_local_time to a title, exact local start and bounded duration. Return create_calendar_event. The host creates a private calendar file and opens the calendar for import; do not claim the event has been saved.

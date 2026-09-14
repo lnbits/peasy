@@ -15,6 +15,7 @@
   nix,
   polkit,
   cacert,
+  python3,
   withGui ? true,
 }:
 
@@ -30,6 +31,7 @@ rustPlatform.buildRustPackage {
         ../Cargo.toml
         ../crates
         ../peas
+        ../scripts
         ../flake.lock
         ../flake.nix
         ../nix
@@ -103,6 +105,8 @@ rustPlatform.buildRustPackage {
   # The ignored local integration check needs an already-built Wasm guest.
   # Package builds always provide it and run the full cross-pea contract corpus.
   preCheck = ''
+    cargo run --locked -p peasy-core --example pea_catalogue -- --check
+    ${python3}/bin/python scripts/pea-catalogue.py --check
     export PEASY_TEST_NIX="${nix}/bin/nix-instantiate"
     export PEASY_TEST_NIX_CLI="${nix}/bin/nix"
     export PEASY_TEST_SYSTEM="${stdenv.hostPlatform.system}"
@@ -128,7 +132,7 @@ rustPlatform.buildRustPackage {
       install -Dm644 assets/gnome-shell-extension/extension.js "$extension/extension.js"
       install -Dm644 assets/gnome-shell-extension/stylesheet.css "$extension/stylesheet.css"
       mkdir -p "$out/share/peasy/source"
-      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peas nix wit assets \
+      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peas nix wit assets scripts \
         "$out/share/peasy/source/"
     ''}
     ${
@@ -153,6 +157,7 @@ rustPlatform.buildRustPackage {
             --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
             --set-default PEASY_NIX "${nix}/bin/nix" \
             --set-default PEASY_DATE "${coreutils}/bin/date" \
+            --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \
             --set-default PEASY_VARIANT "core" \
             --set-default PEASY_NIX_SYSTEM "${stdenv.hostPlatform.system}"
         ''

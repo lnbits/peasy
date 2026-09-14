@@ -1,0 +1,1 @@
+Compose the supporting packages, reviewed Boolean NixOS options and caller groups needed by the selected application using install_package.setup. No application-name recipes. Only the host setting catalogue is available; unsupported settings require a host update.

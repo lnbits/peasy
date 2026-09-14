@@ -27,6 +27,12 @@
             ps.pyyaml
           ]);
         }
+        // builtins.listToAttrs (
+          map (entry: {
+            name = "pea-${entry.package.id}";
+            value = pkgs.callPackage ./nix/pea.nix { id = entry.package.id; };
+          }) (builtins.fromJSON (builtins.readFile ./peas/catalogue.json)).peas
+        )
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           iso-gnome = self.nixosConfigurations.peasy-iso-gnome.config.system.build.isoImage;
           iso-plasma = self.nixosConfigurations.peasy-iso-plasma.config.system.build.isoImage;
@@ -125,6 +131,10 @@
                   ${./flake.nix} \
                   ${./nix/module.nix} \
                   ${./nix/package.nix} \
+                  ${./nix/pea.nix} \
+                  ${./nix/tests/networking.nix} \
+                  ${./nix/tests/networking-eval.nix} \
+                  ${./nix/tests/networking-vm.nix} \
                   ${./nix/package-core.nix} \
                   ${./nix/iso-common.nix} \
                   ${./nix/iso-appearance.nix} \
@@ -160,6 +170,15 @@
             touch $out
           '';
           sandbox = sandboxTest;
+          networking-vm = import ./nix/tests/networking-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
+          };
+          networking = import ./nix/tests/networking.nix {
+            inherit pkgs;
+            package = corePackage;
+          };
           system-configuration = import ./nix/tests/system-configuration.nix {
             inherit pkgs;
             package = corePackage;

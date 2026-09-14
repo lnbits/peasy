@@ -92,6 +92,8 @@ mod tests {
         let active = PackageState {
             packages: vec!["vlc".into(), "hello".into()],
             setups: Vec::new(),
+            networks: Vec::new(),
+            peas: Vec::new(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -111,6 +113,8 @@ mod tests {
         let original = PackageState {
             packages: vec!["hello".into()],
             setups: Vec::new(),
+            networks: Vec::new(),
+            peas: Vec::new(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -122,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_reconciliation_restores_and_withdraws_setup_contributions() {
+    fn generation_reconciliation_restores_and_withdraws_all_domain_state() {
         let temporary = tempfile::tempdir().unwrap();
         let active = temporary.path().join("active.json");
         let managed = temporary.path().join("managed.nix");
@@ -130,7 +134,23 @@ mod tests {
             "../../../peas/system_configuration/example.json"
         ))
         .unwrap();
-        let configured = PackageState::default().with_setup(setup).unwrap();
+        let network: peasy_core::NetworkPlan =
+            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+        let pin = peasy_core::pea::PeaPin {
+            id: "networking".into(),
+            version: "1.0.0".into(),
+            revision: "a".repeat(40),
+            hash: "b".repeat(64),
+            host_api: 1,
+            permissions: vec!["network.read".into()],
+        };
+        let configured = PackageState::default()
+            .with_setup(setup)
+            .unwrap()
+            .with_network(&network)
+            .unwrap()
+            .with_pea(&pin, true)
+            .unwrap();
         fs::write(&active, serde_json::to_vec(&configured).unwrap()).unwrap();
         restore_managed_from_generation(&active, &managed).unwrap();
         assert_eq!(load_managed(&managed).unwrap(), configured);

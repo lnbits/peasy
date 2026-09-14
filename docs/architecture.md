@@ -3,6 +3,10 @@
 Start with the [visual workflow and AI access map](workflow-map.md) for a
 diagram-led overview of the trust boundaries.
 
+Domain instructions can also be loaded from compatible, revision-and-hash-pinned
+[data-only pea packages](pea-packages.md). Packages compose the installed host
+API; they do not dynamically extend native execution authority.
+
 Ability-specific implementations live in [`peas/`](../peas/README.md). Each pea
 groups its types, client handlers and (where needed) system proposals or pure
 Wasm policy. Existing crates compile the appropriate layer; provider access,
@@ -59,7 +63,7 @@ host for the same SNI tray used by Plasma and other compatible desktops.
 The separate `peasy-core` derivation builds and installs only the CLI,
 `peasy-system`, and `peasy-engine.wasm`. Its source and build exclude the UI and
 tray crates as well as all graphical assets, and its runtime wrapper references
-only Nix and coreutils.
+Nix, coreutils and the NetworkManager command-line client.
 
 `services.peasy.desktop.enable = false` selects `peasy-core`, defaults the tray
 off, omits graphical user units and autostart data, and does not enable
@@ -132,10 +136,12 @@ request enum contains only:
 - `ProposeAppImageInstall`
 - `ProposeRemove`
 - `ProposeTheme`
+- `ProposeNetwork` (closed persistent NetworkManager profiles)
+- `ProposePea` (official immutable data-package pins)
 - `Apply`
 - `Status`
 
-There is no stringly command, path, networking, Bluetooth, calendar, or
+There is no stringly command, arbitrary path, arbitrary networking property, Bluetooth, calendar, or
 credential method. Apply uses a random, short-lived proposal token bound to the
 peer UID that requested it. The pending record contains the exact reviewed
 change and base state; stale proposals are rejected. Search and proposal strings
@@ -309,3 +315,15 @@ appearance state. The exporter rewrites Peasy's original checkout/store
 path to the bundled `/etc/nixos/peasy` location. Provider credentials and API
 keys remain outside the export; hardware configuration is included for faithful
 backup but must be regenerated when restoring to different hardware.
+
+## Generic networking resources
+
+The [networking pea](../peas/networking/README.md) adds bounded, nonsecret
+NetworkManager device, connection and IPv4 route discovery. The AI uses a second
+turn to reason over these resources and return a closed network plan. Native code
+validates capabilities and identity and renders every effect for review. Persistent
+profiles and interface-scoped sharing ports follow the system transaction; live
+activation/deactivation uses NetworkManager authorization and a reviewed snapshot.
+Persistent plans can hand off to a separate local activation review after a rebuild.
+Passwords remain local and outside system state. Live connectivity does not inherit
+NixOS rollback guarantees; profile files and pea pins do.

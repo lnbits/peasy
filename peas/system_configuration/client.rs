@@ -2,25 +2,12 @@
 use crate::{PeasyClient, Resolution};
 use anyhow::{Result, bail};
 use peasy_core::{IpcRequest, IpcResponse, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS, SystemSetup};
-use serde_json::{Value, json};
 
 pub(super) fn instructions() -> String {
     format!(
         "System-configuration pea: an installation must include the NixOS integration needed to make the application usable, not just its executable. For install_package, set setup to null for a standalone application, or an object containing packages (up to 8 supporting Nixpkgs attributes), enable (reviewed boolean NixOS options to enable), and groups (access for the requesting user). Infer requirements from the user's goal and your NixOS knowledge, not from keyword recipes. The primary package must still be an exact search candidate. Supporting attributes are separately checked against pinned Nixpkgs by the daemon; do not guess uncertain names. Only these enable options exist: {:?}. Group/required-option pairs: {:?}. NixOS modules supply their own dependencies: do not add packages already provided by an enabled module unnecessarily. libvirtd enables the local VM management service; programs.virt-manager enables desktop integration; libvirtd group grants powerful VM management access. Printing enables local CUPS, sane enables scanners, bluetooth enables Bluetooth support. Include only necessary settings, never expose network listeners or broaden access unrelated to the request. No arbitrary configuration keys, shell, file contents or account names are accepted. An existing setup is replaced in full, so retain its still-needed contributions when updating it. Review and administrator approval are mandatory. Group changes require logging out and back in. If the catalogue cannot express required setup, explain the limitation instead of claiming the application will work. Removal withdraws Peasy's setup contributions only; administrator settings and VM/user data are retained.",
         SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS
     )
-}
-
-pub(super) fn schema() -> Value {
-    json!({
-        "type": ["object", "null"], "additionalProperties": false,
-        "properties": {
-            "packages": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": peasy_core::MAX_ATTRIBUTE_BYTES}},
-            "enable": {"type": "array", "maxItems": 8, "items": {"type": "string", "enum": SYSTEM_ENABLE_OPTIONS}},
-            "groups": {"type": "array", "maxItems": 4, "items": {"type": "string", "enum": SYSTEM_GROUPS.iter().map(|(group, _)| *group).collect::<std::collections::BTreeSet<_>>()}}
-        },
-        "required": ["packages", "enable", "groups"]
-    })
 }
 
 impl PeasyClient {

@@ -303,3 +303,18 @@ enums cross the progress IPC boundary; subprocess text does not become a command
 or a progress instruction. Authentication and activation stages come directly
 from their corresponding daemon operations. Failures retain the request and
 require a new proposal rather than reusing a consumed authorization token.
+
+## Networking and downloadable peas
+
+The networking host API accepts closed profile values and discovered connection
+identities, not a NetworkManager property dictionary or Nix source. Network snapshots
+contain no secrets. Live plans recheck reviewed resources; system plans use existing
+administrator authorization and generation transactions. Persistent sharing grants
+DNS/DHCP firewall ports only on its interface. Activation and recovery can interrupt
+connectivity; their scope and limits are described in the networking pea.
+
+Official downloadable peas are bounded data files. Their schemas must match the
+installed host API and their returned actions must fit declared permissions. Nix
+verifies pinned hashes; the fixed official-repository policy determines publisher
+trust. No remote Rust, shell, Nix module or Wasm guest executes. Administrator policy
+is checked at proposal, apply and loading. See [pea packages](pea-packages.md).

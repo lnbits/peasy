@@ -49,6 +49,7 @@ enum ResolveMessage {
 }
 
 enum ApplyMessage {
+    Resumed(Box<Resolution>),
     Progress(OperationStage),
     Finished(std::result::Result<peasy_core::ApplyResult, String>),
 }
@@ -961,6 +962,7 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
         state.closing_apply.set(false);
         write_panel_status(&format!("…applying {}", proposal.title));
         let proposal = proposal.clone();
+        let resume_task = state.tasks.borrow_mut().start();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let progress_tx = tx.clone();
@@ -968,7 +970,24 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
                 let _ = progress_tx.send(ApplyMessage::Progress(stage));
             };
             let result = if let Some(client) = client {
-                client.apply_with_progress(&proposal, progress)
+                match client.apply_with_progress(&proposal, progress) {
+                    Ok(result) if result.activated => {
+                        match resume_task
+                            .work
+                            .scope(|| client.resume_after_apply(&proposal))
+                        {
+                            Ok(Some(next)) => {
+                                let _ = tx.send(ApplyMessage::Resumed(Box::new(next)));
+                                return;
+                            }
+                            Ok(None) => Ok(result),
+                            Err(error) => Err(anyhow::anyhow!(
+                                "Change activated, but resuming the request failed: {error}"
+                            )),
+                        }
+                    }
+                    other => other,
+                }
             } else {
                 ipc.request_with_progress(
                     &IpcRequest::ApplyWithProgress {
@@ -991,12 +1010,24 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
             let result = rx.try_recv();
             if matches!(
                 result,
-                Ok(ApplyMessage::Finished(_)) | Err(mpsc::TryRecvError::Disconnected)
+                Ok(ApplyMessage::Finished(_))
+                    | Ok(ApplyMessage::Resumed(_))
+                    | Err(mpsc::TryRecvError::Disconnected)
             ) {
                 state.applying.set(false);
                 state.pending.borrow_mut().take();
             }
             match result {
+                Ok(ApplyMessage::Resumed(next)) => {
+                    if resume_task.view.is_cancelled() {
+                        if let Resolution::Proposal(p) = *next {
+                            discard_token(&state, p.id);
+                        }
+                    } else {
+                        show_resolution(&window, state.clone(), *next);
+                    }
+                    glib::ControlFlow::Break
+                }
                 Ok(ApplyMessage::Finished(Ok(result))) => {
                     let message = if result.activated {
                         format!(
@@ -1102,14 +1133,7 @@ fn show_local_proposal(window: &adw::ApplicationWindow, state: AppState, proposa
     let window_apply = window.clone();
     apply.connect_clicked(move |button| {
         button.set_sensitive(false);
-        if matches!(
-            &proposal.action,
-            LocalAction::Wifi {
-                password: None,
-                password_required: true,
-                ..
-            }
-        ) {
+        if proposal.password_required() {
             show_wifi_password(&window_apply, state.clone(), proposal.clone());
         } else {
             apply_local(
@@ -1175,6 +1199,7 @@ fn apply_local(
         return;
     };
     status.set_text(match &proposal.action {
+        LocalAction::Network { .. } => "Changing network connections…",
         LocalAction::Wifi { .. } => "…connecting to Wi-Fi",
         LocalAction::Bluetooth { .. } => "…connecting Bluetooth device",
         LocalAction::Calendar { .. } => "…opening calendar event",
@@ -1298,6 +1323,8 @@ fn review_again(window: &adw::ApplicationWindow, state: AppState) {
                 package: setup.package,
             },
         },
+        Some(ProposalChange::Pea { pin, enable }) => IpcRequest::ProposePea { pin, enable },
+        Some(ProposalChange::Network { plan }) => IpcRequest::ProposeNetwork { plan },
         Some(ProposalChange::Theme { theme }) => IpcRequest::ProposeTheme { theme },
         Some(ProposalChange::AppImage { operation, package }) => match operation {
             peasy_core::PackageOperation::Install => IpcRequest::ProposeAppImageInstall { package },

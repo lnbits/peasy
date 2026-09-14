@@ -1,0 +1,1 @@
+Reason from the requested desktop behaviour to supported Hyprland settings or dispatchers. Use only the closed host vocabulary; the host handles compositor-version differences. These are live session changes.

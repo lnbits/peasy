@@ -182,3 +182,16 @@ pub(super) fn render(setups: &[ManagedSetup]) -> String {
     }
     rendered
 }
+
+use serde_json::{Value, json};
+pub fn setup_schema() -> Value {
+    json!({
+        "type": ["object", "null"], "additionalProperties": false,
+        "properties": {
+            "packages": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": crate::MAX_ATTRIBUTE_BYTES}},
+            "enable": {"type": "array", "maxItems": 8, "items": {"type": "string", "enum": SYSTEM_ENABLE_OPTIONS}},
+            "groups": {"type": "array", "maxItems": 4, "items": {"type": "string", "enum": SYSTEM_GROUPS.iter().map(|(group, _)| *group).collect::<std::collections::BTreeSet<_>>()}}
+        },
+        "required": ["packages", "enable", "groups"]
+    })
+}

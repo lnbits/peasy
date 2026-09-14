@@ -39,6 +39,8 @@ struct Args {
     pkcheck: Option<PathBuf>,
     #[arg(long, default_value = "/etc/peasy/appimage-policy.json")]
     appimage_policy: PathBuf,
+    #[arg(long, default_value = "/etc/peasy/pea-policy.json")]
+    pea_policy: PathBuf,
     #[arg(long)]
     nixpkgs: Option<PathBuf>,
     #[arg(long)]
@@ -57,6 +59,8 @@ struct Args {
     render_test_appimage: bool,
     #[arg(long, hide = true)]
     render_test_setup: bool,
+    #[arg(long, hide = true)]
+    render_test_network: bool,
     #[arg(long, hide = true)]
     activate: bool,
     #[arg(long, hide = true)]
@@ -83,6 +87,17 @@ fn main() -> Result<()> {
     if args.self_test_sandbox {
         return sandbox_self_test();
     }
+    if args.render_test_network {
+        let plan: peasy_core::NetworkPlan =
+            serde_json::from_str(include_str!("../../../peas/networking/example.json"))?;
+        print!(
+            "{}",
+            peasy_core::render_packages_module(
+                &peasy_core::PackageState::default().with_network(&plan)?
+            )?
+        );
+        return Ok(());
+    }
     if args.render_test_setup {
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
             "../../../peas/system_configuration/example.json"
@@ -95,6 +110,8 @@ fn main() -> Result<()> {
         let state = peasy_core::PackageState {
             packages: vec!["hello".into()],
             setups: Vec::new(),
+            networks: Vec::new(),
+            peas: Vec::new(),
             appimages: Vec::new(),
             theme: peasy_core::ThemeSettings {
                 accent_color: Some(peasy_core::AccentColor::Blue),
@@ -108,6 +125,8 @@ fn main() -> Result<()> {
         let state = peasy_core::PackageState {
             packages: Vec::new(),
             setups: Vec::new(),
+            networks: Vec::new(),
+            peas: Vec::new(),
             appimages: vec![peasy_core::AppImagePackage {
                 id: "appimage.example.nostr-chat".into(),
                 display_name: "Nostr ${builtins.toString 7} Chat".into(),
@@ -149,6 +168,8 @@ fn main() -> Result<()> {
         identity: args.identity,
         active_system: args.active_system,
         appimage_policy: args.appimage_policy,
+        pea_policy: args.pea_policy,
+        network_profiles_dir: "/etc/NetworkManager/system-connections".into(),
         runtime_dir: args.runtime_dir,
         nix: args.nix.context("--nix is required")?,
         systemctl: args.systemctl.context("--systemctl is required")?,
