@@ -6,6 +6,34 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class PullRequestWorkflow(unittest.TestCase):
+    def test_pr_checks_are_automatic_read_only_and_cover_rust_and_nix(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertIn('pull_request', workflow['on'])
+        self.assertNotIn('pull_request_target', workflow['on'])
+        self.assertEqual(workflow['on']['push']['branches'], ['main'])
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        self.assertNotIn('secrets.', str(workflow))
+        commands = []
+        for job in workflow['jobs'].values():
+            for step in job['steps']:
+                commands.append(step.get('run', ''))
+                if 'uses' in step:
+                    self.assertRegex(step['uses'], r'^[\w./-]+@[0-9a-f]{40}$')
+                if step.get('uses', '').startswith('actions/checkout@'):
+                    self.assertEqual(step['with']['persist-credentials'], 'false')
+        self.assertIn('nix develop --command bash scripts/check-rust.sh', commands)
+        nix_checks = '\n'.join(commands)
+        self.assertIn('nix flake check --no-build', nix_checks)
+        self.assertIn('nix eval --json .#checks.x86_64-linux --apply builtins.attrNames', nix_checks)
+        self.assertIn('".#checks.x86_64-linux.$check" || check_status=1', nix_checks)
+        self.assertIn('exit "$check_status"', nix_checks)
+        checks = (ROOT / 'scripts/check-rust.sh').read_text()
+        for command in ['cargo test --locked --workspace', 'cargo clippy --locked --workspace --all-targets',
+                        '--include-ignored', 'pea_catalogue -- --check', 'scripts/pea-catalogue.py --check']:
+            self.assertIn(command, checks)
+
+
 class ReleaseWorkflow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

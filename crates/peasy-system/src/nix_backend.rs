@@ -39,6 +39,7 @@ pub struct BackendConfig {
     pub active_system: PathBuf,
     pub appimage_policy: PathBuf,
     pub pea_policy: PathBuf,
+    pub pea_fetch_output: PathBuf,
     pub network_profiles_dir: PathBuf,
     pub runtime_dir: PathBuf,
     pub nix: PathBuf,
@@ -85,6 +86,7 @@ pub struct NixBackend {
 
     apply_lock: Mutex<()>,
     evaluation_lock: Mutex<()>,
+    pea_fetch_lock: Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -133,6 +135,7 @@ impl NixBackend {
 
             apply_lock: Mutex::new(()),
             evaluation_lock: Mutex::new(()),
+            pea_fetch_lock: Mutex::new(()),
         })
     }
 
@@ -1055,6 +1058,7 @@ mod tests {
             active_system: runtime_dir.join("active-system"),
             appimage_policy: runtime_dir.join("appimage-policy.json"),
             pea_policy: runtime_dir.join("pea-policy.json"),
+            pea_fetch_output: runtime_dir.join("fetched-pea.json"),
             network_profiles_dir: runtime_dir.join("network-profiles"),
             runtime_dir,
             nix: "/trusted/nix".into(),
@@ -1250,7 +1254,7 @@ mod tests {
         use peasy_core::pea::{PeaPin, PeaPolicy};
         let temp = tempfile::tempdir().unwrap();
         let runner = Arc::new(MockRunner {
-            outputs: Mutex::new(VecDeque::from([output(1, "", "hash mismatch")])),
+            outputs: Mutex::new(VecDeque::from([output(0, "", ""), output(0, "", "")])),
             calls: Mutex::new(vec![]),
         });
         let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
@@ -1273,11 +1277,32 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        assert!(backend.preview_pea(pin.clone(), true).is_err());
+        fs::write(&backend.config.pea_fetch_output, b"tampered artifact").unwrap();
+        assert!(
+            backend
+                .preview_pea(pin.clone(), true)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("reviewed hash")
+        );
         assert_eq!(backend.current_state().unwrap(), PackageState::default());
         let calls = runner.calls.lock().unwrap();
-        assert!(calls[0].iter().any(|arg| arg == "--expected-hash"));
-        assert_eq!(calls[0].last().unwrap(), &OsString::from(pin.url()));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0],
+            vec![
+                OsString::from("stop"),
+                OsString::from("peasy-pea-fetch.service")
+            ]
+        );
+        assert_eq!(
+            calls[1],
+            vec![
+                OsString::from("start"),
+                OsString::from("peasy-pea-fetch.service")
+            ]
+        );
     }
 
     #[test]

@@ -879,6 +879,10 @@ pub fn parse_packages_module(source: &str) -> Result<PackageState, ValidationErr
     })?;
     state.normalize()?;
     if render_packages_module(&state)? != source
+        && (state.peas.is_empty()
+            || render_packages_module(&state)?
+                .replace(&pea::render(&state.peas), &pea::legacy_render(&state.peas))
+                != source)
         && (!state.setups.is_empty() || render_packages_module_version(&state, true)? != source)
     {
         return Err(ValidationError::InvalidRequest(

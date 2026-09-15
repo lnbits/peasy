@@ -77,6 +77,10 @@
         {
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
+            PEASY_TEST_NIX = "${pkgs.nix}/bin/nix-instantiate";
+            PEASY_TEST_NIX_CLI = "${pkgs.nix}/bin/nix";
+            PEASY_TEST_NIXPKGS = "${pkgs.path}";
+            PEASY_TEST_SYSTEM = system;
             packages = with pkgs; [
               cargo
               clippy
@@ -135,6 +139,7 @@
                   ${./nix/tests/networking.nix} \
                   ${./nix/tests/networking-eval.nix} \
                   ${./nix/tests/networking-vm.nix} \
+                  ${./nix/tests/pea-fetch-vm.nix} \
                   ${./nix/package-core.nix} \
                   ${./nix/iso-common.nix} \
                   ${./nix/iso-appearance.nix} \
@@ -171,6 +176,11 @@
           '';
           sandbox = sandboxTest;
           networking-vm = import ./nix/tests/networking-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
+          };
+          pea-fetch-vm = import ./nix/tests/pea-fetch-vm.nix {
             inherit pkgs;
             package = corePackage;
             module = self.nixosModules.default;

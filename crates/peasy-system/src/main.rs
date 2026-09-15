@@ -1,6 +1,7 @@
 mod activation;
 mod authorization;
 mod nix_backend;
+mod pea_fetch;
 mod process;
 mod recovery;
 mod server;
@@ -54,6 +55,8 @@ struct Args {
     #[arg(long, hide = true)]
     self_test_sandbox: bool,
     #[arg(long, hide = true)]
+    fetch_pea: bool,
+    #[arg(long, hide = true)]
     render_test_theme: bool,
     #[arg(long, hide = true)]
     render_test_appimage: bool,
@@ -84,6 +87,9 @@ fn sandbox_self_test() -> Result<()> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.fetch_pea {
+        return pea_fetch::run();
+    }
     if args.self_test_sandbox {
         return sandbox_self_test();
     }
@@ -169,6 +175,7 @@ fn main() -> Result<()> {
         active_system: args.active_system,
         appimage_policy: args.appimage_policy,
         pea_policy: args.pea_policy,
+        pea_fetch_output: "/run/peasy-pea-fetch/pea.json".into(),
         network_profiles_dir: "/etc/NetworkManager/system-connections".into(),
         runtime_dir: args.runtime_dir,
         nix: args.nix.context("--nix is required")?,

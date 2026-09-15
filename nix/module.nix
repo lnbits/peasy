@@ -238,6 +238,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    users.groups.peasy-pea-readers = { };
     environment.etc."peasy/pea-policy.json".text = builtins.toJSON {
       allow_official = cfg.peas.allowOfficial;
       allowed_permissions = cfg.peas.allowedPermissions;
@@ -488,6 +489,59 @@ in
       };
     };
 
+    # Source authentication must make a fresh HTTPS request: a content-addressed
+    # Nix cache establishes integrity, but cannot attest catalogue membership.
+    # Only this unprivileged helper gets network access. The root daemon passes
+    # one validated pin through a read-only leaf bind, and rechecks the result.
+    systemd.services.peasy-pea-fetch = {
+      description = "Verify and fetch an official Peasy pea";
+      environment.SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        DynamicUser = true;
+        Group = "peasy-pea-readers";
+        ExecStart = "${package}/libexec/peasy-system --fetch-pea";
+        RuntimeDirectory = "peasy-pea-fetch";
+        RuntimeDirectoryMode = "0750";
+        UMask = "0027";
+        BindReadOnlyPaths = [ "/run/peasy/pea-fetch/request.json:/run/peasy-pea-request.json" ];
+        InaccessiblePaths = [
+          "/run/peasy"
+          "/nix/var/nix/daemon-socket"
+        ];
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        RestrictSUIDSGID = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@mount"
+          "~@debug"
+        ];
+        SystemCallArchitectures = "native";
+        TimeoutStartSec = 100;
+        TimeoutStopSec = 5;
+        MemoryMax = "128M";
+        TasksMax = 32;
+        LimitCORE = 0;
+      };
+    };
+
     systemd.services.peasy-system = {
       description = "Peasy typed NixOS configuration service";
       wantedBy = [ "multi-user.target" ];
@@ -501,6 +555,7 @@ in
       serviceConfig = {
         Type = "simple";
         Group = "wheel";
+        SupplementaryGroups = [ "peasy-pea-readers" ];
         ExecStart = lib.concatStringsSep " " (
           [
             "${package}/libexec/peasy-system"

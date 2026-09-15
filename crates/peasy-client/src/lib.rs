@@ -750,6 +750,7 @@ impl ModelBackend {
             None,
         )
     }
+    #[allow(clippy::too_many_arguments)] // Explicit, bounded model context, shared by both providers.
     fn interpret_with_feedback(
         &self,
         user_request: &str,
@@ -1037,6 +1038,7 @@ pub struct Choice {
 
 enum FollowUp {
     Pea { request: String, id: String },
+    Network { pin: peasy_core::pea::PeaPin },
 }
 
 pub struct PeasyClient {
@@ -1147,7 +1149,23 @@ impl PeasyClient {
         let state = peasy_core::parse_packages_module(&managed_configuration).unwrap_or_default();
         let enabled = self.enabled_peas(&state)?;
         let available = json!({"available_peas":enabled.iter().map(|p| json!({"id":p.id,"capabilities":p.capabilities})).collect::<Vec<_>>()});
-        let mut action = if let Some(id) = pea_id {
+        // Downloaded descriptions may influence routing, never an unrestricted
+        // native action. A non-selection is discarded before a fresh host turn.
+        let routed_id = if pea_id.is_none() && !enabled.is_empty() {
+            let route = self.model.interpret_with_feedback(
+                &model_request,
+                &managed_configuration,
+                None,
+                Some(&installed),
+                &theme,
+                None,
+                Some(&available.to_string()),
+            )?;
+            pea::selected_enabled_id(route, &enabled)
+        } else {
+            None
+        };
+        let mut action = if let Some(id) = pea_id.or(routed_id.as_deref()) {
             ModelAction::UsePea { id: id.into() }
         } else {
             self.model.interpret_with_feedback(
@@ -1157,9 +1175,10 @@ impl PeasyClient {
                 Some(&installed),
                 &theme,
                 recent_package.as_ref(),
-                Some(&available.to_string()),
+                None,
             )?
         };
+        let mut origin = None;
         match &action {
             ModelAction::DisablePea { id } => {
                 let pin = state
@@ -1186,6 +1205,7 @@ impl PeasyClient {
             }
             ModelAction::UsePea { id } => {
                 if let Some(manifest) = enabled.iter().find(|p| &p.id == id) {
+                    origin = Some(manifest);
                     action = self.interpret_pea(
                         manifest,
                         &model_request,
@@ -1205,7 +1225,7 @@ impl PeasyClient {
             }
             _ => {}
         }
-        match self.engine.resolve(&EngineInput {
+        let resolution = match self.engine.resolve(&EngineInput {
             action,
             candidates: recent_package.into_iter().collect(),
             installed: installed.clone(),
@@ -1294,7 +1314,23 @@ impl PeasyClient {
             EngineDecision::Explain(message) => Ok(Resolution::Explain(message)),
             EngineDecision::Cancel => Ok(Resolution::Cancel),
             EngineDecision::Reject(message) => bail!("unsafe model decision rejected: {message}"),
+        }?;
+        if let (Some(manifest), Resolution::Proposal(proposal)) = (origin, &resolution)
+            && matches!(&proposal.change, ProposalChange::Network { plan } if plan.activate.is_some())
+        {
+            let pin = state
+                .peas
+                .iter()
+                .find(|p| p.id == manifest.id)
+                .context("pea origin is no longer enabled")?
+                .clone();
+            let mut pending = self.pea_resume.lock().expect("pea resume mutex");
+            if pending.len() >= 16 {
+                bail!("too many pending pea continuations; finish or cancel an earlier review");
+            }
+            pending.insert(proposal.id.clone(), FollowUp::Network { pin });
         }
+        Ok(resolution)
     }
 
     pub fn select(&self, choice: Choice, index: usize) -> Result<Resolution> {

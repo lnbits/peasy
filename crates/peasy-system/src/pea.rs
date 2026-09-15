@@ -1,10 +1,14 @@
 use super::{NixBackend, Preview};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use peasy_core::{
     DiffKind, DiffLine, ProposalChange, module_diff,
-    pea::{MAX_PACK_BYTES, PeaManifest, PeaPin, PeaPolicy},
+    pea::{MAX_PACK_BYTES, PeaPin, PeaPolicy},
 };
-use std::{io::Read, path::Path};
+use std::{
+    io::Read,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    path::Path,
+};
 impl NixBackend {
     pub(super) fn verify_pea(&self, pin: &PeaPin) -> Result<()> {
         pin.validate()?;
@@ -12,44 +16,82 @@ impl NixBackend {
         if !policy.allows(pin) {
             bail!("Administrator policy does not allow this official pea or its permissions");
         }
-        // Fetch data through Nix using the reviewed hash. No remote Nix is evaluated.
+        let _guard = self
+            .pea_fetch_lock
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("another pea verification is in progress"))?;
+        // Stop any interrupted helper before replacing its read-only request.
+        // No caller-controlled executable, unit name, URL or command reaches systemd.
+        let stop = self.runner.run(
+            &self.config.systemctl,
+            &["stop".into(), "peasy-pea-fetch.service".into()],
+            None,
+        )?;
+        if !stop.status.success() {
+            bail!("could not reset the pea verification helper");
+        }
+        let staging = self.config.runtime_dir.join("pea-fetch");
+        std::fs::create_dir_all(&staging)?;
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))?;
+        let request = staging.join("request.json");
+        // Root has no DAC override capability. Replace the previous read-only
+        // request through its owned directory after the helper has stopped.
+        match std::fs::remove_file(&request) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        std::fs::write(&request, serde_json::to_vec(pin)?)?;
+        // The helper receives only this leaf through a read-only bind mount.
+        std::fs::set_permissions(&request, std::fs::Permissions::from_mode(0o444))?;
+        let verified = self.runner.run(
+            &self.config.systemctl,
+            &["start".into(), "peasy-pea-fetch.service".into()],
+            None,
+        )?;
+        if !verified.status.success() {
+            bail!(
+                "official pea source verification failed; discover and review again (see peasy-pea-fetch.service)"
+            );
+        }
+        let mut bytes = vec![];
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+            .open(&self.config.pea_fetch_output)?;
+        if !file.metadata()?.is_file() {
+            bail!("invalid pea helper output");
+        }
+        file.take(MAX_PACK_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)?;
+        crate::pea_fetch::validate_artifact(pin, &bytes)?;
+        // Copy the checked bytes into root-owned staging before importing, avoiding
+        // a check/use race on the unprivileged helper's output. Nix never downloads
+        // unchecked bytes during preview. The final generation holds the store ref.
+        let artifact = staging.join("pea.json");
+        std::fs::write(&artifact, &bytes)?;
         let output = self.runner.run(
             &self.config.nix,
             &[
                 "store".into(),
-                "prefetch-file".into(),
-                "--json".into(),
-                "--hash-type".into(),
+                "add".into(),
+                "--mode".into(),
+                "flat".into(),
+                "--hash-algo".into(),
                 "sha256".into(),
-                "--expected-hash".into(),
-                pin.hash.clone().into(),
-                pin.url().into(),
+                "--name".into(),
+                "pea.json".into(),
+                artifact.into_os_string(),
             ],
             None,
         )?;
         if !output.status.success() {
-            bail!("Nix could not fetch the pea at its reviewed hash");
+            bail!("could not import verified pea into Nix");
         }
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-        let path = Path::new(
-            value["storePath"]
-                .as_str()
-                .context("Nix returned no pea store path")?,
-        );
+        let store_path = String::from_utf8(output.stdout)?;
+        let path = Path::new(store_path.trim());
         if !path.starts_with("/nix/store") || path.components().count() != 4 {
             bail!("invalid pea store path");
-        }
-        let mut bytes = vec![];
-        std::fs::File::open(path)?
-            .take(MAX_PACK_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > MAX_PACK_BYTES {
-            bail!("pea package is too large");
-        }
-        let manifest: PeaManifest = serde_json::from_slice(&bytes)?;
-        manifest.validate()?;
-        if !pin.matches(&manifest) {
-            bail!("pea metadata does not match its reviewed pin");
         }
         Ok(())
     }

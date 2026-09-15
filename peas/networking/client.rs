@@ -77,7 +77,7 @@ impl PeasyClient {
         if output.stdout.len() > 64 * 1024 {
             bail!("NetworkManager returned too much data");
         }
-        Ok(String::from_utf8(output.stdout).context("invalid NetworkManager output")?)
+        String::from_utf8(output.stdout).context("invalid NetworkManager output")
     }
     pub(super) fn network_snapshot(&self) -> Result<NetworkSnapshot> {
         let devices = self.network_read(&[
@@ -301,11 +301,11 @@ impl PeasyClient {
             .stderr(Stdio::null())
             .spawn()
             .context("starting NetworkManager")?;
-        if let Some(mut stdin) = child.stdin.take() {
-            if let Some(password) = password {
-                stdin.write_all(password.as_bytes())?;
-                stdin.write_all(b"\n")?;
-            }
+        if let Some(mut stdin) = child.stdin.take()
+            && let Some(password) = password
+        {
+            stdin.write_all(password.as_bytes())?;
+            stdin.write_all(b"\n")?;
         }
         if !child.wait()?.success() {
             bail!("NetworkManager rejected the change or authorization failed");

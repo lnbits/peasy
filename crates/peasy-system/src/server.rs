@@ -609,6 +609,7 @@ mod tests {
                 managed_module: temp.path().join("source/peasy.nix"),
                 appimage_policy: temp.path().join("policy.json"),
                 pea_policy: temp.path().join("pea-policy.json"),
+                pea_fetch_output: temp.path().join("fetched-pea.json"),
                 network_profiles_dir: temp.path().join("network-profiles"),
                 rebuild_target: RebuildTarget::Configuration {
                     path: "/etc/nixos/configuration.nix".into(),

@@ -35,6 +35,12 @@ fn read_json(url: &str, limit: usize) -> Result<Value> {
     }
     Ok(serde_json::from_slice(&bytes)?)
 }
+pub(super) fn selected_enabled_id(action: ModelAction, enabled: &[PeaManifest]) -> Option<String> {
+    match action {
+        ModelAction::UsePea { id } if enabled.iter().any(|m| m.id == id) => Some(id),
+        _ => None,
+    }
+}
 impl PeasyClient {
     pub(super) fn enabled_peas(&self, state: &PackageState) -> Result<Vec<PeaManifest>> {
         let policy = PeaPolicy::load(Path::new(POLICY_PATH))?;
@@ -184,7 +190,7 @@ impl PeasyClient {
             IpcResponse::Proposal { proposal } => {
                 let mut pending = self.pea_resume.lock().expect("pea resume mutex");
                 if pending.len() >= 16 {
-                    pending.clear();
+                    bail!("too many pending pea continuations; finish or cancel an earlier review");
                 }
                 pending.insert(
                     proposal.id.clone(),
@@ -203,31 +209,54 @@ impl PeasyClient {
         &self,
         proposal: &peasy_core::Proposal,
     ) -> Result<Option<Resolution>> {
+        let followup = self
+            .pea_resume
+            .lock()
+            .expect("pea resume mutex")
+            .remove(&proposal.id);
         if let peasy_core::ProposalChange::Network { plan } = &proposal.change
             && let Some(profile) = plan
                 .activate
                 .as_ref()
                 .and_then(|id| plan.profiles.iter().find(|p| &p.id == id))
         {
-            return self
-                .propose_network(peasy_core::NetworkPlan {
-                    scope: peasy_core::NetworkScope::Session,
-                    profiles: vec![],
-                    remove: vec![],
-                    activate: Some(profile.uuid()),
-                    deactivate: None,
-                })
-                .map(Some);
+            let activation = peasy_core::NetworkPlan {
+                scope: peasy_core::NetworkScope::Session,
+                profiles: vec![],
+                remove: vec![],
+                activate: Some(profile.uuid()),
+                deactivate: None,
+            };
+            if let Some(crate::FollowUp::Network { pin }) = &followup {
+                let state = match self.ipc.request(&IpcRequest::GetManagedModule)? {
+                    IpcResponse::ManagedModule { module } => {
+                        peasy_core::parse_packages_module(&module)?
+                    }
+                    _ => bail!("unexpected managed state response"),
+                };
+                if !state.peas.contains(pin) {
+                    bail!("originating pea changed or was disabled; request activation again");
+                }
+                let enabled = self.enabled_peas(&state)?;
+                let manifest = enabled
+                    .iter()
+                    .find(|m| m.id == pin.id)
+                    .context("originating pea is no longer allowed by policy")?;
+                if !manifest.permits(&ModelAction::ConfigureNetwork {
+                    plan: activation.clone(),
+                }) {
+                    bail!("originating pea cannot activate network connections");
+                }
+            }
+            return self.propose_network(activation).map(Some);
         }
-        let followup = self
-            .pea_resume
-            .lock()
-            .expect("pea resume mutex")
-            .remove(&proposal.id);
         followup
             .map(|followup| match followup {
                 crate::FollowUp::Pea { request, id } => {
                     self.resolve_with_pea(&request, Some(&id), &mut |_| {})
+                }
+                crate::FollowUp::Network { .. } => {
+                    bail!("network continuation no longer matches its proposal")
                 }
             })
             .transpose()
@@ -237,6 +266,34 @@ impl PeasyClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn downloaded_descriptions_can_only_select_an_enabled_pea() {
+        let m: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/networking/pea.json")).unwrap();
+        let enabled = [m];
+        assert_eq!(
+            selected_enabled_id(
+                ModelAction::UsePea {
+                    id: "networking".into()
+                },
+                &enabled
+            ),
+            Some("networking".into())
+        );
+        assert!(
+            selected_enabled_id(
+                ModelAction::UsePea {
+                    id: "unapproved".into()
+                },
+                &enabled
+            )
+            .is_none()
+        );
+        assert!(selected_enabled_id(ModelAction::DiscoverPeas, &enabled).is_none());
+        let plan =
+            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+        assert!(selected_enabled_id(ModelAction::ConfigureNetwork { plan }, &enabled).is_none());
+    }
     #[test]
     #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
     fn a_new_data_pea_runs_without_registration_but_cannot_expand_its_permissions() {

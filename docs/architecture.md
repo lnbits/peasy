@@ -327,3 +327,12 @@ activation/deactivation uses NetworkManager authorization and a reviewed snapsho
 Persistent plans can hand off to a separate local activation review after a rebuild.
 Passwords remain local and outside system state. Live connectivity does not inherit
 NixOS rollback guarantees; profile files and pea pins do.
+
+Official pea installation uses a separate `peasy-pea-fetch.service` running as a
+dynamic, unprivileged user. It makes bounded HTTPS requests to verify the current
+official `main` revision, exact catalogue membership and manifest hash. The root
+daemon keeps its network restriction, passes a pin through a read-only request
+file, rechecks the returned bytes and imports them into the Nix store. Catalogue
+verification runs again before apply; existing pins remain immutable during
+ordinary rebuilds and rollback. A populated Nix cache is never used as evidence
+of publisher approval. See [pea package checks and limits](pea-packages.md).

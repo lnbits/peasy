@@ -48,7 +48,7 @@ The provider request is assembled from a new JSON value. It may contain:
 - the current request, after a local credential-input guard;
 - current local date/time;
 - Peasy's canonical generated managed module, containing only validated package,
-  pinned AppImage, appearance and setup state (including the locally bound
+  pinned AppImage/pea, network profile, appearance and setup state (including the locally bound
   account name/UID for managed group contributions);
 - a bounded, allowlisted profile generated from the evaluated active NixOS
   configuration: release/platform tokens, closed desktop and Peasy-variant
@@ -308,13 +308,23 @@ require a new proposal rather than reusing a consumed authorization token.
 
 The networking host API accepts closed profile values and discovered connection
 identities, not a NetworkManager property dictionary or Nix source. Network snapshots
-contain no secrets. Live plans recheck reviewed resources; system plans use existing
+exclude password fields, but SSIDs, connection names, addresses, DNS and routes can
+reveal private infrastructure to the selected model provider. Persisted network
+profile settings also enter the ordinary managed-state context. Live plans recheck
+reviewed resources; system plans use existing
 administrator authorization and generation transactions. Persistent sharing grants
-DNS/DHCP firewall ports only on its interface. Activation and recovery can interrupt
+DNS/DHCP firewall ports only on its interface; those allowances remain while the
+profile is declared, even if it is inactive. Activation and recovery can interrupt
 connectivity; their scope and limits are described in the networking pea.
 
 Official downloadable peas are bounded data files. Their schemas must match the
 installed host API and their returned actions must fit declared permissions. Nix
 verifies pinned hashes; the fixed official-repository policy determines publisher
 trust. No remote Rust, shell, Nix module or Wasm guest executes. Administrator policy
-is checked at proposal, apply and loading. See [pea packages](pea-packages.md).
+is checked at proposal, apply and loading. A fixed unprivileged service verifies
+current official catalogue membership and bounds downloads before the root daemon
+imports the checked bytes into Nix. The root daemon keeps its network restriction.
+Downloaded descriptions can only select an enabled pea, and deferred network
+activation requires both system and session permissions. These checks constrain
+effects; they cannot establish that publisher instructions or a schema-valid plan
+are appropriate for the user's goal. See [pea packages](pea-packages.md).

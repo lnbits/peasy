@@ -171,6 +171,12 @@ impl PeaManifest {
             ModelAction::InspectNetwork => "network.read",
             ModelAction::ConfigureNetwork { plan } => {
                 if plan.scope == NetworkScope::System {
+                    // The deferred activation is itself a session operation.
+                    if plan.activate.is_some()
+                        && !self.permissions.iter().any(|p| p == "network.session")
+                    {
+                        return false;
+                    }
                     "network.system"
                 } else {
                     "network.session"
@@ -267,7 +273,7 @@ pub(crate) fn render(pins: &[PeaPin]) -> String {
     let mut out = String::new();
     for p in pins {
         out.push_str(&format!(
-            "  environment.etc.{}.source = pkgs.fetchurl {{ url = {}; sha256 = {}; }};\n",
+            "  environment.etc.{}.source = pkgs.fetchurl {{ url = {}; sha256 = {}; curlOptsList = [ \"--max-filesize\" \"65536\" \"--max-time\" \"30\" \"--max-redirs\" \"0\" ]; }};\n",
             nix_string(&format!("peasy/peas/{}.json", p.id)),
             nix_string(&p.url()),
             nix_string(&p.hash)
@@ -275,9 +281,28 @@ pub(crate) fn render(pins: &[PeaPin]) -> String {
     }
     out
 }
+// Exact previous renderer, only for migrating already-recorded pins. The next
+// managed write uses bounded fetches; arbitrary edits still fail closed.
+pub(crate) fn legacy_render(pins: &[PeaPin]) -> String {
+    render(pins).replace(" curlOptsList = [ \"--max-filesize\" \"65536\" \"--max-time\" \"30\" \"--max-redirs\" \"0\" ];", "")
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn persistent_activation_requires_both_network_permissions() {
+        let mut manifest: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/networking/pea.json")).unwrap();
+        let mut plan: crate::NetworkPlan =
+            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+        manifest.permissions = vec!["network.system".into()];
+        assert!(!manifest.permits(&ModelAction::ConfigureNetwork { plan: plan.clone() }));
+        manifest.permissions.push("network.session".into());
+        assert!(manifest.permits(&ModelAction::ConfigureNetwork { plan: plan.clone() }));
+        manifest.permissions.retain(|p| p != "network.session");
+        plan.activate = None;
+        assert!(manifest.permits(&ModelAction::ConfigureNetwork { plan }));
+    }
     #[test]
     fn cannot_expand_the_host_or_hide_permissions_in_a_schema() {
         let mut m = PeaManifest {
@@ -310,6 +335,9 @@ mod tests {
         let state = PackageState::default().with_pea(&p, true).unwrap();
         let text = crate::render_packages_module(&state).unwrap();
         assert_eq!(crate::parse_packages_module(&text).unwrap(), state);
+        let old = text.replace(&render(&state.peas), &legacy_render(&state.peas));
+        assert_eq!(crate::parse_packages_module(&old).unwrap(), state);
+        assert!(crate::parse_packages_module(&(old + "\n# unexpected edit\n")).is_err());
         assert!(text.contains("pkgs.fetchurl"));
         assert!(!text.contains("builtins.getFlake"));
         assert_eq!(state.with_pea(&p, false).unwrap(), PackageState::default());
