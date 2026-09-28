@@ -82,6 +82,7 @@ NetworkManager profile also declares its NetworkManager dependency.
 
 ```console
 peasy "install telegram"
+peasy "install a video editor"
 peasy "install the AppImage from owner/project on GitHub"
 peasy "change to a blue dark theme"
 peasy "connect to my headphones"
