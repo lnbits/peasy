@@ -360,6 +360,7 @@ impl IpcClient {
             request,
             IpcRequest::GetPackages
                 | IpcRequest::GetTheme
+                | IpcRequest::CheckPeasyUpdate { .. }
                 | IpcRequest::GetManagedModule
                 | IpcRequest::SearchPackages { .. }
                 | IpcRequest::Inspect
@@ -524,6 +525,14 @@ struct SystemProfile {
     desktop_version: Option<String>,
     peasy_variant: PeasyVariant,
     installed_system_packages: Vec<String>,
+    postgresql: Option<PostgresqlProfile>,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct PostgresqlProfile {
+    enabled: bool,
+    version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -534,6 +543,8 @@ struct DeclaredSystemProfile {
     configured_desktops: Vec<DesktopKind>,
     peasy_variant: PeasyVariant,
     installed_system_packages: Vec<String>,
+    #[serde(default)]
+    postgresql: Option<PostgresqlProfile>,
 }
 
 impl OpenAi {
@@ -975,9 +986,10 @@ impl LocalProposal {
             LocalAction::Network { plan, snapshot } => {
                 plan.password_required()
                     || plan.activate.as_ref().is_some_and(|id| {
-                        snapshot.connections.iter().any(|c| {
-                            &c.uuid == id && matches!(c.kind.as_str(), "802-11-wireless" | "wifi")
-                        })
+                        snapshot
+                            .connections
+                            .iter()
+                            .any(|c| &c.uuid == id && c.needs_local_password())
                     })
             }
             _ => false,
@@ -996,8 +1008,6 @@ struct LocalTools {
     bluetoothctl: PathBuf,
     gio: PathBuf,
     gsettings: PathBuf,
-    plasma_colorscheme: PathBuf,
-    plasma_config: PathBuf,
     hyprctl: PathBuf,
     nix: PathBuf,
 }
@@ -1011,6 +1021,7 @@ pub enum ChoiceSource {
     },
     Nixpkgs {
         candidate: PackageCandidate,
+        request: String,
     },
     SearchAppImages {
         query: String,
@@ -1048,15 +1059,22 @@ pub struct PeasyClient {
     github: GitHubDiscovery,
     tools: LocalTools,
     recent_package: Mutex<Option<PackageCandidate>>,
+    clarification_request: Mutex<Option<String>>,
     pea_resume: Mutex<std::collections::HashMap<String, FollowUp>>,
 }
 
 impl PeasyClient {
-    pub fn cancel_proposal(&self, proposal: &str) -> Result<bool> {
+    pub fn ipc_client(&self) -> &IpcClient {
+        &self.ipc
+    }
+    pub fn discard_continuation(&self, proposal: &str) {
         self.pea_resume
             .lock()
             .expect("pea resume mutex")
             .remove(proposal);
+    }
+    pub fn cancel_proposal(&self, proposal: &str) -> Result<bool> {
+        self.discard_continuation(proposal);
         match self.ipc.request(&IpcRequest::Cancel {
             proposal: proposal.into(),
         })? {
@@ -1089,18 +1107,11 @@ impl PeasyClient {
                 ),
                 gio: tool_path("PEASY_GIO", "/run/current-system/sw/bin/gio"),
                 gsettings: tool_path("PEASY_GSETTINGS", "/run/current-system/sw/bin/gsettings"),
-                plasma_colorscheme: tool_path(
-                    "PEASY_PLASMA_COLORSCHEME",
-                    "/run/current-system/sw/bin/plasma-apply-colorscheme",
-                ),
-                plasma_config: tool_path(
-                    "PEASY_KWRITECONFIG",
-                    "/run/current-system/sw/bin/kwriteconfig6",
-                ),
                 hyprctl: tool_path("PEASY_HYPRCTL", "/run/current-system/sw/bin/hyprctl"),
                 nix: tool_path("PEASY_NIX", "/run/current-system/sw/bin/nix"),
             },
             recent_package: Mutex::new(None),
+            clarification_request: Mutex::new(None),
             pea_resume: Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -1113,17 +1124,32 @@ impl PeasyClient {
     where
         F: FnMut(ResolveStage),
     {
-        self.resolve_with_pea(request, None, &mut progress)
+        let previous = self
+            .clarification_request
+            .lock()
+            .expect("clarification mutex")
+            .take();
+        let result = self.resolve_with_pea(request, None, previous.as_deref(), &mut progress);
+        if matches!(&result, Ok(Resolution::Explain(_))) {
+            let (redacted, _) = redact_wifi_password(request)?;
+            *self
+                .clarification_request
+                .lock()
+                .expect("clarification mutex") = Some(redacted.chars().take(1600).collect());
+        }
+        result
     }
 
     fn resolve_with_pea(
         &self,
         request: &str,
         pea_id: Option<&str>,
+        previous_request: Option<&str>,
         progress: &mut impl FnMut(ResolveStage),
     ) -> Result<Resolution> {
         progress(ResolveStage::Understanding);
         let (model_request, wifi_password) = redact_wifi_password(request)?;
+        let model_request = followup_request(&model_request, previous_request);
         let installed = match self.ipc.request(&IpcRequest::GetPackages)? {
             IpcResponse::Packages { packages } => packages,
             _ => bail!("unexpected response to GetPackages"),
@@ -1285,12 +1311,20 @@ impl PeasyClient {
             EngineDecision::ConfigureNetwork(plan) => self.propose_network(plan),
             EngineDecision::ListWifi => self.list_wifi(),
             EngineDecision::HyprlandStatus => self.hyprland_status(),
-            EngineDecision::Install { package, setup, .. } => {
+            EngineDecision::Install {
+                package,
+                setup,
+                message,
+            } => {
                 progress(ResolveStage::PreparingChange);
-                match setup {
-                    Some(setup) => self.propose_setup(package, setup),
-                    None => self.propose_install(&package),
-                }
+                let resolution = match setup {
+                    Some(setup) => self.propose_setup(package, setup)?,
+                    None => self.propose_install(&package)?,
+                };
+                Ok(packages::with_install_guidance(
+                    resolution,
+                    message.as_deref(),
+                ))
             }
             EngineDecision::Remove(package) => {
                 progress(ResolveStage::PreparingChange);
@@ -1326,6 +1360,8 @@ impl PeasyClient {
                 .clone();
             let mut pending = self.pea_resume.lock().expect("pea resume mutex");
             if pending.len() >= 16 {
+                drop(pending);
+                let _ = self.cancel_proposal(&proposal.id);
                 bail!("too many pending pea continuations; finish or cancel an earlier review");
             }
             pending.insert(proposal.id.clone(), FollowUp::Network { pin });
@@ -1354,11 +1390,19 @@ impl PeasyClient {
         match candidate.source {
             ChoiceSource::SystemSetup { candidate, setup } => {
                 progress(ResolveStage::PreparingChange);
-                self.propose_setup_candidate(candidate, setup)
+                let resolution = self.propose_setup_candidate(candidate, setup)?;
+                Ok(packages::with_install_guidance(
+                    resolution,
+                    choice.intro.as_deref(),
+                ))
             }
-            ChoiceSource::Nixpkgs { candidate } => {
+            ChoiceSource::Nixpkgs { candidate, request } => {
                 progress(ResolveStage::EvaluatingResults);
-                self.propose_selected_package(candidate)
+                let resolution = self.propose_selected_package(candidate, &request)?;
+                Ok(packages::with_install_guidance(
+                    resolution,
+                    choice.intro.as_deref(),
+                ))
             }
             ChoiceSource::SearchAppImages { query, version } => {
                 progress(ResolveStage::SearchingAppImages);
@@ -1397,31 +1441,45 @@ impl PeasyClient {
         if let ProposalChange::Theme { theme } = &proposal.change {
             runtime_desktop_kind().validate_appearance(theme)?;
         }
-        let mut result = match self.ipc.request_with_progress(
+        let response = self.ipc.request_with_progress(
             &IpcRequest::ApplyWithProgress {
                 proposal: proposal.id.clone(),
             },
             progress,
-        )? {
-            IpcResponse::Applied { result } => result,
-            _ => bail!("unexpected response to Apply"),
+        );
+        let mut result = match response {
+            Ok(IpcResponse::Applied { result }) => result,
+            other => {
+                self.discard_continuation(&proposal.id);
+                other?;
+                bail!("unexpected response to Apply");
+            }
         };
+        if !result.activated {
+            self.discard_continuation(&proposal.id);
+        }
         if result.activated
-            && let ProposalChange::Theme { theme } = &proposal.change
+            && matches!(
+                &proposal.change,
+                ProposalChange::Theme { .. } | ProposalChange::Restore { .. }
+            )
         {
-            result.message = match appearance::adapters::apply(
-                runtime_desktop_kind(),
-                theme,
+            let appearance_message = match sync_live_theme_from_file(
+                Path::new("/etc/peasy/theme.json"),
                 &self.tools.gsettings,
-                &self.tools.plasma_colorscheme,
-                &self.tools.plasma_config,
             ) {
                 Ok(()) => "Appearance saved and applied to this desktop session.".into(),
                 Err(error) => format!(
                     "Appearance saved declaratively, but this session could not update it immediately: {error}."
                 ),
             };
+            if matches!(&proposal.change, ProposalChange::Restore { .. }) {
+                result.message.push_str(&format!("\n{appearance_message}"));
+            } else {
+                result.message = appearance_message;
+            }
         }
+        packages::append_install_guidance(proposal, &mut result);
         Ok(result)
     }
 
@@ -1465,6 +1523,15 @@ const SYSTEM_PROFILE_PATH: &str = "/etc/peasy/system-profile.json";
 const MAX_SYSTEM_PROFILE_BYTES: u64 = 64 * 1024;
 const MAX_PROFILE_PACKAGES: usize = 256;
 
+fn followup_request(current: &str, previous: Option<&str>) -> String {
+    match previous {
+        Some(previous) => format!(
+            "Previous user request (context only for a follow-up): {previous}\nCurrent user request: {current}\nFulfil the current request. Use the previous request only to resolve a short reply; a new or unrelated request takes precedence."
+        ),
+        None => current.to_owned(),
+    }
+}
+
 fn local_system_profile() -> SystemProfile {
     let desktop = runtime_desktop_kind();
     let desktop_version = desktop_version_from_store(desktop);
@@ -1478,6 +1545,7 @@ fn local_system_profile() -> SystemProfile {
             desktop_version,
             peasy_variant: declared.peasy_variant,
             installed_system_packages: declared.installed_system_packages,
+            postgresql: declared.postgresql,
         };
     }
 
@@ -1500,6 +1568,7 @@ fn local_system_profile() -> SystemProfile {
             _ => PeasyVariant::Desktop,
         },
         installed_system_packages: Vec::new(),
+        postgresql: None,
     }
 }
 
@@ -1519,6 +1588,11 @@ fn parse_declared_system_profile(bytes: &[u8]) -> Option<DeclaredSystemProfile> 
     let mut profile: DeclaredSystemProfile = serde_json::from_slice(bytes).ok()?;
     profile.nixos_version = safe_profile_token(&profile.nixos_version, 64)?;
     profile.nix_system = safe_profile_token(&profile.nix_system, 48)?;
+    if let Some(postgresql) = &mut profile.postgresql
+        && let Some(version) = &postgresql.version
+    {
+        postgresql.version = Some(safe_profile_token(version, 64)?);
+    }
     profile
         .configured_desktops
         .retain(|desktop| !matches!(desktop, DesktopKind::Other | DesktopKind::Headless));

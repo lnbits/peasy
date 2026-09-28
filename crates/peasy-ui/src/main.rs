@@ -1,3 +1,4 @@
+mod update;
 use adw::prelude::*;
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -8,6 +9,7 @@ use peasy_client::{
     load_model_provider,
 };
 use peasy_core::{DiffKind, IpcRequest, IpcResponse, OperationStage, Proposal, ProposalChange};
+mod restore;
 mod tasks;
 use std::cell::{Cell, RefCell};
 use std::fs::{self, OpenOptions};
@@ -88,7 +90,8 @@ fn main() -> Result<()> {
         .application_id(application_id)
         .build();
     app.connect_activate(move |app| activate(app, state.clone()));
-    app.run();
+    // Clap already consumed our flags; GTK must not parse --settings/--socket again.
+    app.run_with_args(&["peasy-ui"]);
     Ok(())
 }
 
@@ -143,6 +146,9 @@ fn discard_pending(state: &AppState) {
 }
 
 fn discard_token(state: &AppState, token: String) {
+    if let Some(client) = state.client.borrow().as_ref() {
+        client.discard_continuation(&token);
+    }
     let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
     std::thread::spawn(move || {
         let _ = ipc.request(&IpcRequest::Cancel { proposal: token });
@@ -156,6 +162,9 @@ fn request_apply_cancellation(window: &adw::ApplicationWindow, state: AppState) 
     let Some(token) = state.pending.borrow().clone() else {
         return;
     };
+    if let Some(client) = state.client.borrow().as_ref() {
+        client.discard_continuation(&token);
+    }
     let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
     show_working(
         window,
@@ -239,6 +248,13 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     state.tasks.borrow_mut().close();
     discard_pending(&state);
     let (root, body) = page("Peasy settings");
+    root.remove(&body);
+    let scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .child(&body)
+        .build();
+    root.append(&scroll);
     let heading = gtk::Label::new(Some("AI provider"));
     heading.add_css_class("title-3");
     heading.set_halign(gtk::Align::Start);
@@ -331,23 +347,33 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let export_copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
     export_copy.set_hexpand(true);
     let export_text = gtk::Label::new(Some(
-        "Export your configuration.nix host and Peasy settings with restore instructions. Flake hosts are not supported by this export yet.",
+        "Back up Peasy software and appearance settings for another NixOS machine, keeping its hardware configuration. Supports traditional and flake hosts.",
     ));
     export_text.set_wrap(true);
     export_text.set_xalign(0.0);
     export_copy.append(&export_text);
     let export_note = gtk::Label::new(Some(
-        "Creates a private configuration backup with a file inventory. Common secret files and Git history are excluded; configuration files may still contain private values. Review before sharing.",
+        "Service setups, network profiles and AppImages need review on the destination. Original host files are archived separately when readable.",
     ));
     export_note.set_wrap(true);
     export_note.set_xalign(0.0);
     export_note.add_css_class("dim-label");
     export_copy.append(&export_note);
     export_row.append(&export_copy);
-    let download_config = gtk::Button::with_label("Export system");
+    let download_config = gtk::Button::with_label("Export backup");
     download_config.set_valign(gtk::Align::Center);
-    export_row.append(&download_config);
+    let export_actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    export_actions.set_valign(gtk::Align::Center);
+    export_actions.append(&download_config);
+    export_row.append(&export_actions);
+    let restore_backup = gtk::Button::with_label("Restore backup");
+    restore_backup.set_valign(gtk::Align::Center);
+    export_actions.append(&restore_backup);
+    let restore_window = window.clone();
+    let restore_state = state.clone();
+    restore_backup.connect_clicked(move |_| choose_backup(&restore_window, restore_state.clone()));
     body.append(&export_row);
+    update::add_controls(&body, window, &state);
 
     let status = gtk::Label::new(None);
     status.set_wrap(true);
@@ -366,7 +392,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
             }
         };
         let dialog = gtk::FileDialog::builder()
-            .title("Choose where to export your NixOS system")
+            .title("Choose where to save your Peasy backup")
             .accept_label("Export here")
             .build();
         let status = export_status.clone();
@@ -377,7 +403,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
                 Ok(folder) => match folder.path() {
                     Some(folder) => match write_configuration_export(&export, &folder) {
                         Ok(path) => status.set_text(&format!(
-                            "System configuration exported to {}.",
+                            "Peasy backup exported to {}. Use Restore backup to review and apply it. Read README.txt for scope and archive availability.",
                             path.display()
                         )),
                         Err(error) => {
@@ -571,7 +597,7 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
     let (root, body, header) = page_with_header("Peasy");
     let settings = gtk::Button::builder()
         .icon_name("applications-system-symbolic")
-        .tooltip_text("AI provider settings")
+        .tooltip_text("Settings")
         .build();
     header.pack_end(&settings);
     let settings_window = window.clone();
@@ -735,7 +761,15 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
     ));
     intro.set_wrap(true);
     intro.set_halign(gtk::Align::Start);
-    body.append(&intro);
+    intro.set_selectable(true);
+    intro.set_xalign(0.0);
+    let guidance = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .max_content_height(220)
+        .propagate_natural_height(true)
+        .child(&intro)
+        .build();
+    body.append(&guidance);
     let shared = Arc::new(Mutex::new(Some(choice)));
     let candidates = shared
         .lock()
@@ -1265,7 +1299,16 @@ fn render_message(window: &adw::ApplicationWindow, state: AppState, message: &st
     let label = gtk::Label::new(Some(message));
     label.set_wrap(true);
     label.set_halign(gtk::Align::Start);
-    body.append(&label);
+    label.set_selectable(true);
+    label.set_xalign(0.0);
+    let scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(100)
+        .max_content_height(420)
+        .propagate_natural_height(true)
+        .child(&label)
+        .build();
+    body.append(&scroll);
     if error {
         let copy = gtk::Button::with_label("Copy diagnostics");
         let diagnostics = message.to_owned();
@@ -1308,6 +1351,10 @@ fn review_again(window: &adw::ApplicationWindow, state: AppState) {
             return;
         }
         Some(ProposalChange::Recovery { .. }) => IpcRequest::ProposeRecovery,
+        Some(ProposalChange::PeasyUpdate { release }) => IpcRequest::ProposePeasyUpdate { release },
+        Some(ProposalChange::Restore { backup, mode }) => {
+            IpcRequest::ProposeRestore { backup, mode }
+        }
         Some(ProposalChange::Package {
             operation, package, ..
         }) => match operation {
@@ -1334,6 +1381,134 @@ fn review_again(window: &adw::ApplicationWindow, state: AppState) {
         },
     };
     run_system_request(window, state, request);
+}
+
+fn choose_backup(window: &adw::ApplicationWindow, state: AppState) {
+    state.tasks.borrow_mut().close();
+    discard_pending(&state);
+    state.reviewed_change.borrow_mut().take();
+    let task = state.tasks.borrow_mut().start();
+    let dialog = gtk::FileDialog::builder()
+        .title("Choose a Peasy backup folder")
+        .accept_label("Open backup")
+        .build();
+    let w = window.clone();
+    dialog.select_folder(
+        Some(window),
+        None::<&gtk::gio::Cancellable>,
+        move |result| {
+            if task.view.is_cancelled() {
+                return;
+            }
+            let path = match result {
+                Ok(folder) => match folder.path() {
+                    Some(path) => path,
+                    None => {
+                        show_error_message(&w, state.clone(), "Choose a local backup folder.");
+                        return;
+                    }
+                },
+                Err(error)
+                    if error.matches(gtk::DialogError::Cancelled)
+                        || error.matches(gtk::DialogError::Dismissed) =>
+                {
+                    return;
+                }
+                Err(error) => {
+                    show_error_message(
+                        &w,
+                        state.clone(),
+                        &format!("Could not open backup: {error}"),
+                    );
+                    return;
+                }
+            };
+            show_working(&w, "Validating backup…");
+            let worker = task.clone();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let result = worker.work.scope(|| restore::read_backup(&path));
+                let _ = tx.send(result.map_err(|e| format!("{e:#}")));
+            });
+            let w = w.clone();
+            let state = state.clone();
+            let view = task.view.clone();
+            glib::timeout_add_local(Duration::from_millis(80), move || {
+                if view.is_cancelled() {
+                    return glib::ControlFlow::Break;
+                }
+                match rx.try_recv() {
+                    Ok(Ok(backup)) => show_restore_options(&w, state.clone(), backup),
+                    Ok(Err(error)) => show_error_message(&w, state.clone(), &error),
+                    Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+                    Err(_) => show_error_message(
+                        &w,
+                        state.clone(),
+                        "Backup validation stopped unexpectedly.",
+                    ),
+                }
+                glib::ControlFlow::Break
+            });
+        },
+    );
+}
+
+fn show_restore_options(window: &adw::ApplicationWindow, state: AppState, backup: restore::Backup) {
+    let (root, body) = page("Restore backup");
+    let summary = gtk::Label::new(Some(&format!(
+        "{} standalone packages, {} pea instructions and saved appearance settings. Your hardware configuration stays in place.",
+        backup.portable.packages.len(),
+        backup.portable.peas.len()
+    )));
+    summary.set_wrap(true);
+    summary.set_xalign(0.0);
+    body.append(&summary);
+    let mode =
+        gtk::DropDown::from_strings(&["Merge with current settings", "Replace portable settings"]);
+    body.append(&mode);
+    let explanation = gtk::Label::new(Some(
+        "Merge keeps current packages and adds the saved selection; saved appearance choices take precedence. Replace uses only the backup's standalone package, appearance and pea selections. Both modes keep this machine's service setups, network profiles and AppImages.",
+    ));
+    explanation.set_wrap(true);
+    explanation.set_xalign(0.0);
+    body.append(&explanation);
+    let deferred = gtk::Label::new(Some(&backup.deferred));
+    deferred.set_wrap(true);
+    deferred.set_xalign(0.0);
+    deferred.set_selectable(true);
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&deferred)
+        .max_content_height(180)
+        .propagate_natural_height(true)
+        .build();
+    body.append(&scroll);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    let w = window.clone();
+    let s = state.clone();
+    cancel.connect_clicked(move |_| show_provider_settings(&w, s.clone()));
+    let review = gtk::Button::with_label("Review restore");
+    review.add_css_class("suggested-action");
+    let w = window.clone();
+    review.connect_clicked(move |_| {
+        run_system_request(
+            &w,
+            state.clone(),
+            IpcRequest::ProposeRestore {
+                backup: backup.portable.clone(),
+                mode: if mode.selected() == 0 {
+                    peasy_core::RestoreMode::Merge
+                } else {
+                    peasy_core::RestoreMode::Replace
+                },
+            },
+        )
+    });
+    actions.append(&cancel);
+    actions.append(&review);
+    body.append(&actions);
+    show_content(window, &root, 580, -1);
 }
 
 fn run_system_request(window: &adw::ApplicationWindow, state: AppState, request: IpcRequest) {

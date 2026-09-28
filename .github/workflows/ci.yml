@@ -30,6 +30,8 @@ jobs:
             cores = 2
       - name: Rust formatting, tests, Clippy and catalogue contracts
         run: nix develop --command bash scripts/check-rust.sh
+      - name: Audit locked dependencies against current advisories
+        run: nix shell --inputs-from . nixpkgs#cargo-audit --command cargo audit --file Cargo.lock
 
   nix:
     runs-on: ubuntu-24.04

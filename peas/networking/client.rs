@@ -29,6 +29,56 @@ pub struct NetworkConnection {
     pub device: String,
     pub properties: Vec<String>,
 }
+impl NetworkConnection {
+    pub(crate) fn needs_local_password(&self) -> bool {
+        if !matches!(self.kind.as_str(), "wifi" | "802-11-wireless") {
+            return false;
+        }
+        let value = |key: &str| {
+            self.properties.iter().find_map(|line| {
+                line.strip_prefix(key)
+                    .and_then(|tail| tail.strip_prefix(':'))
+            })
+        };
+        let secured = matches!(
+            value("802-11-wireless-security.key-mgmt"),
+            Some("wpa-psk" | "sae")
+        );
+        // Otherwise NetworkManager uses its saved credential or secret agent.
+        let unsaved = value("802-11-wireless-security.psk-flags")
+            .and_then(|flags| flags.split_whitespace().next())
+            .and_then(|flags| flags.parse::<u32>().ok())
+            .is_some_and(|flags| flags & 2 != 0);
+        secured && unsaved
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn only_unsaved_secured_profiles_require_a_password() {
+        for (security, flags, expected) in [
+            ("--", "2 (not saved)", false),
+            ("wpa-psk", "0 (none)", false),
+            ("wpa-psk", "1 (agent owned)", false),
+            ("wpa-psk", "2 (not saved)", true),
+            ("sae", "2", true),
+        ] {
+            let connection = NetworkConnection {
+                uuid: String::new(),
+                name: String::new(),
+                kind: "wifi".into(),
+                device: String::new(),
+                properties: vec![
+                    format!("802-11-wireless-security.key-mgmt:{security}"),
+                    format!("802-11-wireless-security.psk-flags:{flags}"),
+                ],
+            };
+            assert_eq!(connection.needs_local_password(), expected);
+        }
+    }
+}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NetworkSnapshot {
     pub devices: Vec<NetworkDevice>,

@@ -19,7 +19,7 @@ with subtest("Export folder picker opens and cancels without crashing"):
         "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "
         "systemd-run --user --unit=peasy-export-test --collect --no-block "
         "env -u GSETTINGS_SCHEMA_DIR XDG_DATA_DIRS=/tmp/peasy-empty-data "
-        "GTK_A11Y=atspi GDK_DEBUG=no-portals peasy-ui"
+        "GTK_A11Y=atspi GDK_DEBUG=no-portals peasy-ui --settings"
     )
     machine.succeed("su - alice -c " + shlex.quote(launch))
     # Use accessibility actions rather than screen coordinates or test-only UI
@@ -59,11 +59,11 @@ def find(name):
                     print(node.getRoleName(), repr(node.name), flush=True)
     raise AssertionError("Peasy accessibility element missing: " + name)
 
-def wait_closed():
+def wait_closed(button="Export here"):
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         dispatch_events()
-        if not any(node.name == "Export here"
+        if not any(node.name == button
                    for app in pyatspi.Registry.getDesktop(0)
                    if app is not None and "peasy" in app.name.lower()
                    for node in descendants(app)):
@@ -76,18 +76,24 @@ def click(name):
     assert action.nActions > 0, name
     assert action.doAction(0), name
 
-click("Export system")
+click("Export backup")
 find("Export here")
 click("Cancel")
 wait_closed()
-find("Export system")
+find("Export backup")
 # A second open ensures cancelling did not break the callback or settings UI.
-click("Export system")
+click("Export backup")
 find("Export here")
 click("Cancel")
 wait_closed()
-find("Export system")
-print("Export picker opened and cancelled twice")
+find("Export backup")
+for _ in range(2):
+    click("Restore backup")
+    find("Open backup")
+    click("Cancel")
+    wait_closed("Open backup")
+    find("Restore backup")
+print("Export and Restore pickers opened and cancelled twice")
 """
     # Put the quoted probe in a root-owned VM-only file so user()'s shell
     # quoting cannot alter Python code. No export destination is ever accepted.

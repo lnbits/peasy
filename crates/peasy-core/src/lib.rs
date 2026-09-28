@@ -1,3 +1,7 @@
+mod release;
+pub use release::{PeasyRelease, PeasyUpdateStatus, UPDATE_ASSET, UPDATE_FORMAT};
+mod backup;
+pub use backup::{PortableBackup, RestoreMode};
 mod model_schema;
 pub use model_schema::model_response_schema;
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,7 +64,8 @@ pub const MAX_QUERY_BYTES: usize = 160;
 #[path = "../../../peas/system_configuration/types.rs"]
 mod system_configuration;
 pub use system_configuration::{
-    ManagedSetup, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS, SystemSetup, setup_schema,
+    ManagedSetup, POSTGRESQL_PACKAGES, PostgresqlSetup, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS,
+    SystemSetup, setup_schema,
 };
 
 const MANAGED_STATE_PREFIX: &str = "# peasy-state-json: ";
@@ -90,7 +95,9 @@ pub fn validate_query(value: &str) -> Result<&str, ValidationError> {
     Ok(value)
 }
 
-fn normalize_model_message(mut value: String) -> Result<String, ValidationError> {
+pub const MAX_MODEL_MESSAGE_CHARS: usize = 8000;
+
+fn normalize_model_message(value: String) -> Result<String, ValidationError> {
     if value
         .chars()
         .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
@@ -99,12 +106,10 @@ fn normalize_model_message(mut value: String) -> Result<String, ValidationError>
             "agent response contains invalid control characters".into(),
         ));
     }
-    if value.len() > 400 {
-        let mut end = 400;
-        while !value.is_char_boundary(end) {
-            end -= 1;
-        }
-        value.truncate(end);
+    if value.chars().count() > MAX_MODEL_MESSAGE_CHARS {
+        return Err(ValidationError::InvalidRequest(
+            "agent explanation exceeds its length limit".into(),
+        ));
     }
     Ok(value)
 }
@@ -493,22 +498,57 @@ pub const IPC_RESTARTING_MESSAGE: &str = "Peasy is updating. Retry the request s
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "request", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcRequest {
-    SearchPackages { query: String },
+    CheckPeasyUpdate {
+        #[serde(default)]
+        force: bool,
+    },
+    ProposePeasyUpdate {
+        release: PeasyRelease,
+    },
+    SearchPackages {
+        query: String,
+    },
     GetPackages,
     GetTheme,
     GetManagedModule,
-    ProposeInstall { package: String },
-    ProposeSetup { package: String, setup: SystemSetup },
-    ProposeAppImageInstall { package: AppImagePackage },
-    ProposeRemove { package: String },
-    ProposeTheme { theme: ThemeSettings },
-    ProposeNetwork { plan: NetworkPlan },
-    ProposePea { pin: pea::PeaPin, enable: bool },
-    Apply { proposal: String },
-    ApplyWithProgress { proposal: String },
+    ProposeInstall {
+        package: String,
+    },
+    ProposeSetup {
+        package: String,
+        setup: SystemSetup,
+    },
+    ProposeAppImageInstall {
+        package: AppImagePackage,
+    },
+    ProposeRemove {
+        package: String,
+    },
+    ProposeTheme {
+        theme: ThemeSettings,
+    },
+    ProposeNetwork {
+        plan: NetworkPlan,
+    },
+    ProposePea {
+        pin: pea::PeaPin,
+        enable: bool,
+    },
+    Apply {
+        proposal: String,
+    },
+    ApplyWithProgress {
+        proposal: String,
+    },
     Inspect,
     ProposeRecovery,
-    Cancel { proposal: String },
+    ProposeRestore {
+        backup: PortableBackup,
+        mode: RestoreMode,
+    },
+    Cancel {
+        proposal: String,
+    },
     Status,
 }
 
@@ -525,6 +565,13 @@ pub struct Proposal {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProposalChange {
+    PeasyUpdate {
+        release: PeasyRelease,
+    },
+    Restore {
+        backup: PortableBackup,
+        mode: RestoreMode,
+    },
     Pea {
         pin: pea::PeaPin,
         enable: bool,
@@ -578,6 +625,7 @@ pub struct ApplyResult {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    PeasyUpdate { status: PeasyUpdateStatus },
     SearchResults { candidates: Vec<PackageCandidate> },
     Packages { packages: Vec<String> },
     Theme { theme: ThemeSettings },
@@ -646,6 +694,8 @@ pub struct ServiceStatus {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peasy_release: Option<PeasyRelease>,
     pub packages: Vec<String>,
     #[serde(default)]
     pub appimages: Vec<AppImagePackage>,
@@ -661,6 +711,9 @@ pub struct PackageState {
 
 impl PackageState {
     pub fn normalize(&mut self) -> Result<(), ValidationError> {
+        if let Some(release) = &self.peasy_release {
+            release.validate()?;
+        }
         if self.peas.len() > 32 {
             return Err(ValidationError::TooLong);
         }
@@ -695,6 +748,16 @@ impl PackageState {
             }
         }
         self.setups.sort_by(|a, b| a.package.cmp(&b.package));
+        let postgres_packages: BTreeSet<_> = self
+            .setups
+            .iter()
+            .filter_map(|s| s.settings.postgresql.as_ref().map(|p| &p.package))
+            .collect();
+        if postgres_packages.len() > 1 {
+            return Err(ValidationError::InvalidRequest(
+                "conflicting PostgreSQL server versions".into(),
+            ));
+        }
         let mut unique = BTreeSet::new();
         for package in &self.packages {
             validate_attribute(package)?;
@@ -737,6 +800,7 @@ impl PackageState {
             setups: self.setups.clone(),
             networks: self.networks.clone(),
             peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         })
     }
 
@@ -758,6 +822,7 @@ impl PackageState {
             setups: self.setups.clone(),
             networks: self.networks.clone(),
             peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -777,6 +842,7 @@ impl PackageState {
             setups: self.setups.clone(),
             networks: self.networks.clone(),
             peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -795,6 +861,7 @@ impl PackageState {
             setups: self.setups.clone(),
             networks: self.networks.clone(),
             peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         })
     }
 }
@@ -821,18 +888,39 @@ fn render_packages_module_version(
     let package_lines = state
         .effective_packages()
         .iter()
+        .filter(|package| {
+            !state.setups.iter().any(|setup| {
+                setup.settings.postgresql.is_some()
+                    && &setup.package == *package
+                    && (package.as_str() == "postgresql"
+                        || POSTGRESQL_PACKAGES.contains(&package.as_str()))
+            })
+        })
         .map(|package| format!("      \"{package}\""))
         .collect::<Vec<_>>()
         .join("\n");
     let mut appearance = system_configuration::render(&state.setups);
+    appearance.push_str(&release::render(state.peasy_release.as_ref()));
     appearance.push_str(&networking::render(&state.networks));
     appearance.push_str(&pea::render(&state.peas));
     if !state.theme.is_empty() {
-        appearance.push_str(if legacy_gnome {
+        // The setup and theme share one module; emit the enable assignment once.
+        let explicit_dconf = state.setups.iter().any(|s| {
+            s.settings
+                .enable
+                .iter()
+                .any(|o| o == "programs.dconf.enable")
+        });
+        let theme_header = if legacy_gnome {
             "\n  programs.dconf.enable = true;\n  programs.dconf.profiles.user.databases = [\n    {\n      settings.\"org/gnome/desktop/interface\" = {\n"
         } else {
             "\n  programs.dconf.enable = lib.mkIf (config.services.desktopManager.gnome.enable or false) true;\n  programs.dconf.profiles.user.databases = lib.mkIf (config.services.desktopManager.gnome.enable or false) [\n    {\n      settings.\"org/gnome/desktop/interface\" = {\n"
-        });
+        };
+        for line in theme_header.split_inclusive('\n') {
+            if !explicit_dconf || !line.contains("programs.dconf.enable =") {
+                appearance.push_str(line);
+            }
+        }
         if let Some(color) = state.theme.accent_color {
             appearance.push_str(&format!("        accent-color = \"{color}\";\n"));
         }
@@ -1219,6 +1307,7 @@ mod tests {
             setups: Vec::new(),
             networks: Vec::new(),
             peas: Vec::new(),
+            peasy_release: None,
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -1244,6 +1333,7 @@ mod tests {
                 setups: Vec::new(),
                 networks: Vec::new(),
                 peas: Vec::new(),
+                peasy_release: None,
                 appimages: vec![],
                 theme,
             };

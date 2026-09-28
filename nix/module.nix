@@ -61,7 +61,13 @@ let
     if cfg.hostFlake == null then cfg.hostConfiguration else "${hostFlakeDirectory}/flake.nix";
 in
 {
+  key = "peasy-base-module";
   options.services.peasy = {
+    updates.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Allow background stable GitHub release checks and administrator-reviewed Peasy updates.";
+    };
     peas.allowOfficial = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -330,6 +336,10 @@ in
     ++ lib.optional (
       cfg.desktop.enable && config.services.desktopManager.plasma6.enable
     ) pkgs.kdePackages.kconfig;
+    environment.etc."peasy/update-policy.json".text = builtins.toJSON {
+      enabled = cfg.updates.enable;
+      version = package.version;
+    };
     environment.etc."peasy/daemon-identity.json".source = daemonIdentity;
     environment.etc."peasy/appimage-policy.json".text = builtins.toJSON cfg.appImages.trustedHashes;
 
@@ -357,6 +367,11 @@ in
         configured_desktops = configuredDesktops;
         peasy_variant = if cfg.desktop.enable then "desktop" else "headless";
         installed_system_packages = installedSystemPackages;
+        postgresql = {
+          enabled = config.services.postgresql.enable;
+          version =
+            if config.services.postgresql.enable then config.services.postgresql.package.version else null;
+        };
       };
     };
 
@@ -365,9 +380,12 @@ in
       text = "${exportConfiguration}\n";
     };
 
-    # Preserve the module path as it appears in the administrator's source so
-    # the system exporter can replace a checkout/store-specific reference with
-    # the Peasy source included in the portable bundle.
+    environment.etc."peasy/managed-module-path" = {
+      mode = "0444";
+      text = "${managedModule}\n";
+    };
+
+    # Retain the original source location for diagnostic tools.
     environment.etc."peasy/module-import-path" = {
       mode = "0444";
       text = "${builtins.unsafeDiscardStringContext (toString ./module.nix)}\n";
@@ -436,7 +454,6 @@ in
       wantedBy = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session-pre.target" ];
-      unitConfig.ConditionPathExists = "/etc/peasy/theme.json";
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${package}/bin/peasy --sync-theme";
@@ -506,6 +523,54 @@ in
         RuntimeDirectoryMode = "0750";
         UMask = "0027";
         BindReadOnlyPaths = [ "/run/peasy/pea-fetch/request.json:/run/peasy-pea-request.json" ];
+        InaccessiblePaths = [
+          "/run/peasy"
+          "/nix/var/nix/daemon-socket"
+        ];
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        RestrictSUIDSGID = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_INET"
+          "AF_INET6"
+        ];
+        SystemCallFilter = [
+          "@system-service"
+          "~@mount"
+          "~@debug"
+        ];
+        SystemCallArchitectures = "native";
+        TimeoutStartSec = 100;
+        TimeoutStopSec = 5;
+        MemoryMax = "128M";
+        TasksMax = 32;
+        LimitCORE = 0;
+      };
+    };
+
+    systemd.services.peasy-update-check = {
+      description = "Check published stable Peasy releases";
+      environment.SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        DynamicUser = true;
+        Group = "peasy-pea-readers";
+        ExecStart = "${package}/libexec/peasy-system --check-releases";
+        RuntimeDirectory = "peasy-update-check";
+        RuntimeDirectoryMode = "0750";
+        UMask = "0027";
         InaccessiblePaths = [
           "/run/peasy"
           "/nix/var/nix/daemon-socket"
@@ -629,6 +694,42 @@ in
         IPAddressDeny = "any";
       };
     };
+
+    systemd.services.peasy-postgresql-inspect = {
+      description = "Inspect retained PostgreSQL directory versions for Peasy";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${package}/libexec/peasy-system --inspect-postgresql --runtime-dir /run/peasy";
+        RuntimeDirectory = "peasy/postgresql";
+        RuntimeDirectoryMode = "0700";
+        RuntimeDirectoryPreserve = "yes";
+        UMask = "0077";
+        CapabilityBoundingSet = [ "CAP_DAC_READ_SEARCH" ];
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ "/run/peasy/postgresql" ];
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        IPAddressDeny = "any";
+        SystemCallFilter = [
+          "@system-service"
+          "~@mount"
+          "~@debug"
+        ];
+        TimeoutStartSec = 15;
+      };
+    };
+
+    system.preSwitchChecks.peasy = ''
+      if [ "''${PEASY_ACTIVATION_GUARD:-}" = 1 ]; then
+        ${package}/libexec/peasy-system --check-activation --runtime-dir /run/peasy
+      fi
+    '';
 
     systemd.services.peasy-activate = {
       description = "Activate a Peasy-validated NixOS generation";

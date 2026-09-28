@@ -2,6 +2,8 @@
 mod appearance;
 #[path = "../../../peas/appimages/system.rs"]
 mod appimages;
+#[path = "backup.rs"]
+mod backup;
 #[path = "../../../peas/networking/system.rs"]
 mod networking;
 #[path = "../../../peas/packages/system.rs"]
@@ -10,6 +12,8 @@ mod packages;
 mod pea;
 #[path = "../../../peas/system_configuration/system.rs"]
 mod system_configuration;
+#[path = "update.rs"]
+mod update;
 use packages::CachedSearch;
 
 use crate::{activation, recovery, state};
@@ -87,6 +91,7 @@ pub struct NixBackend {
     apply_lock: Mutex<()>,
     evaluation_lock: Mutex<()>,
     pea_fetch_lock: Mutex<()>,
+    update_cache: Mutex<Option<(std::time::Instant, peasy_core::PeasyUpdateStatus)>>,
 }
 
 #[derive(Clone)]
@@ -136,6 +141,7 @@ impl NixBackend {
             apply_lock: Mutex::new(()),
             evaluation_lock: Mutex::new(()),
             pea_fetch_lock: Mutex::new(()),
+            update_cache: Mutex::new(None),
         })
     }
 
@@ -185,7 +191,9 @@ impl NixBackend {
         if recovery::load(&self.config.managed_module)?.is_some() {
             bail!("An interrupted change needs recovery before another system change");
         }
+        let previous_generation = recovery::generation(&self.config.active_system);
         let mut expected_attributes = match change {
+            ProposalChange::Restore { backup, .. } => backup.packages.clone(),
             ProposalChange::Package {
                 operation: PackageOperation::Install,
                 package,
@@ -194,11 +202,7 @@ impl NixBackend {
             ProposalChange::Setup {
                 operation: PackageOperation::Install,
                 setup,
-            } => {
-                let mut a = setup.settings.packages.clone();
-                a.push(setup.package.clone());
-                a
-            }
+            } => setup.package_attributes(),
             _ => vec![],
         };
         expected_attributes.sort();
@@ -213,6 +217,21 @@ impl NixBackend {
             bail!("Package review is incomplete; review the change again");
         }
         let (proposed, message) = match change {
+            ProposalChange::PeasyUpdate { release } => {
+                self.verify_peasy_update(release)?;
+                (
+                    previous.with_peasy_release(release)?,
+                    format!(
+                        "Peasy {} installed. Close and reopen Peasy to use the new application. The service updates automatically; the previous NixOS generation remains available for rollback.",
+                        release.version
+                    ),
+                )
+            }
+            ProposalChange::Restore { backup, mode } => {
+                let proposed = backup.restore(&previous, *mode)?;
+                self.verify_restore_peas(&previous, &proposed)?;
+                (proposed, "Backup restored. Destination hardware, service setups, network profiles and AppImages were preserved. Saved service setups, network profiles and AppImages still need destination review.".into())
+            }
             ProposalChange::Recovery { .. } => unreachable!(),
             ProposalChange::Pea { pin, enable } => {
                 if *enable {
@@ -327,6 +346,12 @@ impl NixBackend {
             render_packages_module(&proposed)?,
         )?;
 
+        if let ProposalChange::PeasyUpdate { release } = change {
+            peasy_core::progress::report(peasy_core::OperationStage::Validating);
+            self.prepare_peasy_source(release, &stage)?;
+            cancellation.check()?;
+        }
+
         let out_link = stage.join("result");
         let system_expression = stage.join("system.nix");
         let assertions = reviewed.iter().map(|p| format!(
@@ -348,7 +373,7 @@ impl NixBackend {
         let mut journal = recovery::Journal {
             before: previous.clone(),
             proposed: proposed.clone(),
-            previous_generation: recovery::generation(&self.config.active_system),
+            previous_generation: previous_generation.clone(),
             target_generation: None,
             phase: recovery::Phase::Building,
         };
@@ -357,12 +382,19 @@ impl NixBackend {
             managed: &'a Path,
             previous: &'a PackageState,
             proposed: &'a PackageState,
+            active_system: &'a Path,
+            previous_generation: &'a Option<PathBuf>,
             activating: bool,
         }
         impl JournalCleanup<'_> {
             fn rollback(&self) -> Result<()> {
                 if self.activating {
                     return Ok(());
+                }
+                if &recovery::generation(self.active_system) != self.previous_generation {
+                    bail!(
+                        "The active system changed outside this operation; configuration was preserved. Run peasy --status to review recovery"
+                    );
                 }
                 let current = state::load_managed(self.managed)?;
                 if current == *self.proposed {
@@ -388,9 +420,22 @@ impl NixBackend {
             managed: &self.config.managed_module,
             previous: &previous,
             proposed: &proposed,
+            active_system: &self.config.active_system,
+            previous_generation: &previous_generation,
             activating: false,
         };
+        if self.current_state()? != previous
+            || recovery::generation(&self.config.active_system) != previous_generation
+        {
+            bail!("System configuration changed while preparing the build; review again");
+        }
         state::write_managed_atomic(&self.config.managed_module, &proposed)?;
+        let mut activation_guard = activation::ActivationGuard::new(
+            &self.config.active_system,
+            &self.config.managed_module,
+            &proposed,
+        )?;
+        activation_guard.generation = previous_generation.clone();
         peasy_core::progress::report(peasy_core::OperationStage::Validating);
         let build_result = self.runner.run(
             &self.config.nix,
@@ -424,6 +469,10 @@ impl NixBackend {
                 message: format!("Configuration test failed: {}", useful_stderr(&build)),
             });
         }
+        if let Err(error) = activation_guard.check() {
+            journal_cleanup.rollback()?;
+            return Err(error);
+        }
         let system = match fs::canonicalize(&out_link).context("NixOS build produced no result") {
             Ok(system) => system,
             Err(error) => {
@@ -450,6 +499,10 @@ impl NixBackend {
                 ),
             });
         }
+        if let Err(error) = activation_guard.check() {
+            journal_cleanup.rollback()?;
+            return Err(error);
+        }
         // Cancellation is allowed until this atomic transition. Once protected,
         // neither window closure nor a disconnected client can kill activation.
         if let Err(error) = cancellation.protect() {
@@ -463,7 +516,7 @@ impl NixBackend {
         journal_cleanup.activating = true;
         peasy_core::progress::report(peasy_core::OperationStage::Activating);
         let activation_attempt = (|| -> Result<_> {
-            activation::write_request(&self.config.runtime_dir, &system)?;
+            activation::write_request(&self.config.runtime_dir, &system, activation_guard)?;
             let activation = self.runner.run(
                 &self.config.systemctl,
                 &["start".into(), "peasy-activate.service".into()],
@@ -592,7 +645,15 @@ impl NixBackend {
         journal.target_generation = Some(previous.clone());
         recovery::write(&recovery::path(&self.config.managed_module), &journal)?;
         peasy_core::progress::report(peasy_core::OperationStage::Activating);
-        activation::write_request(&self.config.runtime_dir, previous)?;
+        activation::write_request(
+            &self.config.runtime_dir,
+            previous,
+            activation::ActivationGuard::new(
+                &self.config.active_system,
+                &self.config.managed_module,
+                &self.current_state()?,
+            )?,
+        )?;
         let output = self.runner.run(
             &self.config.systemctl,
             &["start".into(), "peasy-activate.service".into()],
@@ -731,6 +792,37 @@ mod tests {
                     PackageState::default().with_change(PackageOperation::Install, "hello")?;
                 state::write_managed_atomic(&self.0, &foreign)?;
                 Ok(output(1, "", "failed build"))
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let configuration = config(temp.path().join("state"));
+        let runner = Arc::new(ChangedDuringBuild(configuration.managed_module.clone()));
+        let backend = NixBackend::new(configuration, runner).unwrap();
+        let preview = backend
+            .preview_theme(ThemeSettings {
+                accent_color: Some(peasy_core::AccentColor::Blue),
+                color_scheme: None,
+            })
+            .unwrap();
+        let error = backend
+            .apply(&preview.change, &preview.before, &"a".repeat(48), &[])
+            .unwrap_err();
+        assert!(error.to_string().contains("changed outside this operation"));
+        assert_eq!(backend.packages().unwrap(), ["hello"]);
+        assert!(backend.inspect().unwrap().recovery.unwrap().needs_attention);
+    }
+
+    #[test]
+    fn successful_build_cannot_activate_over_an_administrator_edit() {
+        struct ChangedDuringBuild(PathBuf);
+        impl CommandRunner for ChangedDuringBuild {
+            fn run(&self, _: &Path, args: &[OsString], _: Option<&Path>) -> Result<Output> {
+                assert_eq!(args[0], "build", "activation must never start");
+                state::write_managed_atomic(
+                    &self.0,
+                    &PackageState::default().with_change(PackageOperation::Install, "hello")?,
+                )?;
+                Ok(output(0, "", ""))
             }
         }
         let temp = tempfile::tempdir().unwrap();
@@ -1072,6 +1164,154 @@ mod tests {
         }
     }
 
+    fn update_fixture() -> (
+        tempfile::TempDir,
+        NixBackend,
+        Arc<MockRunner>,
+        peasy_core::PeasyRelease,
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::new()),
+            calls: Mutex::new(vec![]),
+        });
+        let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
+        let policy = backend.config.active_system.join("etc/peasy");
+        fs::create_dir_all(&policy).unwrap();
+        fs::write(
+            policy.join("update-policy.json"),
+            r#"{"enabled":true,"version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let pin = peasy_core::PeasyRelease {
+            format: 1,
+            version: "0.2.0".into(),
+            tag: "v0.2.0".into(),
+            revision: "a".repeat(40),
+            sha256: "b".repeat(64),
+        };
+        fs::create_dir_all(temp.path().join("peasy-update-check")).unwrap();
+        fs::write(temp.path().join("peasy-update-check/result.json"), serde_json::to_vec(&serde_json::json!({"published":{"latest_version":"0.2.0","release":pin,"message":"verified"}})).unwrap()).unwrap();
+        (temp, backend, runner, pin)
+    }
+
+    #[test]
+    fn release_checks_cache_success_and_respect_active_policy_and_versions() {
+        let (temp, backend, runner, pin) = update_fixture();
+        runner
+            .outputs
+            .lock()
+            .unwrap()
+            .extend([output(0, "", ""), output(0, "", "")]);
+        assert_eq!(
+            backend.check_peasy_update(false).unwrap().release,
+            Some(pin)
+        );
+        assert!(backend.check_peasy_update(false).unwrap().release.is_some());
+        assert!(backend.check_peasy_update(true).unwrap().release.is_some());
+        assert_eq!(runner.calls.lock().unwrap().len(), 2);
+        // Explicit refresh bypasses the six-hour cache after the short debounce.
+        backend.update_cache.lock().unwrap().as_mut().unwrap().0 =
+            std::time::Instant::now() - Duration::from_secs(31);
+        runner
+            .outputs
+            .lock()
+            .unwrap()
+            .extend([output(0, "", ""), output(0, "", "")]);
+        fs::write(
+            temp.path().join("peasy-update-check/result.json"),
+            r#"{"published":{"latest_version":"0.1.0","release":null,"message":"No metadata"}}"#,
+        )
+        .unwrap();
+        let status = backend.check_peasy_update(true).unwrap();
+        assert!(status.release.is_none());
+        assert!(status.message.contains("up to date"));
+        fs::write(
+            backend
+                .config
+                .active_system
+                .join("etc/peasy/update-policy.json"),
+            r#"{"enabled":false,"version":"0.1.0"}"#,
+        )
+        .unwrap();
+        assert!(
+            backend
+                .check_peasy_update(true)
+                .unwrap()
+                .message
+                .contains("disabled")
+        );
+        assert_eq!(runner.calls.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn update_apply_rechecks_publication_and_failed_build_restores_previous_state() {
+        let (temp, backend, runner, pin) = update_fixture();
+        runner
+            .outputs
+            .lock()
+            .unwrap()
+            .extend([output(0, "", ""), output(0, "", "")]);
+        let preview = backend.preview_peasy_update(pin.clone()).unwrap();
+        assert!(preview.packages.is_empty());
+        let original = backend.managed_module().unwrap();
+        // A release that disappeared after review must never be built.
+        fs::write(
+            temp.path().join("peasy-update-check/result.json"),
+            r#"{"published":{"latest_version":null,"release":null,"message":"absent"}}"#,
+        )
+        .unwrap();
+        runner
+            .outputs
+            .lock()
+            .unwrap()
+            .extend([output(0, "", ""), output(0, "", "")]);
+        assert!(
+            backend
+                .apply(&preview.change, &preview.before, "gone", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("published Peasy release changed")
+        );
+        assert_eq!(backend.managed_module().unwrap(), original);
+        fs::write(temp.path().join("peasy-update-check/result.json"), serde_json::to_vec(&serde_json::json!({"published":{"latest_version":"0.2.0","release":pin,"message":"verified"}})).unwrap()).unwrap();
+        runner.outputs.lock().unwrap().extend([
+            output(0, "", ""),
+            output(0, "", ""),
+            output(1, "", "hash mismatch"),
+        ]);
+        assert!(
+            backend
+                .apply(&preview.change, &preview.before, "fetch-failed", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("hash mismatch")
+        );
+        assert_eq!(backend.managed_module().unwrap(), original);
+        assert!(
+            recovery::load(&backend.config.managed_module)
+                .unwrap()
+                .is_none()
+        );
+        runner.outputs.lock().unwrap().extend([
+            output(0, "", ""),
+            output(0, "", ""),
+            output(0, "", ""),
+            output(1, "", "incompatible host"),
+        ]);
+        let applied = backend
+            .apply(&preview.change, &preview.before, "failed-build", &[])
+            .unwrap();
+        assert!(!applied.activated && !applied.build_successful);
+        assert_eq!(backend.managed_module().unwrap(), original);
+        assert!(
+            recovery::load(&backend.config.managed_module)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(runner.calls.lock().unwrap().last().unwrap()[0], "build");
+    }
+
     fn appimage() -> AppImagePackage {
         AppImagePackage {
             id: "appimage.example.nostr-chat".into(),
@@ -1318,8 +1558,9 @@ mod tests {
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
         let settings = peasy_core::SystemSetup {
+            postgresql: None,
             packages: vec![],
-            enable: vec!["services.printing.enable".into()],
+            enable: vec!["services.flatpak.enable".into()],
             groups: vec![],
         };
         let preview = backend
@@ -1329,7 +1570,7 @@ mod tests {
             preview
                 .diff
                 .iter()
-                .any(|line| line.text.contains("services.printing.enable = true"))
+                .any(|line| line.text.contains("services.flatpak.enable = true"))
         );
         let result = backend
             .apply(
@@ -1390,6 +1631,35 @@ mod tests {
     }
 
     #[test]
+    fn postgres_host_ownership_is_rechecked_at_apply() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([output(
+                0,
+                r#"{"enabled":true,"version":"17.6"}"#,
+                "",
+            )])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        let mut setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/postgresql-example.json"
+        ))
+        .unwrap();
+        setup.settings.postgresql.as_mut().unwrap().caller_database = false;
+        setup.user = None;
+        setup.uid = None;
+        let before = backend.current_state().unwrap();
+        let error = backend
+            .apply_setup_state(&before, PackageOperation::Install, &setup)
+            .unwrap_err();
+        assert!(error.to_string().contains("outside Peasy"));
+        assert_eq!(backend.current_state().unwrap(), before);
+        assert_eq!(runner.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn invalid_setup_never_runs_nix_or_changes_state() {
         let temporary = tempfile::tempdir().unwrap();
         let runner = Arc::new(MockRunner {
@@ -1400,11 +1670,13 @@ mod tests {
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
         for settings in [
             peasy_core::SystemSetup {
+                postgresql: None,
                 packages: vec![],
                 enable: vec!["services.openssh.enable".into()],
                 groups: vec![],
             },
             peasy_core::SystemSetup {
+                postgresql: None,
                 packages: vec![],
                 enable: vec!["virtualisation.libvirtd.enable".into()],
                 groups: vec!["wheel".into()],
@@ -1462,6 +1734,86 @@ mod tests {
         assert!(!result.activated);
         assert_eq!(backend.current_state().unwrap(), before);
         assert_eq!(runner.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_preserves_destination_bindings_and_failed_build_restores_state() {
+        use peasy_core::{PortableBackup, RestoreMode};
+        let temp = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([
+                identity_output(&["hello"]),
+                output(1, "", "deliberate restore build failure"),
+            ])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
+        let setup = serde_json::from_str(include_str!(
+            "../../../peas/system_configuration/example.json"
+        ))
+        .unwrap();
+        let plan: peasy_core::NetworkPlan =
+            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+        let mut before = PackageState {
+            packages: vec!["git".into()],
+            setups: vec![setup],
+            networks: plan.profiles,
+            appimages: vec![appimage()],
+            ..PackageState::default()
+        };
+        before.normalize().unwrap();
+        state::write_managed_atomic(&backend.config.managed_module, &before).unwrap();
+        let backup = PortableBackup {
+            packages: vec!["hello".into()],
+            theme: ThemeSettings::default(),
+            peas: vec![],
+        };
+        for mode in [RestoreMode::Merge, RestoreMode::Replace] {
+            let after = backup.restore(&before, mode).unwrap();
+            assert_eq!(after.setups, before.setups);
+            assert_eq!(after.networks, before.networks);
+            assert_eq!(after.appimages, before.appimages);
+        }
+        let preview = backend
+            .preview_restore(backup, RestoreMode::Replace)
+            .unwrap();
+        assert_eq!(preview.packages.len(), 1);
+        assert!(preview.diff.iter().any(|line| line.text.contains("hello")));
+        assert!(
+            preview
+                .diff
+                .iter()
+                .any(|line| line.text.contains("preserved"))
+        );
+        let error = backend
+            .apply(&preview.change, &preview.before, &"c".repeat(48), &[])
+            .unwrap_err();
+        assert!(error.to_string().contains("review is incomplete"));
+        assert_eq!(backend.current_state().unwrap(), before);
+        let result = backend
+            .apply(
+                &preview.change,
+                &preview.before,
+                &"d".repeat(48),
+                &preview.packages,
+            )
+            .unwrap();
+        assert!(!result.activated);
+        assert_eq!(backend.current_state().unwrap(), before);
+        assert_eq!(runner.calls.lock().unwrap().len(), 2);
+        let mut concurrent = before.clone();
+        concurrent.packages.push("vim".into());
+        state::write_managed_atomic(&backend.config.managed_module, &concurrent).unwrap();
+        let error = backend
+            .apply(
+                &preview.change,
+                &preview.before,
+                &"e".repeat(48),
+                &preview.packages,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("stale"));
+        assert_eq!(runner.calls.lock().unwrap().len(), 2);
     }
 
     #[test]
@@ -1548,6 +1900,7 @@ mod tests {
                 setups: Vec::new(),
                 networks: Vec::new(),
                 peas: Vec::new(),
+                peasy_release: None,
                 appimages: Vec::new(),
                 theme: ThemeSettings::default(),
             },

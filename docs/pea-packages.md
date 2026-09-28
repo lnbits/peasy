@@ -1,9 +1,9 @@
-# Pea packages and host API v1
+# Pea packages and host API v2
 
 Pea packages contain domain instructions, capability descriptions, permissions,
 a version and an exact response schema. They are data; the installed Rust host
 owns resource discovery, validation, authorization, execution and recovery. The
-existing zero-import Wasm engine remains the policy boundary. Version 1 does not
+existing zero-import Wasm engine remains the policy boundary. Peasy does not
 load Rust libraries, scripts, remote Nix modules, or additional Wasm guests.
 
 A new package can teach the AI to compose existing host operations without
@@ -42,6 +42,19 @@ Apply repeats source verification after normal administrator authorization, then
 uses the existing stale-state check, build verification and activation transaction.
 If `main` moved since discovery, new installation requires fresh discovery/review.
 Existing enabled pins, ordinary rebuilds and rollback do not follow `main`.
+The explicit backup-restore flow also accepts a historical pin after the helper
+proves its revision is an ancestor of independently fetched official main using
+GitHub's bounded comparison response. An exact catalogue entry, artifact hash,
+compatible schema and current permission policy are still required. Unpublished
+branch/PR commits are rejected. This check runs during restore review and again
+after authorization; ordinary discovery continues to require current main.
+
+Manifest release 1.2.0 uses host API 3 for the expanded setup catalogue and longer
+manual instructions. Older hosts will not offer incompatible new manifests.
+The new host still accepts exact API 1 and API 2 schemas and immutable pins,
+including disabling and restoring those pins. API 2 added PostgreSQL; API 3 adds
+setup options and device groups. Arbitrary schema edits and permission expansion
+remain rejected.
 
 Source authentication uses fresh HTTPS rather than trusting a claimed catalogue
 hash or a previously populated Nix cache. The helper cannot access the Nix daemon

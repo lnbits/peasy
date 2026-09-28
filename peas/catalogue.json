@@ -4,12 +4,12 @@
     {
       "package": {
         "id": "appearance",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "appearance"
         ],
-        "hash": "77109bca8ea87f08b87b3e2cc1695502d456be6e45cd3e8293429ef633c50bf3"
+        "hash": "4ba529fd50afa91bee222128fbd9cc0b68507eddd91f8aa658545e75c65313de"
       },
       "capabilities": [
         "Inspect and configure supported desktop colours and light or dark appearance"
@@ -18,12 +18,12 @@
     {
       "package": {
         "id": "appimages",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "packages"
         ],
-        "hash": "279e6c89d9bbd42529f10552f177bb44b79b34287bde5dafe8cfc58f4b394149"
+        "hash": "5fed1baaaa841f6c1cbdedb011ee0a9ed849b7ad30e83a9b632af5440e710015"
       },
       "capabilities": [
         "Discover and install pinned upstream AppImage releases"
@@ -32,12 +32,12 @@
     {
       "package": {
         "id": "bluetooth",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "bluetooth"
         ],
-        "hash": "01e6b30f3d1691c8c40b027514363c9fb06a48498aef704f3e9aa3985963cbb3"
+        "hash": "d592b6ad355aad87e3102aa2db62acd40cfd4a2526576ae83c56cb92a65e1209"
       },
       "capabilities": [
         "Discover and connect or pair Bluetooth devices"
@@ -46,12 +46,12 @@
     {
       "package": {
         "id": "calendar",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "calendar"
         ],
-        "hash": "ddef9d57036b1b24702faf7ef7184252735e222639d6d4dd989bc600130a2ede"
+        "hash": "26548f5f48230944e1a8a5a060d7907296c452d5adfa1afdd5787b6fb60ef446"
       },
       "capabilities": [
         "Prepare local calendar events for import"
@@ -60,12 +60,12 @@
     {
       "package": {
         "id": "hyprland",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "hyprland"
         ],
-        "hash": "e8ba58ec9dcdd3d8984e1bed6a76cb9c47b4a58888a770562451c186113d1606"
+        "hash": "2ae637de19c759234f1af66bb5a79176c2aa294fb606870e922cb31dceaf0a24"
       },
       "capabilities": [
         "Inspect and control supported live Hyprland settings and window actions"
@@ -74,14 +74,14 @@
     {
       "package": {
         "id": "networking",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "network.read",
           "network.session",
           "network.system"
         ],
-        "hash": "85602afd53dcff362c3f9c86f024817fb820b8187f2a570e506afa772b7500da"
+        "hash": "fee7b4e3eb8201562ea1974a1294608aa45748a19f78867bb6ef505415953cc4"
       },
       "capabilities": [
         "Inspect interfaces, connection profiles, IPv4 addressing and routes",
@@ -91,12 +91,12 @@
     {
       "package": {
         "id": "packages",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "packages"
         ],
-        "hash": "791aa4fdce6ef2590e9109c9f07d6f9eb5b61080f0d8f3e2f21697f6c0ba03d4"
+        "hash": "5a083da8a7dfb2e02cfc6405823dd5bbb45143493cb8b4a7a51a425cfdb7939b"
       },
       "capabilities": [
         "Find, install and remove Nixpkgs applications and their reviewed system integration"
@@ -105,12 +105,12 @@
     {
       "package": {
         "id": "system_configuration",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "packages"
         ],
-        "hash": "a255e7f0134b86c8cbc63ff16d8cfb96e54876c68ee7c6169a4d0d4be3ec9be7"
+        "hash": "22b44027f8d4f0b5521f0167f8194570ad1c7e4cb85ccc42cf60a4b4e3d3b2d8"
       },
       "capabilities": [
         "Configure application dependencies, reviewed NixOS enable options and caller-bound groups"
@@ -119,12 +119,12 @@
     {
       "package": {
         "id": "wifi",
-        "version": "1.0.0",
-        "host_api": 1,
+        "version": "1.2.0",
+        "host_api": 3,
         "permissions": [
           "wifi"
         ],
-        "hash": "31ac3d13631f7b1298274b9fbc77e4b954c10da0f8653c4ec77078351521d885"
+        "hash": "86249f92251119f8b0d5a9fb7b69c7ec04d6e5c78b8f5da29f19232532a41f65"
       },
       "capabilities": [
         "Discover nearby Wi-Fi networks and connect to an exact SSID"

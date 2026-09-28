@@ -91,6 +91,20 @@ class Releases(unittest.TestCase):
     def publish(self, assets, github):
         release_isos.publish(assets, TAG, COMMIT, REPO, self.output, run=github)
 
+    def test_verified_updater_asset_is_uploaded_and_checksummed_before_publication(self):
+        assets = self.prepare()
+        metadata = self.root / 'peasy-update.json'
+        metadata.write_text(json.dumps({'format': 1, 'version': TAG[1:], 'tag': TAG,
+                                        'revision': COMMIT, 'sha256': 'b' * 64}))
+        updater = release_isos.attach_update_metadata(metadata, self.output, TAG, COMMIT)
+        assets.append(updater)
+        self.assertIn(f'{join_iso.digest(updater)}  peasy-update.json',
+                      (self.output / 'SHA256SUMS').read_text())
+        github = GitHub()
+        self.publish(assets, github)
+        self.assertFalse(github.release['draft'])
+        self.assertIn('peasy-update.json', [asset['name'] for asset in github.assets])
+
     def test_direct_and_split_round_trip(self):
         assets = self.prepare()
         self.assertTrue(any(asset.name.endswith("gnome-x86_64.iso") for asset in assets))

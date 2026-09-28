@@ -13,7 +13,7 @@ pub fn model_response_schema() -> Value {
             "package": { "type": ["string", "null"], "description": "Exact package attribute from package_candidates or peasy_installed_packages.", "maxLength": MAX_ATTRIBUTE_BYTES },
             "package_version": { "type": ["string", "null"], "maxLength": 64 },
             "repository": { "type": ["string", "null"], "description": "Exact GitHub owner/repository for an upstream AppImage when known.", "maxLength": 201 },
-            "message": { "type": ["string", "null"], "description": "Concise user-facing explanation when useful.", "maxLength": 400 },
+            "message": { "type": ["string", "null"], "description": "Concise user-facing explanation when useful.", "maxLength": crate::MAX_MODEL_MESSAGE_CHARS },
             "theme_color": { "type": ["string", "null"], "enum": ["blue", "teal", "green", "yellow", "orange", "red", "pink", "purple", "slate", null] },
             "theme_mode": { "type": ["string", "null"], "enum": ["system", "light", "dark", null] },
             "ssid": { "type": ["string", "null"], "maxLength": MAX_SSID_BYTES },

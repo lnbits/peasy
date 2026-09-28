@@ -59,18 +59,33 @@ class ReleaseWorkflow(unittest.TestCase):
         sdk_step = next(step for step in self.jobs['publish']['steps'] if 'test_r2_sdk.py' in step.get('run', ''))
         self.assertEqual(sdk_step['env']['PEASY_REQUIRE_R2_SDK'], '1')
 
+    def test_updater_metadata_generated_before_credentials_and_shipped(self):
+        steps = self.jobs['publish']['steps']
+        prepare = next(i for i, step in enumerate(steps) if 'scripts/update_metadata.py' in step.get('run', ''))
+        publish = next(i for i, step in enumerate(steps) if 'scripts/release_isos.py' in step.get('run', ''))
+        self.assertLess(prepare, publish)
+        self.assertEqual(set(steps[prepare]['env']), {'TAG', 'COMMIT'})
+        self.assertIn('--update-metadata peasy-update.json', steps[publish]['run'])
+        self.assertIn('.#checks.x86_64-linux.updates', self.commands('security'))
+
     def test_single_iso_both_installer_desktops_and_security_gate_publication(self):
         self.assertEqual(self.jobs['build']['strategy']['matrix']['desktop'], ['gnome'])
         self.assertEqual(set(self.jobs['publish']['needs']), {'build', 'security'})
         self.assertIn("github.event_name == 'push' && github.ref_type == 'tag'", self.jobs['publish']['if'])
         self.assertEqual(self.workflow['on']['push']['tags'], ['v*'])
-        for check in ['sandbox', 'sandbox-fixture', 'system-configuration', 'core-package']:
+        for check in ['sandbox', 'sandbox-fixture', 'system-configuration', 'core-package', 'postgresql-vm', 'networking-vm', 'pea-fetch-vm']:
             self.assertIn(f'.#checks.x86_64-linux.{check}', self.commands('security').split())
+        self.assertIn('scripts/check-rust.sh', self.commands('security'))
+        self.assertIn('cargo audit --file Cargo.lock', self.commands('security'))
         build = self.commands('build')
         for check in ['iso-config', 'installer-target', 'wasm-imports', 'desktop-config']:
             self.assertIn(f'.#checks.x86_64-linux.{check}', build.split())
         self.assertIn('".#checks.x86_64-linux.${DESKTOP}-tray"', build)
         self.assertIn('.#checks.x86_64-linux.xfce-tray', build.split())
+        self.assertIn('.#checks.x86_64-linux.plasma-tray', build.split())
+        for fixture in ['networking-vm', 'postgresql-vm']:
+            self.assertLess(build.index(f'nix eval --raw .#checks.x86_64-linux.{fixture}.drvPath'),
+                            build.index('nix flake check --no-build'))
         self.assertIn('scripts/iso_vm.py --iso', build)
         self.assertIn('--firmware bios', build)
         self.assertIn('--firmware uefi', build)

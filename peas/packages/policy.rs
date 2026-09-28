@@ -8,7 +8,7 @@ pub(super) fn install(
     candidates: &[PackageCandidate],
 ) -> EngineDecision {
     if let Some(setup) = &setup
-        && let Err(error) = setup.validate()
+        && let Err(error) = setup.validate_for_package(&package)
     {
         return EngineDecision::Reject(error.to_string());
     }

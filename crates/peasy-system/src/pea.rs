@@ -11,6 +11,12 @@ use std::{
 };
 impl NixBackend {
     pub(super) fn verify_pea(&self, pin: &PeaPin) -> Result<()> {
+        self.verify_pea_source(pin, false)
+    }
+    pub(super) fn verify_backup_pea(&self, pin: &PeaPin) -> Result<()> {
+        self.verify_pea_source(pin, true)
+    }
+    fn verify_pea_source(&self, pin: &PeaPin, restore: bool) -> Result<()> {
         pin.validate()?;
         let policy = PeaPolicy::load(&self.config.pea_policy)?;
         if !policy.allows(pin) {
@@ -41,7 +47,12 @@ impl NixBackend {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        std::fs::write(&request, serde_json::to_vec(pin)?)?;
+        let request_bytes = if restore {
+            serde_json::to_vec(&serde_json::json!({"pin": pin, "restore": true}))?
+        } else {
+            serde_json::to_vec(pin)?
+        };
+        std::fs::write(&request, request_bytes)?;
         // The helper receives only this leaf through a read-only bind mount.
         std::fs::set_permissions(&request, std::fs::Permissions::from_mode(0o444))?;
         let verified = self.runner.run(

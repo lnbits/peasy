@@ -2,6 +2,62 @@
   {
     "envelope": {
       "action": "install_package",
+      "package": "postgresql_17",
+      "setup": {
+        "packages": [],
+        "enable": [],
+        "groups": [],
+        "postgresql": {
+          "package": "postgresql_17",
+          "caller_database": true
+        }
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "postgresql_17",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [],
+          "groups": [],
+          "postgresql": {
+            "package": "postgresql_17",
+            "caller_database": true
+          }
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "postgresql_17",
+          "name": "PostgreSQL",
+          "version": "17.6",
+          "description": "Database server"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "postgresql_17",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [],
+          "groups": [],
+          "postgresql": {
+            "package": "postgresql_17",
+            "caller_database": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
       "package": "virt-manager",
       "setup": {
         "packages": [],
@@ -624,6 +680,1437 @@
     "decision": {
       "decision": "disable_pea",
       "value": "networking"
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "virtualisation.libvirtd.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "virtualisation.libvirtd.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "virtualisation.libvirtd.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.virt-manager.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.virt-manager.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.virt-manager.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.printing.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.printing.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.printing.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "hardware.sane.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.sane.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.sane.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "hardware.bluetooth.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.bluetooth.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.bluetooth.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "virtualisation.podman.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "virtualisation.podman.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "virtualisation.podman.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "virtualisation.docker.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "virtualisation.docker.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "virtualisation.docker.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.nix-ld.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.nix-ld.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.nix-ld.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.direnv.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.direnv.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.direnv.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.zsh.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.zsh.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.zsh.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.fish.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.fish.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.fish.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.wireshark.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.wireshark.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.wireshark.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.mtr.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.mtr.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.mtr.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.appimage.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.appimage.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.appimage.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.appimage.binfmt",
+          "programs.appimage.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.appimage.binfmt",
+            "programs.appimage.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.appimage.binfmt",
+            "programs.appimage.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.flatpak.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.flatpak.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.flatpak.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.dconf.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.dconf.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.dconf.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.gnome.gnome-keyring.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.gnome.gnome-keyring.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.gnome.gnome-keyring.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.gvfs.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.gvfs.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.gvfs.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.udisks2.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.udisks2.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.udisks2.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.upower.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.upower.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.upower.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.pcscd.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.pcscd.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.pcscd.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "services.ratbagd.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.ratbagd.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "services.ratbagd.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "hardware.i2c.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.i2c.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.i2c.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "hardware.openrazer.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.openrazer.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.openrazer.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "hardware.steam-hardware.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.steam-hardware.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.steam-hardware.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "programs.gamemode.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.gamemode.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "programs.gamemode.enable"
+          ],
+          "groups": []
+        }
+      }
+    }
+  },
+  {
+    "envelope": {
+      "action": "install_package",
+      "package": "hello",
+      "setup": {
+        "packages": [],
+        "enable": [
+          "hardware.graphics.enable"
+        ],
+        "groups": [],
+        "postgresql": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "install_package",
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.graphics.enable"
+          ],
+          "groups": []
+        }
+      },
+      "candidates": [
+        {
+          "attribute": "hello",
+          "name": "hello",
+          "version": "2.12",
+          "description": "Test primary package"
+        }
+      ],
+      "installed": []
+    },
+    "decision": {
+      "decision": "install",
+      "value": {
+        "package": "hello",
+        "message": null,
+        "setup": {
+          "packages": [],
+          "enable": [
+            "hardware.graphics.enable"
+          ],
+          "groups": []
+        }
+      }
     }
   }
 ]

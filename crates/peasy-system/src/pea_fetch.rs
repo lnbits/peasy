@@ -46,16 +46,43 @@ pub(crate) fn validate_artifact(pin: &PeaPin, bytes: &[u8]) -> Result<PeaManifes
 
 fn verify_source(
     pin: &PeaPin,
+    restore: bool,
     mut fetch: impl FnMut(&str, usize) -> Result<Vec<u8>>,
 ) -> Result<Vec<u8>> {
     pin.validate()?;
-    // Checking a caller-selected commit's catalogue alone would also trust unpublished
-    // branch/PR commits. Verify the current official main ref independently first.
+    // Discovery requires the current main revision. Restore may use an older
+    // revision only after proving it is an ancestor of independently read main.
+    // Merely existing in this repository also includes unpublished PR commits.
     let reference: serde_json::Value = serde_json::from_slice(&fetch(OFFICIAL_REF, 32 * 1024)?)?;
-    if reference["object"]["type"] != "commit" || reference["object"]["sha"] != pin.revision {
-        bail!(
-            "official catalogue revision changed or was not published on main; discover and review again"
+    let head = reference["object"]["sha"]
+        .as_str()
+        .context("missing official revision")?;
+    if reference["object"]["type"] != "commit"
+        || head.len() != 40
+        || !head.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        bail!("invalid official main revision");
+    }
+    if head != pin.revision {
+        if !restore {
+            bail!(
+                "official catalogue revision changed or was not published on main; discover and review again"
+            );
+        }
+        // Page two avoids the unbounded changed-file patches on page one.
+        // https://docs.github.com/en/rest/commits/commits#compare-two-commits
+        let comparison = format!(
+            "https://api.github.com/repos/lnbits/peasy/compare/{}...{head}?per_page=1&page=2",
+            pin.revision
         );
+        let result: serde_json::Value = serde_json::from_slice(&fetch(&comparison, 128 * 1024)?)?;
+        if result["status"] != "ahead"
+            || result["behind_by"] != 0
+            || result["base_commit"]["sha"] != pin.revision
+            || result["merge_base_commit"]["sha"] != pin.revision
+        {
+            bail!("backup pea revision is not in the published main history");
+        }
     }
     let url = format!(
         "https://raw.githubusercontent.com/lnbits/peasy/{}/peas/catalogue.json",
@@ -90,7 +117,22 @@ pub fn run() -> Result<()> {
     if bytes.len() > 8192 {
         bail!("pea request too large");
     }
-    let pin: PeaPin = serde_json::from_slice(&bytes)?;
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RestoreRequest {
+        pin: PeaPin,
+        restore: bool,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Request {
+        Current(PeaPin),
+        Backup(RestoreRequest),
+    }
+    let (pin, restore) = match serde_json::from_slice(&bytes)? {
+        Request::Current(pin) => (pin, false),
+        Request::Backup(request) => (request.pin, request.restore),
+    };
     if !PeaPolicy::load(Path::new(POLICY_PATH))?.allows(&pin) {
         bail!("pea is disallowed by administrator policy");
     }
@@ -101,7 +143,7 @@ pub fn run() -> Result<()> {
         .timeout(Duration::from_secs(30))
         .user_agent("Peasy-pea-verifier/1")
         .build()?;
-    let bytes = verify_source(&pin, |url, limit| {
+    let bytes = verify_source(&pin, restore, |url, limit| {
         read_response(client.get(url).send()?, limit)
     })?;
     // RuntimeDirectory is private to this one-shot service and cleared on stop.
@@ -138,6 +180,48 @@ mod tests {
     }
 
     #[test]
+    fn restore_requires_published_ancestry_before_fetching_historical_artifacts() {
+        let (pin, catalogue, bytes) = fixture();
+        for accepted in [false, true] {
+            let mut artifact_fetched = false;
+            let result = verify_source(&pin, true, |url, _limit| {
+                if url == OFFICIAL_REF {
+                    return Ok(serde_json::to_vec(
+                        &json!({"object":{"type":"commit","sha":"b".repeat(40)}}),
+                    )?);
+                }
+                if url.contains("/compare/") {
+                    assert!(url.ends_with("?per_page=1&page=2"));
+                    return Ok(serde_json::to_vec(&json!({
+                        "status": if accepted { "ahead" } else { "diverged" },
+                        "behind_by": if accepted { 0 } else { 1 },
+                        "base_commit":{"sha":pin.revision},
+                        "merge_base_commit":{"sha": if accepted { pin.revision.clone() } else { "c".repeat(40) }}
+                    }))?);
+                }
+                assert!(accepted, "unpublished artifact must not be fetched");
+                if url.ends_with("catalogue.json") {
+                    return Ok(serde_json::to_vec(&catalogue)?);
+                }
+                assert_eq!(url, pin.url());
+                artifact_fetched = true;
+                Ok(bytes.clone())
+            });
+            assert_eq!(result.is_ok(), accepted);
+            assert_eq!(artifact_fetched, accepted);
+        }
+        // An 'ahead' label alone is insufficient without the exact merge base.
+        assert!(verify_source(&pin, true, |url, _| {
+            if url == OFFICIAL_REF {
+                Ok(serde_json::to_vec(&json!({"object":{"type":"commit","sha":"b".repeat(40)}}))?)
+            } else {
+                assert!(url.contains("/compare/"));
+                Ok(serde_json::to_vec(&json!({"status":"ahead", "behind_by":0, "base_commit":{"sha":pin.revision}, "merge_base_commit":{"sha":"c".repeat(40)}}))?)
+            }
+        }).is_err());
+    }
+
+    #[test]
     fn unpublished_revisions_and_forged_catalogue_metadata_never_fetch_a_package() {
         let (pin, catalogue, bytes) = fixture();
         for field in [
@@ -158,7 +242,7 @@ mod tests {
                 _ => {}
             }
             let mut calls = vec![];
-            let result = verify_source(&pin, |url, limit| {
+            let result = verify_source(&pin, false, |url, limit| {
                 calls.push((url.to_owned(), limit));
                 if url == OFFICIAL_REF {
                     return Ok(serde_json::to_vec(
@@ -176,7 +260,7 @@ mod tests {
             assert_eq!(calls.len(), if field == "revision" { 1 } else { 2 });
         }
         let mut calls = vec![];
-        let result = verify_source(&pin, |url, limit| {
+        let result = verify_source(&pin, false, |url, limit| {
             calls.push((url.to_owned(), limit));
             if url == OFFICIAL_REF {
                 Ok(serde_json::to_vec(

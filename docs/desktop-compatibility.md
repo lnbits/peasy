@@ -49,7 +49,8 @@ GNOME uses fixed `org.gnome.desktop.interface` keys. Plasma uses its installed
 `plasma-apply-colorscheme`: fixed Breeze scheme names and fixed colour literals.
 The one fixed `kdeglobals` → `General` → `AccentColor` key is saved with
 `kwriteconfig6`, because the upstream accent CLI recolours the palette without
-persisting that preference. No other KDE file/group/key is exposed.
+persisting that preference. Rollback also restores the fixed `General/ColorScheme`
+key and refreshes the palette; no file, group or key is selected by the model.
 Scheme and accent are separate calls because the upstream CLI treats them as
 separate modes ([KDE implementation](https://github.com/KDE/plasma-workspace/blob/master/kcms/colors/plasma-apply-colorscheme.cpp)).
 The model never selects executable paths, arguments, gsettings/KDE keys, config
@@ -62,6 +63,13 @@ generation's typed appearance to the active supported desktop. Desktop-native
 settings can still differ by user, and direct desktop changes are not claimed to
 be NixOS state. A saved system-default GNOME mode is rejected on Plasma until a
 supported explicit light/dark mode is chosen.
+
+Before overriding a user's appearance, Peasy records the original native values
+in a private per-user rollback file under `~/.local/state/peasy/appearance`
+(or `XDG_STATE_HOME`). This records only settings Peasy has taken over, not
+desired system configuration. Removing a managed field, switching to an empty
+theme, or rolling back to a generation without a theme file restores those
+values. An originally unset GNOME override is reset so desktop defaults apply.
 
 ## Application search
 

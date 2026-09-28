@@ -5,6 +5,7 @@ use peasy_core::{IpcRequest, IpcResponse, ThemeSettings};
 use std::{fs, path::Path, process::Command};
 
 pub(super) mod adapters;
+mod sync;
 
 /// Apply only Peasy's validated GNOME appearance enums in the current user's
 /// session. This deliberately runs without privilege and never accepts an
@@ -40,25 +41,53 @@ pub fn apply_live_theme_with(gsettings: &Path, theme: &ThemeSettings) -> Result<
     Ok(())
 }
 
+fn load_theme(theme_file: &Path) -> Result<ThemeSettings> {
+    Ok(match fs::metadata(theme_file) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata.len() > 4096 {
+                bail!("active Peasy theme state is not a small regular file");
+            }
+            serde_json::from_slice::<ThemeSettings>(&fs::read(theme_file)?)
+                .context("parsing active Peasy theme state")?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ThemeSettings::default(),
+        Err(error) => return Err(error).context("reading active Peasy theme metadata"),
+    })
+}
+
 pub fn sync_live_theme_from_file(theme_file: &Path, gsettings: &Path) -> Result<()> {
-    let metadata = fs::metadata(theme_file).context("reading active Peasy theme metadata")?;
-    if !metadata.is_file() || metadata.len() > 4096 {
-        bail!("active Peasy theme state is not a small regular file");
+    // Reject malformed input before creating any per-user state. The locked
+    // reconciliation reads again so it always uses the current generation.
+    load_theme(theme_file)?;
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/state"))
+        })
+        .context("HOME or XDG_STATE_HOME is required for appearance rollback")?;
+    if !state.is_absolute() {
+        bail!("appearance state directory must be absolute");
     }
-    let theme: ThemeSettings = serde_json::from_slice(&fs::read(theme_file)?)
-        .context("parsing active Peasy theme state")?;
-    adapters::apply(
+    sync::reconcile(
         runtime_desktop_kind(),
-        &theme,
-        gsettings,
-        &tool_path(
-            "PEASY_PLASMA_COLORSCHEME",
-            "/run/current-system/sw/bin/plasma-apply-colorscheme",
-        ),
-        &tool_path(
-            "PEASY_KWRITECONFIG",
-            "/run/current-system/sw/bin/kwriteconfig6",
-        ),
+        || load_theme(theme_file),
+        &state.join("peasy/appearance"),
+        &sync::Tools {
+            gsettings,
+            dconf: &tool_path("PEASY_DCONF", "/run/current-system/sw/bin/dconf"),
+            plasma: &tool_path(
+                "PEASY_PLASMA_COLORSCHEME",
+                "/run/current-system/sw/bin/plasma-apply-colorscheme",
+            ),
+            kconfig: &tool_path(
+                "PEASY_KWRITECONFIG",
+                "/run/current-system/sw/bin/kwriteconfig6",
+            ),
+            kread: &tool_path(
+                "PEASY_KREADCONFIG",
+                "/run/current-system/sw/bin/kreadconfig6",
+            ),
+        },
     )
 }
 

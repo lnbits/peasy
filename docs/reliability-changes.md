@@ -3,10 +3,10 @@
 This change addresses the export, daemon upgrade, package review, interruption
 recovery and progress findings from the September 2026 review.
 
-- **Export:** one managed module, reachable from both the wrapper and original
-  host imports; bundled Peasy imports rooted at the restore destination; private output permissions;
-  common secret/Git/backup exclusions; an included/excluded file inventory; and
-  explicit limits on privacy, flake support and package-version reproducibility.
+- **Export:** the portable restore module now keeps destination hardware intact.
+  Active Peasy state is separate from optional original host archives; service,
+  network and AppImage setup needs destination review. Traditional and flake
+  backups are supported. See [the current backup guide](backups.md).
 - **Upgrades:** immutable service identity, actual executable/Nixpkgs inspection,
   and a drain-and-exit handoff after the active generation changes. The first
   upgrade from the old daemon still requires a manual restart after work ends.

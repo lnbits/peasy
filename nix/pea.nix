@@ -7,7 +7,13 @@ let
   source = ../peas + "/${id}/pea.json";
   manifest = builtins.fromJSON (builtins.readFile source);
 in
-assert manifest.id == id && manifest.host_api == 1;
+assert
+  manifest.id == id
+  && lib.elem manifest.host_api [
+    1
+    2
+    3
+  ];
 runCommand "peasy-pea-${id}-${manifest.version}"
   {
     passthru = {

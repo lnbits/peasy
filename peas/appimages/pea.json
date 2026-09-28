@@ -1,7 +1,7 @@
 {
   "id": "appimages",
-  "version": "1.0.0",
-  "host_api": 1,
+  "version": "1.2.0",
+  "host_api": 3,
   "capabilities": [
     "Discover and install pinned upstream AppImage releases"
   ],
@@ -106,7 +106,7 @@
       },
       "message": {
         "description": "Concise user-facing explanation when useful.",
-        "maxLength": 400,
+        "maxLength": 8000,
         "type": [
           "string",
           "null"
@@ -289,7 +289,30 @@
                 "programs.virt-manager.enable",
                 "services.printing.enable",
                 "hardware.sane.enable",
-                "hardware.bluetooth.enable"
+                "hardware.bluetooth.enable",
+                "virtualisation.podman.enable",
+                "virtualisation.docker.enable",
+                "programs.nix-ld.enable",
+                "programs.direnv.enable",
+                "programs.zsh.enable",
+                "programs.fish.enable",
+                "programs.wireshark.enable",
+                "programs.mtr.enable",
+                "programs.appimage.enable",
+                "programs.appimage.binfmt",
+                "services.flatpak.enable",
+                "programs.dconf.enable",
+                "services.gnome.gnome-keyring.enable",
+                "services.gvfs.enable",
+                "services.udisks2.enable",
+                "services.upower.enable",
+                "services.pcscd.enable",
+                "services.ratbagd.enable",
+                "hardware.i2c.enable",
+                "hardware.openrazer.enable",
+                "hardware.steam-hardware.enable",
+                "programs.gamemode.enable",
+                "hardware.graphics.enable"
               ],
               "type": "string"
             },
@@ -299,9 +322,18 @@
           "groups": {
             "items": {
               "enum": [
+                "dialout",
+                "docker",
+                "gamemode",
+                "i2c",
+                "kvm",
                 "libvirtd",
                 "lp",
-                "scanner"
+                "openrazer",
+                "render",
+                "scanner",
+                "video",
+                "wireshark"
               ],
               "type": "string"
             },
@@ -315,12 +347,39 @@
             },
             "maxItems": 8,
             "type": "array"
+          },
+          "postgresql": {
+            "additionalProperties": false,
+            "properties": {
+              "caller_database": {
+                "type": "boolean"
+              },
+              "package": {
+                "enum": [
+                  "postgresql_14",
+                  "postgresql_15",
+                  "postgresql_16",
+                  "postgresql_17",
+                  "postgresql_18"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "package",
+              "caller_database"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
           "packages",
           "enable",
-          "groups"
+          "groups",
+          "postgresql"
         ],
         "type": [
           "object",

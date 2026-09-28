@@ -236,6 +236,13 @@ active operation has finished**, because old code cannot perform this handoff:
 sudo systemctl restart peasy-system
 ```
 
+On any installation, including headless systems, `peasy --status` reports system
+status without an AI provider or Wasm engine. After an interrupted operation,
+`peasy --recover` shows the previous-generation recovery proposal and asks for
+confirmation before requesting the usual administrator authorization. Recovery
+changes the whole system generation; it does not undo database transactions or
+other service side effects.
+
 The UI's **System status and recovery** screen reports the running executable,
 version, protocol and package source. A configuration written before an interrupted
 build is restored on daemon startup when Peasy can establish that it still owns
@@ -252,15 +259,28 @@ results are cached for 15 minutes. Creating a proposal always resolves its
 packages again and records exact derivation paths; apply rejects a changed
 definition before activation and asks for another review.
 
-## Configuration export
+## Configuration backup and restore
 
-Settings can export a traditional `configuration.nix` host and the installed
-Peasy source. Flake exports are not supported. The generated README describes
-the restore layout, and `INVENTORY.json` lists included files and excluded paths.
-Common credential files, Git metadata, recovery records and backup files are
-excluded. Nix source may still contain inline secrets: review exports before
-sharing and keep separately excluded files in your secure backup.
+Settings → **Export backup** creates a portable backup of active Peasy-managed
+standalone packages, appearance preferences and pinned pea instructions. Both
+traditional and flake hosts are supported. Restore it into an existing NixOS
+installation while keeping the destination's disks, bootloader, drivers, user
+accounts and host configuration.
 
-This is a configuration-source backup, not an exact package-closure backup.
-A traditional rebuild uses the destination's selected Nixpkgs source; hardware
-settings and external absolute imports may need adjustment.
+Service setups, network profiles and AppImages are saved for review and recreation
+on the destination; they are not applied unchanged. Original host files, including
+flake files and hardware modules, are archived separately when readable and are
+never imported by the portable restore module. The backup reports unavailable
+archives and excluded files.
+
+Use Settings → **Restore backup**, select the exported folder, choose Merge or
+Replace, then review and authenticate before applying. No AI provider is required.
+The restore uses the destination's package set
+and flake lock; it is not a locked package closure or a backup of personal files
+and databases. See [backup contents and restore steps](backups.md).
+
+## Updates
+
+After installation, open **Settings** to check for a newer stable release and use
+**Update Peasy**. Updates preserve the host configuration and flake lock. See
+[updating Peasy](updates.md) for details and the one-time setup for older installs.

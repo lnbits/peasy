@@ -182,6 +182,16 @@ pkgs.testers.runNixOSTest {
             result = request({'request': 'apply', 'proposal': proposal['id']})
             assert result['response'] == 'error' and 'not authorized' in result['message'], result
             assert request({'request': 'get_managed_module'}) == before
+            for enable, groups, warning in [
+                (['virtualisation.docker.enable'], ['docker'], 'effectively root'),
+                ([], ['video'], 'camera'),
+            ]:
+                proposal = request({'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': enable, 'groups': groups}})['proposal']
+                assert proposal['change']['setup']['user'] == 'testuser', proposal
+                assert any(warning in line['text'] for line in proposal['diff']), proposal
+                result = request({'request': 'apply', 'proposal': proposal['id']})
+                assert result['response'] == 'error' and 'not authorized' in result['message'], result
+                assert request({'request': 'get_managed_module'}) == before
         elif sys.argv[1] == 'allowed':
             response = request({'request': 'propose_install', 'package': 'hello'})
             assert response['response'] == 'proposal', response
@@ -193,6 +203,21 @@ pkgs.testers.runNixOSTest {
                 assert stage in result['stages'], result
             assert 'hello' in request({'request': 'get_packages'})['packages']
             assert request({'request': 'apply', 'proposal': proposal['id']})['response'] == 'error'
+        elif sys.argv[1] == 'restore':
+            source = Path('/etc/nixos/configuration.nix').read_bytes()
+            for mode, color in [('merge', 'blue'), ('replace', 'green')]:
+                backup = {'packages': ['hello'], 'theme': {'accent_color': color}, 'peas': []}
+                response = request({'request': 'propose_restore', 'backup': backup, 'mode': mode})
+                assert response['response'] == 'proposal', response
+                proposal = response['proposal']
+                assert proposal['change']['change'] == 'restore', proposal
+                result = request({'request': 'apply_with_progress', 'proposal': proposal['id']})
+                assert result['response'] == 'applied' and result['result']['activated'], result
+                assert 'authorizing' in result['stages'] and 'completed' in result['stages'], result
+                assert request({'request': 'get_theme'})['theme']['accent_color'] == color
+                assert 'hello' in request({'request': 'get_packages'})['packages']
+                assert Path('/etc/nixos/configuration.nix').read_bytes() == source
+                assert request({'request': 'apply', 'proposal': proposal['id']})['response'] == 'error'
         elif sys.argv[1] == 'overlay':
             source = Path('/etc/nixos/configuration.nix')
             original = source.read_text()
@@ -218,9 +243,14 @@ pkgs.testers.runNixOSTest {
         elif sys.argv[1] == 'hostile':
             for body in [
                 {'request': 'shell', 'command': 'touch /etc/peasy-pwned'},
+                {'request': 'propose_restore', 'mode': 'replace', 'backup': {'packages': [], 'theme': {}, 'peas': [], 'networks': []}},
+                {'request': 'propose_restore', 'mode': 'merge', 'backup': {'packages': ['hello;reboot'], 'theme': {}, 'peas': []}},
                 {'request': 'propose_install', 'package': 'hello;reboot'},
                 {'request': 'apply', 'proposal': '../../etc/passwd'},
                 {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['services.openssh.enable'], 'groups': []}},
+                {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': [], 'groups': ['docker']}},
+                {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['virtualisation.podman.enable'], 'groups': ['podman']}},
+                {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['programs.appimage.binfmt'], 'groups': []}},
                 {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['virtualisation.libvirtd.enable'], 'groups': ['wheel']}},
                 {'request': 'propose_setup', 'package': 'hello', 'setup': {'packages': [], 'enable': ['virtualisation.libvirtd.enable'], 'groups': ['libvirtd'], 'user': 'root'}},
             ]:
@@ -317,6 +347,17 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test -f /run/current-system/sw/share/polkit-1/actions/io.github.peasy.policy")
     machine.succeed("pkaction --action-id io.github.peasy.apply --verbose | grep auth_admin")
     machine.succeed("systemctl show peasy-system -p CapabilityBoundingSet --value | grep '^$'")
+    # The portable restore copies only the managed module, keeping destination
+    # hardware and host files intact. Root ownership permits the zero-cap daemon
+    # to read the private restored module.
+    machine.succeed("mkdir -p /tmp/peasy-restore-fixture /etc/peasy-restore-check/.peasy")
+    machine.succeed("echo managed > /tmp/peasy-restore-fixture/peasy-managed.nix; chmod 0600 /tmp/peasy-restore-fixture/peasy-managed.nix; chown -R testuser:users /tmp/peasy-restore-fixture")
+    machine.succeed("echo destination-hardware > /etc/peasy-restore-check/hardware-configuration.nix")
+    machine.succeed("cp -a /tmp/peasy-restore-fixture/peasy-managed.nix /etc/peasy-restore-check/.peasy/")
+    machine.fail("systemd-run --wait --pipe -p CapabilityBoundingSet= -p Group=wheel cat /etc/peasy-restore-check/.peasy/peasy-managed.nix")
+    machine.succeed("install -o root -g root -m 0600 /tmp/peasy-restore-fixture/peasy-managed.nix /etc/peasy-restore-check/.peasy/peasy-managed.nix")
+    machine.succeed("systemd-run --wait --pipe -p CapabilityBoundingSet= -p Group=wheel cat /etc/peasy-restore-check/.peasy/peasy-managed.nix")
+    assert machine.succeed("cat /etc/peasy-restore-check/hardware-configuration.nix").strip() == "destination-hardware"
     machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py hostile'")
     machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py denied'")
     # The real Polkit path rejects an unapproved wheel process. Only this VM
@@ -327,6 +368,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("systemctl restart polkit")
     machine.succeed("python /etc/peasy-ipc-test.py overlay", timeout=900)
     machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py allowed'", timeout=900)
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py restore'", timeout=900)
     machine.fail("test -e /etc/nixos/.peasy/transaction.json")
     # Exercise the same guarded build through a local flake, including an
     # untracked managed file. This must not write a lock file as a side effect.
@@ -340,6 +382,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("systemctl daemon-reload; systemctl start peasy-system")
     machine.wait_for_file("/run/peasy/peasy.sock")
     machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py allowed'", timeout=900)
+    machine.succeed("su - testuser -c 'python /etc/peasy-ipc-test.py restore'", timeout=900)
     machine.fail("test -e /etc/nixos/flake.lock")
     machine.fail("test -e /etc/peasy-pwned")
   '';

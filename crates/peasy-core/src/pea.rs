@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
-pub const HOST_API: u32 = 1;
+pub const HOST_API: u32 = 3;
 pub const POLICY_PATH: &str = "/etc/peasy/pea-policy.json";
 pub const MAX_PACK_BYTES: usize = 64 * 1024;
 pub const PERMISSIONS: &[&str] = &[
@@ -144,11 +144,41 @@ pub fn schema_for_permissions(permissions: &[String]) -> Value {
     schema["properties"]["action"]["enum"] = serde_json::json!(actions);
     schema
 }
+// Immutable API 1/2 pins retain exactly their original, narrower schema.
+// Do not derive legacy enums from the expanding current catalogue.
+fn schema_for_api(permissions: &[String], api: u32) -> Value {
+    let mut schema = schema_for_permissions(permissions);
+    if api < 3 {
+        schema["properties"]["message"]["maxLength"] = serde_json::json!(400);
+        schema["properties"]["setup"]["properties"]["enable"]["items"]["enum"] =
+            serde_json::json!([
+                "virtualisation.libvirtd.enable",
+                "programs.virt-manager.enable",
+                "services.printing.enable",
+                "hardware.sane.enable",
+                "hardware.bluetooth.enable"
+            ]);
+        schema["properties"]["setup"]["properties"]["groups"]["items"]["enum"] =
+            serde_json::json!(["libvirtd", "lp", "scanner"]);
+    }
+    if api == 1 {
+        schema["properties"]["setup"]["properties"]
+            .as_object_mut()
+            .expect("setup properties")
+            .remove("postgresql");
+        schema["properties"]["setup"]["required"]
+            .as_array_mut()
+            .expect("setup required fields")
+            .retain(|field| field != "postgresql");
+    }
+    schema
+}
+
 impl PeaManifest {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_network_id(&self.id)?;
         validate_permissions(&self.permissions)?;
-        if self.host_api != HOST_API {
+        if !matches!(self.host_api, 1 | 2 | HOST_API) {
             return Err(invalid("pea requires a different host API; update Peasy"));
         }
         if !bounded(&self.version, 32)
@@ -159,7 +189,8 @@ impl PeaManifest {
         {
             return Err(invalid("invalid pea metadata"));
         }
-        if self.response_schema != schema_for_permissions(&self.permissions) {
+        let expected_schema = schema_for_api(&self.permissions, self.host_api);
+        if self.response_schema != expected_schema {
             return Err(invalid(
                 "pea schema must match the installed host API and declared permissions",
             ));
@@ -204,7 +235,7 @@ impl PeaPin {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_network_id(&self.id)?;
         validate_permissions(&self.permissions)?;
-        if self.host_api != HOST_API
+        if !matches!(self.host_api, 1 | 2 | HOST_API)
             || !bounded(&self.version, 32)
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
@@ -289,6 +320,44 @@ pub(crate) fn legacy_render(pins: &[PeaPin]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_api_one_pins_remain_compatible_without_widening_permissions() {
+        let mut manifest: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();
+        manifest.validate().unwrap();
+        manifest.host_api = 1;
+        manifest.response_schema["properties"]["setup"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("postgresql");
+        manifest.response_schema["properties"]["setup"]["required"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|field| field != "postgresql");
+        manifest.validate().unwrap();
+        manifest.response_schema["properties"]["action"]["enum"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("configure_network"));
+        assert!(manifest.validate().is_err());
+    }
+    #[test]
+    fn expanded_catalogue_requires_api_three() {
+        let mut old: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();
+        old.validate().unwrap();
+        old.response_schema["properties"]["setup"]["properties"]["enable"]["items"]["enum"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("virtualisation.docker.enable"));
+        assert!(old.validate().is_err());
+        let mut current: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/packages/pea.json")).unwrap();
+        current.validate().unwrap();
+        current.host_api = 2;
+        assert!(current.validate().is_err());
+    }
+
     #[test]
     fn persistent_activation_requires_both_network_permissions() {
         let mut manifest: PeaManifest =

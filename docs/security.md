@@ -225,22 +225,40 @@ shape, short ASCII version/platform/package tokens, known desktop/variant enums,
 at most 256 unique package names, and at most 64 KiB total input. Invalid fields
 or oversized data cause the declared profile to be ignored.
 
-The settings export is a local operation and never enters a provider request.
-`/etc/peasy/host-configuration-path` contains the trusted absolute module path
-selected by the administrator. The UI copies its bounded configuration tree
-and the packaged Peasy source into a new mode-`0700` directory, writing regular
-files mode `0600`; unsafe absolute symlinks, special files, excessive entries,
-and trees over 64 MiB are rejected. The imported
-managed state is placed at the export root under `.peasy/`, with
-`host/.peasy` linking to it so both import paths reach one file. The wrapper uses
-`/etc/nixos/configuration.nix` and `/etc/nixos/.peasy/peasy-managed.nix`, satisfying
-the module's managed-directory constraint. Relative links escaping a copied
-source tree are rejected. `INVENTORY.json` records included files and exclusions:
-Git metadata, common credential filenames, backup files and recovery records.
-Peasy's separately stored provider configuration is outside this source tree.
-There is no guarantee that arbitrary Nix files are free of private values;
-review exports before sharing. Export supports traditional configuration sources,
-not flakes or a locked package closure.
+The settings backup is local and never enters a provider request. It resolves
+`/run/current-system` once, reads bounded typed state from that generation and
+renders a fresh portable module containing only standalone packages, appearance
+and pea pins. It does not import arbitrary host Nix. Service/account bindings,
+network interfaces and AppImages remain review data, requiring new proposals on
+the destination. Missing state on a new installation means an empty selection;
+malformed or oversized state fails the export.
+
+`/etc/peasy/host-configuration-path` identifies optional reference source, including
+flake hosts. The UI writes a new mode-`0700` directory and mode-`0600` regular files.
+Source copies reject escaping/unsafe symlinks, special files, excessive entries
+and trees exceeding the shared 64 MiB budget. An unavailable host archive is
+removed and explicitly reported without losing the typed-state backup. The
+mandatory Peasy source copy must succeed. `INVENTORY.json` records exclusions,
+including Git metadata, common credential names and recovery records. Inline
+secrets in arbitrary Nix remain possible: review before sharing.
+
+Restore opens bounded regular files relative to one selected directory, rejecting
+symlinks and special files. The portable module must exactly match Peasy's trusted
+renderer and agree with its typed review record. No archived Nix or executable is
+loaded. The daemon receives a closed `PortableBackup`, never a backup path or Nix
+expression. Both Merge and Replace preserve destination service/account bindings,
+network profiles and AppImages. The daemon independently checks values and limits,
+resolves destination package derivations, verifies new pea pins and creates a
+user-bound expiring proposal. Apply repeats source checks after ordinary Polkit
+authorization and uses the same stale-state guard, reviewed derivation assertions,
+journal, build and activation helper as other changes.
+
+For backup restores only, the pea verifier accepts older revisions after a bounded
+GitHub comparison proves they are ancestors of independently read official main.
+An unpublished branch/PR commit is insufficient. Catalogue membership, artifact
+hashes, host compatibility and current administrator policy remain required.
+Regular discovery still requires the current main revision. See
+[backup and restore](backups.md).
 
 The GNOME extension is only a launcher for the fixed `peasy-ui` executable. It
 does not handle request text, proposal data, provider credentials, or Wi-Fi
@@ -277,11 +295,35 @@ activation may have started, blocks further changes, and offers a fresh reviewed
 recovery proposal with the same UID binding and Polkit authorization as Apply.
 Recovery refuses to overlap an active activation helper. Startup restores only
 an owned pre-activation source write; it preserves concurrent administrator edits.
+Successful builds recheck the managed source and active generation before
+activation. The helper repeats those checks, and the target generation's Peasy
+pre-switch check runs under NixOS's switch lock to reject a competing activation.
+`peasy --status` and `peasy --recover` expose inspection and reviewed recovery on
+headless machines without requiring a model provider or Wasm engine.
 The journal records intent and recovery state, not an alternative desired-state
 database. Rollbacks do not undo external side effects: Wi-Fi,
 Bluetooth, calendar, and live Hyprland changes therefore use their native
 controls rather than being described as Nix rollbacks. Peasy never
 automatically deletes old NixOS generations.
+
+PostgreSQL setup inspects retained version directory names through the fixed
+`peasy-postgresql-inspect` oneshot. That helper has `CAP_DAC_READ_SEARCH`, a
+protected system filesystem, an explicit writable report directory, private
+temporary files, and no network access. It neither opens database contents nor
+accepts a directory from IPC.
+The main daemon keeps an empty capability bounding set and receives only the
+bounded version inventory. Existing data for another major version still blocks
+setup and requires an administrator-managed migration.
+
+The setup catalogue also permits reviewed container, device and desktop integration.
+Reviews state the effects and caller-bound permissions: Docker group membership is
+effectively root access, Wireshark grants packet capture, video includes camera
+access and I2C permits raw hardware writes. Container engines may modify networking;
+Peasy does not automatically configure remote listeners, publish container ports
+or grant rootful Podman group access. Standard device groups remain opt-in and
+require the same administrator approval. Unsupported configuration is explained
+as manual guidance, never evaluated or executed as an action. Longer explanations
+are bounded to 8,000 characters and cannot alter daemon-held proposal effects.
 
 ## Package review and daemon upgrades
 

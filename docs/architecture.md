@@ -306,15 +306,24 @@ own host; Hyprland uses a bar's tray. Without a host the tray waits without busy
 polling and the application-menu launcher still works. No desktop is installed
 merely to provide a tray. See [desktop capabilities and adapters](desktop-compatibility.md).
 
-The settings view exports a private, portable system directory through a native
-GTK folder dialog. It contains the administrator's complete configuration tree,
-the packaged Peasy source, a wrapper `configuration.nix`, restore instructions,
-and the imported `.peasy/peasy-managed.nix` already present in the configuration
-tree. That generated module includes Peasy-managed packages, AppImages, and
-appearance state. The exporter rewrites Peasy's original checkout/store
-path to the bundled `/etc/nixos/peasy` location. Provider credentials and API
-keys remain outside the export; hardware configuration is included for faithful
-backup but must be regenerated when restoring to different hardware.
+The settings view exports a private backup through a native GTK folder dialog.
+It reads typed state and bundled Peasy source from one resolved active generation,
+so an unfinished change is not confused with an installed configuration. A closed
+subset (standalone packages, appearance and pea pins) is rendered into the portable
+`peasy-managed.nix`. It never imports the source host. Full active state is retained
+in `RESTORE-REVIEW.json`; service/account setups, interface-bound profiles and
+architecture-specific AppImages need a new destination review.
+
+Traditional and flake host trees are optional reference archives. If their bounded
+copy fails, the partial archive is removed and its absence reported in the README
+and inventory. Restore leaves the destination host, hardware modules and lockfile
+intact. The Restore backup button validates the portable module against the typed
+review record, offers Merge or Replace, and requests a daemon-owned restore
+proposal. It needs no model provider. The daemon revalidates the closed values,
+resolves package identities and checks new pea sources; Apply uses the existing
+authorization, stale-state, build and activation flow. Both modes preserve the
+destination's service setups, network profiles and AppImages. See
+[backup and restore](backups.md).
 
 ## Generic networking resources
 

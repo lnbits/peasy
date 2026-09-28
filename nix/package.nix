@@ -21,7 +21,8 @@
 
 rustPlatform.buildRustPackage {
   pname = if withGui then "peasy" else "peasy-core";
-  version = "0.1.0";
+  version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).workspace.package.version;
+  passthru.peasySource = builtins.unsafeDiscardStringContext (toString ../.);
 
   src = lib.fileset.toSource {
     root = ../.;
@@ -37,7 +38,10 @@ rustPlatform.buildRustPackage {
         ../nix
         ../wit
       ]
-      ++ lib.optionals withGui [ ../assets ]
+      ++ lib.optionals withGui [
+        ../assets
+        ../docs
+      ]
     );
   };
 
@@ -132,7 +136,7 @@ rustPlatform.buildRustPackage {
       install -Dm644 assets/gnome-shell-extension/extension.js "$extension/extension.js"
       install -Dm644 assets/gnome-shell-extension/stylesheet.css "$extension/stylesheet.css"
       mkdir -p "$out/share/peasy/source"
-      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peas nix wit assets scripts \
+      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peas nix wit assets scripts docs \
         "$out/share/peasy/source/"
     ''}
     ${

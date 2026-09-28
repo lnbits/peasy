@@ -214,17 +214,29 @@ job to resume verified uploads; do not manually publish an incomplete draft.
     print(f"Complete verified release published: {tag}")
 
 
+def attach_update_metadata(metadata_path, output, tag, commit):
+    import update_metadata
+    update = update_metadata.validate(json.loads(metadata_path.read_text()), tag, commit)
+    updater = output / update_metadata.ASSET
+    updater.write_text(json.dumps(update, indent=2) + "\n")
+    with (output / "SHA256SUMS").open("a") as checksums:
+        checksums.write(f"{digest(updater)}  {updater.name}\n")
+    return updater
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--update-metadata", type=Path, required=True)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="peasy-release-") as temporary:
         output = Path(temporary)
         import r2_isos
         endpoint, bucket, public_url = r2_isos.configuration()
         manifest, assets = r2_isos.prepare(args.artifacts, output, args.tag, args.commit, public_url)
+        assets.append(attach_update_metadata(args.update_metadata, output, args.tag, args.commit))
         storage = r2_isos.client(endpoint)
         repo = os.environ["GH_REPO"]
         publish(assets, args.tag, args.commit, repo, output, manifest=manifest,

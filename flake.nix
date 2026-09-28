@@ -115,6 +115,10 @@
             inherit pkgs;
             releaseTools = self.packages.${system}.iso-release-tools;
           };
+          updates = import ./nix/tests/update.nix {
+            inherit pkgs;
+            package = corePackage;
+          };
           core-package =
             pkgs.runCommand "peasy-core-package-check" { nativeBuildInputs = [ pkgs.gnugrep ]; }
               ''
@@ -134,6 +138,7 @@
                 nixfmt --check \
                   ${./flake.nix} \
                   ${./nix/module.nix} \
+                  ${./nix/update-module.nix} \
                   ${./nix/package.nix} \
                   ${./nix/pea.nix} \
                   ${./nix/tests/networking.nix} \
@@ -161,8 +166,11 @@
                   ${./nix/tests/installed-instrumentation.nix} \
                   ${./nix/tests/sandbox.nix} \
                   ${./nix/tests/sandbox-system.nix} \
+                  ${./nix/tests/update.nix} \
+                  ${./nix/tests/update-eval.nix} \
                   ${./nix/tests/system-configuration.nix} \
                   ${./nix/tests/system-configuration-eval.nix} \
+                  ${./nix/tests/postgresql-vm.nix} \
                   ${./nix/tests/sandbox-system-check.nix}
             touch $out
           '';
@@ -192,6 +200,11 @@
           system-configuration = import ./nix/tests/system-configuration.nix {
             inherit pkgs;
             package = corePackage;
+          };
+          postgresql-vm = import ./nix/tests/postgresql-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
           };
           sandbox-fixture = import ./nix/tests/sandbox-system-check.nix {
             inherit pkgs sandboxTest;

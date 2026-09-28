@@ -322,6 +322,15 @@ fn dispatch(
         IpcRequest::GetManagedModule => Ok(IpcResponse::ManagedModule {
             module: backend.managed_module()?,
         }),
+        IpcRequest::ProposeRestore { backup, mode } => {
+            store_proposal(proposals, uid, backend.preview_restore(backup, mode)?)
+        }
+        IpcRequest::CheckPeasyUpdate { force } => Ok(IpcResponse::PeasyUpdate {
+            status: backend.check_peasy_update(force)?,
+        }),
+        IpcRequest::ProposePeasyUpdate { release } => {
+            store_proposal(proposals, uid, backend.preview_peasy_update(release)?)
+        }
         IpcRequest::ProposePea { pin, enable } => {
             store_proposal(proposals, uid, backend.preview_pea(pin, enable)?)
         }
@@ -679,6 +688,73 @@ mod tests {
         );
         assert_eq!(runner.0.load(Ordering::SeqCst), 1);
         assert_eq!(backend.managed_module().unwrap(), before);
+        let mut update = preview();
+        update.change = ProposalChange::PeasyUpdate {
+            release: peasy_core::PeasyRelease {
+                format: 1,
+                version: "0.2.0".into(),
+                tag: "v0.2.0".into(),
+                revision: "a".repeat(40),
+                sha256: "b".repeat(64),
+            },
+        };
+        let IpcResponse::Proposal { proposal } = store_proposal(&map, 1000, update).unwrap() else {
+            panic!()
+        };
+        assert!(
+            dispatch(
+                IpcRequest::Apply {
+                    proposal: proposal.id
+                },
+                &peer,
+                &backend,
+                &map,
+                &Authorization(false)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("authorization denied")
+        );
+        assert_eq!(runner.0.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.managed_module().unwrap(), before);
+        let backup = peasy_core::PortableBackup {
+            packages: vec![],
+            peas: vec![],
+            theme: ThemeSettings {
+                accent_color: Some(peasy_core::AccentColor::Green),
+                color_scheme: None,
+            },
+        };
+        let IpcResponse::Proposal { proposal } = dispatch(
+            IpcRequest::ProposeRestore {
+                backup,
+                mode: peasy_core::RestoreMode::Merge,
+            },
+            &peer,
+            &backend,
+            &map,
+            &Authorization(false),
+        )
+        .unwrap() else {
+            panic!("restore must require review")
+        };
+        assert!(
+            dispatch(
+                IpcRequest::Apply {
+                    proposal: proposal.id.clone()
+                },
+                &peer,
+                &backend,
+                &map,
+                &Authorization(false)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("authorization denied")
+        );
+        assert_eq!(runner.0.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.managed_module().unwrap(), before);
+        assert!(take_proposal(&map, &proposal.id, peer.uid).is_err());
     }
 
     #[test]

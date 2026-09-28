@@ -15,18 +15,7 @@ impl PeasyClient {
         password: Option<String>,
     ) -> Result<Resolution> {
         validate_ssid(requested_ssid)?;
-        let requested = requested_ssid.to_lowercase();
-        let mut matches = self
-            .wifi_networks()?
-            .into_iter()
-            .filter(|(ssid, _)| ssid.to_lowercase() == requested)
-            .collect::<Vec<_>>();
-        matches.sort();
-        matches.dedup();
-        let (ssid, security) = matches
-            .into_iter()
-            .next()
-            .with_context(|| format!("I couldn't find the Wi-Fi network `{requested_ssid}`"))?;
+        let (ssid, security) = select_network(self.wifi_networks()?, requested_ssid)?;
         let password_required = !security.trim().is_empty() && security.trim() != "--";
         Ok(Resolution::LocalProposal(LocalProposal {
             title: format!("Connect to Wi-Fi {ssid}"),
@@ -105,8 +94,8 @@ impl PeasyClient {
                     .then(|| (ssid.to_owned(), security.to_owned()))
             })
             .collect::<Vec<_>>();
-        networks.sort_by_key(|network| network.0.to_lowercase());
-        networks.dedup_by(|left, right| left.0 == right.0);
+        networks.sort();
+        networks.dedup();
         Ok(networks)
     }
 
@@ -155,9 +144,53 @@ impl PeasyClient {
     }
 }
 
+fn select_network(
+    mut networks: Vec<(String, String)>,
+    requested: &str,
+) -> Result<(String, String)> {
+    let exact = networks.iter().any(|(ssid, _)| ssid == requested);
+    networks.retain(|(ssid, _)| {
+        if exact {
+            ssid == requested
+        } else {
+            ssid.to_lowercase() == requested.to_lowercase()
+        }
+    });
+    networks.sort();
+    networks.dedup();
+    if networks.len() > 1 {
+        bail!(
+            "Wi-Fi name `{requested}` is ambiguous. Choose the exact network name and security in the desktop network settings."
+        );
+    }
+    networks
+        .pop()
+        .with_context(|| format!("I couldn't find the Wi-Fi network `{requested}`"))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::select_network;
     use crate::redact_wifi_password;
+    #[test]
+    fn wifi_names_are_case_sensitive_and_security_conflicts_are_not_guessed() {
+        let networks = vec![("Cafe".into(), "WPA2".into()), ("cafe".into(), "--".into())];
+        assert_eq!(select_network(networks.clone(), "cafe").unwrap().1, "--");
+        assert!(select_network(networks, "CAFE").is_err());
+        assert!(
+            select_network(
+                vec![("Cafe".into(), "WPA2".into()), ("Cafe".into(), "--".into())],
+                "Cafe"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            select_network(vec![("Cafe".into(), "WPA2".into())], "cafe")
+                .unwrap()
+                .0,
+            "Cafe"
+        );
+    }
     #[test]
     fn wifi_password_is_removed_before_the_model_boundary() {
         for request in [
