@@ -1,13 +1,16 @@
 # AppImages pea
 
-Discover compatible stable GitHub releases, prefetch a selected asset to obtain its hash, and propose reviewed installation, replacement or removal.
+Discover a compatible stable GitHub release and install its pinned AppImage.
 
-Example requests: “Find the latest AppImage from owner/project on GitHub”.
+- **Inputs:** search or repository, optional exact version, selected release asset.
+- **Checks:** validate repository, URL, architecture, size and SHA-256; enforce
+  administrator hash policy when configured. Prefetch does not execute the asset.
+- **Review:** repository, release, download URL, architecture, size, hash and Nix diff.
+- **Effects:** authenticated NixOS install/replacement/removal through `fetchurl`
+  and `appimageTools.wrapType2` in the managed module.
+- **Limits:** a hash pins bytes, not publisher authenticity or software safety.
+  Removing the package does not remove application data.
 
-`types.rs` owns pinned package records, URL/hash validation, administrator policy and Nix bindings. `client.rs` owns unprivileged GitHub discovery/prefetch. `system.rs` owns review details and policy-checked proposals.
-
-The repository, release, URL and hash remain visible for review. Downloading does not execute an AppImage. The optional administrator hash policy and normal Apply authorization remain enforced.
-
-See the [peas contributor guide](../README.md) for shared wiring, tests and the
-example prompt for adding an ability. Existing implementation tests are retained;
-cross-pea wire/policy fixtures live in [tests/](../tests/).
+`types.rs` defines records, policy and rendering; `client.rs` handles discovery
+and prefetch; `system.rs` checks proposals. Example: “Find the latest AppImage
+from owner/project.” Follow the shared [pea contract](../README.md).

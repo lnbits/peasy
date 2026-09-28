@@ -11,6 +11,8 @@
     ./iso-boot-branding.nix
   ];
   services.peasy.enable = true;
+  networking.networkmanager.enable = lib.mkDefault true;
+  hardware.bluetooth.enable = lib.mkDefault true;
   # nixosSystem is evaluated from a flake, but Calamares invokes traditional
   # nixos-install. Resolve <nixpkgs> through the bundled channel, not a flake
   # lookup that requires experimental features in the live environment.

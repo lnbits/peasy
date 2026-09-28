@@ -40,6 +40,23 @@ The optional import lets the first rebuild succeed before the managed file
 exists. Peasy creates `.peasy/peasy-managed.nix` and uses it as its desired
 state.
 
+Peasy desktop does not enable NetworkManager or Bluetooth. If you want those
+services, configure them explicitly in your host module:
+
+```nix
+networking.networkmanager.enable = true;
+hardware.bluetooth.enable = true;
+```
+
+Keep your existing network manager unless you intend to change it. Peasy's Wi-Fi
+and networking actions require NetworkManager to manage the relevant interface;
+Bluetooth actions require BlueZ. A reviewed persistent Peasy network profile
+declares NetworkManager as a dependency. The Peasy live ISO and installed target
+default both services on independently of the desktop option.
+
+When upgrading a manual installation that relied on Peasy's former desktop
+defaults, declare any required services explicitly before rebuilding.
+
 Log out and back in so the generic XDG autostart entry starts Peasy's single
 StatusNotifierItem tray. GNOME gets the AppIndicator compatibility extension
 only when GNOME is configured; the old Peasy panel extension is disabled on

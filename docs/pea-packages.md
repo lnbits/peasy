@@ -1,9 +1,9 @@
-# Pea packages and host API v2
+# Pea package protocol
 
 Pea packages contain domain instructions, capability descriptions, permissions,
 a version and an exact response schema. They are data; the installed Rust host
 owns resource discovery, validation, authorization, execution and recovery. The
-existing zero-import Wasm engine remains the policy boundary. Peasy does not
+existing zero-import Wasm engine provides additional policy containment. Peasy does not
 load Rust libraries, scripts, remote Nix modules, or additional Wasm guests.
 
 A new package can teach the AI to compose existing host operations without

@@ -28,6 +28,7 @@ let
           services.peasy.package = lib.mkForce package;
           networking.hostName = "peasy-offline-seed";
           networking.networkmanager.enable = true;
+          hardware.bluetooth.enable = true;
           services.displayManager.gdm.enable = gnome;
           services.displayManager.sddm.enable = !gnome;
           services.desktopManager.gnome.enable = gnome;

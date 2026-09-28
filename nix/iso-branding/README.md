@@ -1,30 +1,25 @@
-# ISO branding
+# ISO branding contract
 
-Shared by the GNOME and Plasma installation media. The upstream NixOS GRUB
-design and logo stay, with a pale green background, **#5cd698** selection colour
-and **Includes Peasy** below the menu. The installer keeps the NixOS branding
-and layout, with a green sidebar and **Includes Peasy** below the main logo.
+Applies to GNOME and Plasma installation media only. Preserve upstream NixOS
+logos, installer layout and installation modules. Use pale green backgrounds,
+`#5cd698` selection colour and the “Includes Peasy” caption.
 
-- `installer-welcome.svg`: upstream NixOS logo with the Includes Peasy caption.
-- `grub-background.svg` and `grub-selection.svg`: GRUB colour swatches.
-- `grub-credit.txt`: small footer appended to the upstream theme.
-- `default.nix`: renders the SVGs with pinned fonts and customises the theme.
+| File | Purpose |
+| --- | --- |
+| `installer-welcome.svg` | NixOS logo and Peasy caption |
+| `grub-background.svg`, `grub-selection.svg` | GRUB colour swatches |
+| `grub-credit.txt` | Footer appended to the upstream theme |
+| `default.nix` | Render assets with pinned fonts and customize the theme |
 
-`../iso-boot-branding.nix` applies the boot-menu artwork only to the ISO.
-`../installer.nix` customises upstream Calamares branding without replacing its
-installation modules, slides, translations or desktop previews. The installer's
-window and sidebar icons remain upstream's. All artwork is resolved at build
-time; there are no network requests to load logos in the installer.
-
-These files do not configure the installed system's bootloader. Do not import
-the ISO boot module from `installer-target.nix` or the ordinary Peasy module.
-
-Run the focused checks:
+[Boot branding](../iso-boot-branding.nix) applies to the ISO boot menu.
+[Installer integration](../installer.nix) retains upstream slides, translations,
+icons and desktop previews. Assets are resolved at build time without runtime
+network requests. Do not import ISO boot branding into the installed target or
+the ordinary Peasy module; it must not configure the installed bootloader.
 
 ```console
 nix build --no-link .#checks.x86_64-linux.installer-target .#checks.x86_64-linux.iso-config
 ```
 
-For visual acceptance, rebuild
-an ISO and check both BIOS and UEFI menus, then open the installer without
-starting a disk installation. Existing ISO files are not modified in place.
+For visual acceptance, rebuild the ISO, inspect BIOS and UEFI menus, and open the
+installer. Existing ISO files are not updated in place.

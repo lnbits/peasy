@@ -1,13 +1,16 @@
 # Hyprland pea
 
-Inspect the live session and apply the existing closed setting and dispatcher choices, preserving both legacy and modern hyprctl support.
+Inspect the running compositor and apply supported live settings or dispatchers.
 
-Example requests: “What is my current workspace?”, “set the inner gaps to 8”.
+- **Requires:** an accessible Hyprland session.
+- **Inputs:** the closed setting/dispatcher enums and bounded values in `types.rs`.
+- **Checks:** normalize values and detect the installed compositor API.
+- **Effects:** after review, issue fixed `hyprctl` calls using the appropriate
+  legacy or modern interface.
+- **Persistence:** current session only; no configuration-file edits or NixOS
+  rollback. Compositor reload/restart may restore configured values.
+- **Limits:** no arbitrary Lua, commands, paths, plugins or dispatchers.
 
-`types.rs` owns setting/dispatcher enums, bounds and normalisation. `client.rs` owns status queries, review, compatibility detection and fixed command generation.
-
-These are reviewed live-session changes, not persistent NixOS configuration. Arbitrary Lua, dispatchers, paths or compositor options are not accepted; reload retains the existing restore behaviour.
-
-See the [peas contributor guide](../README.md) for shared wiring, tests and the
-example prompt for adding an ability. Existing implementation tests are retained;
-cross-pea wire/policy fixtures live in [tests/](../tests/).
+`types.rs` defines the accepted operations; `client.rs` handles discovery,
+compatibility and execution. Example: “Set the inner gaps to 8.”
+Follow the shared [pea contract](../README.md).

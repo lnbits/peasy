@@ -1,13 +1,15 @@
 # Calendar pea
 
-Validate event data, create a private iCalendar file and hand it to the user's default calendar application for review/import.
+Prepare an iCalendar event and hand it to the default calendar application.
 
-Example requests: “Set a meeting for 10am tomorrow”.
+- **Inputs:** title, local start date/time and duration of 5–1440 minutes.
+- **Checks:** validate title and date; escape and fold iCalendar text.
+- **Effects:** after confirmation, write a mode-0600 `.ics` file in a private
+  local directory and open the default `text/calendar` handler.
+- **Completion:** successful handoff is not proof that the event was saved.
+  If opening fails, report the file path for manual import.
+- **Persistence:** the receiving calendar controls saved events; no NixOS rollback.
+- **Limits:** no account integration or calendar API credentials.
 
-`types.rs` owns title/date validation and limits. `client.rs` owns current-time context, proposal creation, UTF-8-safe iCalendar rendering, private-file handling and the default-application call.
-
-No calendar account or API credentials are added. A successful handoff does not mean an event was saved by the receiving application. Missing handlers still leave the file available for manual import.
-
-See the [peas contributor guide](../README.md) for shared wiring, tests and the
-example prompt for adding an ability. Existing implementation tests are retained;
-cross-pea wire/policy fixtures live in [tests/](../tests/).
+`types.rs` defines validation; `client.rs` handles review, files and opening.
+Example: “Set a meeting for 10am tomorrow.” Follow the [pea contract](../README.md).

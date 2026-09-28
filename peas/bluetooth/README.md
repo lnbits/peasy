@@ -1,13 +1,14 @@
 # Bluetooth pea
 
-Discover matching devices, reject ambiguous matches, connect, and attempt pairing/reconnection when necessary.
+Discover a device by name, review its address, then connect or pair.
 
-Example requests: “Connect to my headphones”.
+- **Requires:** enabled Bluetooth service and available hardware.
+- **Inputs:** device-name query resolved to one discovered hardware address.
+- **Checks:** reject missing or ambiguous matches and invalid addresses.
+- **Effects:** after confirmation, try connection; on failure, try pairing and
+  reconnecting through fixed BlueZ commands under existing user permissions.
+- **Persistence:** BlueZ may retain pairing. No NixOS rebuild or generation undo.
+- **Limits:** no arbitrary commands or privileged system IPC.
 
-`client.rs` owns discovery, address validation, review and the existing fixed BlueZ command sequence. Query and action types remain in the shared closed protocol.
-
-This remains a reviewed session action using the existing desktop/device permissions. No daemon IPC, arbitrary address execution or additional privilege is introduced.
-
-See the [peas contributor guide](../README.md) for shared wiring, tests and the
-example prompt for adding an ability. Existing implementation tests are retained;
-cross-pea wire/policy fixtures live in [tests/](../tests/).
+`client.rs` owns discovery, validation and execution; shared types define actions.
+Example: “Connect to my headphones.” Follow the [pea contract](../README.md).

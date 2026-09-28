@@ -3,60 +3,55 @@
   <img src="assets/peasy-wordmark.svg" alt="Peasy." width="210">
   </a>
 </h1>
-<img align="center" src="https://img.shields.io/badge/phase-beta-green?style=flat" alt="phase">
+<img src="https://img.shields.io/badge/phase-beta-green?style=flat" alt="phase">
+
 Tell your NixOS computer what you want in plain language.
 
 <p>
   <img src="assets/peasy-demo.gif" alt="Peasy reviewing example requests" width="600">
 </p>
 
-NixOS is one of the most powerful Linux operating systems because it is declarative and reproducible, but its configuration language can be difficult to learn. Peasy removes that complexity. Using normal language, you can install and remove packages, find AppImages, customise supported desktop settings, connect Wi-Fi and Bluetooth, and prepare calendar events.
+Peasy uses OpenAI or local Ollama to propose package, system and desktop changes.
+The model selects structured operations. Peasy validates them, presents a review
+and applies the approved changes.
 
-Peasy uses an OpenAI model or a local Ollama model to understand the request.
-The model cannot run commands or edit files: it returns a typed action that
-Peasy validates and applies through NixOS.
+## Contract
 
-Closing Peasy cancels AI requests, searches, downloads and system builds that
-have not started activation. Cancelled builds restore the previous managed
-configuration. Activation and desktop actions already being applied finish
-safely; closing a window does not undo completed changes.
+- System changes require review and administrator authentication. Peasy generates
+  `.peasy/peasy-managed.nix`, builds the host configuration, verifies the result
+  and activates it through a separate privileged helper.
+- Peasy preserves administrator configuration and tracks its own contributions.
+  Removing a setup retains shared dependencies and user data.
+- Wi-Fi, Bluetooth, calendar and compositor actions use reviewed local operations.
+  Their persistence is controlled by the receiving service, not NixOS generations.
+- Closing Peasy cancels pending requests and builds. Activation and local actions
+  already being applied finish; closing the window does not undo them.
+- NixOS rollback restores system configuration. Personal files, database writes
+  and other service data require separate recovery or backups.
 
-NixOS generations let you roll back system packages and configuration. Personal
-files and database changes need separate backups.
+The model has no terminal, arbitrary file writer or Nix-code execution interface.
+Native validation, bounded Wasm policy, daemon authorization and fixed rendering
+provide separate checks. See [architecture](docs/architecture.md),
+[security](docs/security.md) and the [workflow map](docs/workflow-map.md).
 
-## Install NixOS with Peasy
+## Install
 
-The Peasy ISO boots GNOME with Peasy, the bundled wallpaper and green accent.
-GNOME is the default installer choice; optional lightweight XFCE requires Internet
-access to install. A narrow integration with the upstream NixOS graphical installer
-adds Peasy's local Nix module and bundled source to the installed system, while
-preserving the normal installer screens, partitioning and account setup.
+For a new machine, use the GNOME ISO linked from the latest
+[GitHub release](https://github.com/lnbits/peasy/releases/latest). Verify the attached
+SHA-256 checksum. GNOME is the default; optional XFCE installation requires Internet.
+See [ISO installation and validation](docs/iso.md).
 
-Tag releases automatically publish one GNOME ISO after CI and upload verification.
-Download the complete ISO from the link in the latest release;
-whole-image SHA-256 checksums are attached on GitHub. Only the latest release’s
-ISOs are retained in download storage.
-Release CI requires fresh offline GNOME installation/boot tests in BIOS and UEFI
-VMs, plus GNOME and XFCE tray checks; physical-hardware testing remains important.
-See [ISO downloads, installation and validation](docs/iso.md).
-Installing Peasy on an existing NixOS system remains supported independently below.
-
-## Install on existing NixOS
-
-> Install NixOS the Linux distribution https://nixos.org/download
-
-Clone Peasy beside your NixOS configuration:
+For an existing NixOS system, clone beside the host configuration:
 
 ```console
 sudo git clone https://github.com/lnbits/peasy /etc/nixos/peasy
 ```
 
-Add `lib`, the Peasy module, and the optional managed file to
-`/etc/nixos/configuration.nix`:
+Add the following imports and option to `configuration.nix`, retaining existing
+imports and settings and adding `lib` to its function arguments:
 
 ```nix
 { config, pkgs, lib, ... }:
-
 {
   imports = [
     ./hardware-configuration.nix
@@ -69,65 +64,21 @@ Add `lib`, the Peasy module, and the optional managed file to
 }
 ```
 
-Rebuild, then log out and back in so the desktop launcher is loaded:
-
 ```console
 sudo nixos-rebuild switch --no-flake
 sudo systemctl restart peasy-system
 ```
 
-Open the mint circle in your desktop's StatusNotifier tray, or launch Peasy from
-the application menu. On first use, choose
-OpenAI or Ollama from the settings screen.
+Log out and back in, then open Peasy from the application menu or tray. Choose
+OpenAI or Ollama in Settings. The user must belong to `wheel` for system changes.
+See [installation](docs/install.md) for flakes, headless use and provider setup.
 
-See the [installation guide](docs/install.md) for flake hosts, development
-checkouts, headless systems, upgrades, and local Ollama setup.
+Enabling Peasy desktop does not enable NetworkManager or Bluetooth. Configure
+`networking.networkmanager.enable` and `hardware.bluetooth.enable` explicitly
+when wanted. Peasy ISO installations default both on. A reviewed persistent
+NetworkManager profile also declares its NetworkManager dependency.
 
-## Desktop compatibility
-
-Peasy's core and iCalendar/default-application flow are desktop-independent.
-Its single StatusNotifierItem tray works with compatible hosts: Plasma provides
-one, GNOME uses AppIndicator compatibility, and Hyprland needs a bar with a tray.
-GNOME and Plasma support green/other accent colours and light/dark modes; GNOME
-also supports its system-default mode. Hyprland retains its separate bounded live
-controls. XFCE, LXQt and unknown desktops do not have appearance adapters yet.
-AI-requested wallpaper changes are not supported; ISO branding is fixed build-time
-configuration. See the [capability matrix and audit](docs/desktop-compatibility.md).
-
-Peasy's abilities are organised into **peas**: built-in modules in [`peas/`](peas/README.md), each owning its ability-specific code while sharing Peasy's existing validation, confirmation and NixOS transaction handling. Want to contribute an ability? The [peas contributor guide](peas/README.md) explains the layout, security boundaries, tests and an example prompt for adding a pea.
-
-## Security
-
-The [system-configuration pea](peas/system_configuration/README.md) lets the AI
-combine a package with supporting packages, reviewed NixOS settings and user
-permissions for containers, virtual machines, development tools, application runtimes,
-desktop integration and peripherals. Unsupported requirements come with manual
-setup steps. Peasy performs the normal NixOS build and activation without launching
-applications for extra checks afterward.
-Install and uninstall use the same reviewed NixOS transaction; shared dependencies,
-administrator settings and user data are retained when removing a setup.
-
-See the [visual workflow and AI access map](docs/workflow-map.md) for how the
-AI, Wasm policy, administrator authorization and NixOS fit together.
-
-Peasy does not give the AI a terminal or arbitrary system access. Model output
-must pass a closed, typed policy running in zero-import Wasm with no WASI and
-strict memory, fuel, and output limits. The privileged service uses fixed
-executables and arguments—never a shell—and runs with hidden home directories,
-no Internet or device access, and only its runtime and managed configuration
-directories writable. Building is kept separate from activation: a small root
-helper accepts only a private, root-owned request naming a validated Nix store
-generation. See the full [security model](docs/security.md).
-
-System changes require administrator authentication after review. External
-AppImages show their GitHub repository, release, download URL and pinned hash
-for review; they are third-party software, not verified safe by Peasy. An optional
-hash allowlist is available in `services.peasy.appImages.trustedHashes`. Enter
-passwords only in the separate local password field, not in an AI request.
-
-## Use
-
-Use the desktop application or the `peasy` command:
+## Use and capabilities
 
 ```console
 peasy "install telegram"
@@ -137,55 +88,38 @@ peasy "connect to my headphones"
 peasy "set a meeting for 10am tomorrow"
 ```
 
-Peasy owns only `.peasy/peasy-managed.nix` beside the host configuration.
-Packages and settings applied through Peasy therefore participate in normal
-NixOS builds and generations; `/run/peasy` contains temporary runtime data
-only.
+[Peas](peas/README.md) describe domains and compose the host's supported operations.
+Downloaded peas are versioned data packages; new native operations require a host
+update. The LLM chooses combinations, while the host enforces the current schema
+and permissions. Arbitrary NixOS options are not currently supported.
 
-## Updating Peasy
+GNOME and Plasma have appearance adapters. Hyprland has bounded live controls.
+Other desktops can use core features but have no appearance adapter. The tray
+requires a StatusNotifier host; the application menu remains available without one.
+See [desktop compatibility](docs/desktop-compatibility.md).
 
-Settings checks for newer stable GitHub releases. When available, **Update Peasy**
-lets you review and approve an update through the normal NixOS rebuild and
-rollback flow. Reopen Peasy afterward. See [updates](docs/updates.md) for initial
-setup, flake support and release requirements.
+External AppImages show their repository, release, URL and hash for review.
+The hash pins content; it does not establish that software is safe. Enter secrets
+only in separate local fields, never in an AI request.
 
-## Backups and restore
+## Updates and backups
 
-**Export backup** saves active Peasy software selections and appearance settings
-for restoration on another NixOS machine, including traditional and flake hosts.
-Use **Restore backup** to choose Merge or Replace, review the changes, and apply
-with administrator authentication. The destination keeps its hardware configuration.
-Service setups, network profiles
-and AppImages require review there; original host files are archived for reference.
-Personal files and databases need separate backups. See [backup and restore](docs/backups.md).
+Settings provides reviewed [Peasy updates](docs/updates.md) and
+[backup export/restore](docs/backups.md). Portable restore preserves destination
+hardware configuration. Service setups, network profiles and AppImages require
+separate destination review. Personal files and databases are not backed up.
 
-## Build
+## Development
 
 ```console
 nix build
+nix develop --command bash scripts/check-rust.sh
 ```
 
-For development:
-
-```console
-nix develop
-cargo test --workspace --exclude peasy-engine
-cargo build -p peasy-engine --target wasm32-unknown-unknown
-```
-
-More detail is available in the [architecture](docs/architecture.md) and
-[security model](docs/security.md).
-
-Before a release, run `bash scripts/check-release.sh` on a Linux host with KVM.
-It checks formatting, strict Clippy, tests, current dependency advisories, both
-packages, the headless closure, Wasm imports, and the NixOS VM regressions.
+Follow the [pea contract](peas/README.md) when extending capabilities. Before a
+release, run `bash scripts/check-release.sh` on Linux with KVM; see
+[release validation](docs/release-validation.md).
 
 ## License
 
 MIT
-
-Networking requests use the [generic networking pea](peas/networking/README.md):
-Peasy discovers interfaces and connections, the AI proposes guarded profile or
-activation changes, and you review the effects. Compatible abilities can also be
-found in the official [pea catalogue](docs/pea-packages.md) and installed as
-immutable Nix data packages, with their revisions and hashes retained in system state.

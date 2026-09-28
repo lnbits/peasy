@@ -1,205 +1,131 @@
-# Peas: Peasy's abilities
+# Pea contract
 
-A pea describes a domain and the guarded changes the AI can propose. Native host
-adapters live in these folders and compile into the appropriate Rust crates.
-Separately packaged `pea.json` files supply domain instructions, capability
-metadata and schemas using that versioned host API. Adding a Rust folder never
-automatically enables code. See [package loading](../docs/pea-packages.md) for
-on-demand discovery, Nix pins and installation.
+A **pea** describes a domain in which the LLM can propose changes through Peasy's
+host API. The LLM chooses the configuration; the user approves its application.
+The host validates inputs, enforces permissions, executes approved operations and
+handles recovery. These rules apply to built-in and downloaded peas.
+
+## Package and host adapter
+
+| Part | Contents | Authority |
+| --- | --- | --- |
+| Pea package | `pea.json`: domain instructions, capabilities, permissions, version, host API and response schema | Can request existing host operations only |
+| Native host adapter | Reviewed Rust source compiled into Peasy | Implements discovery, validation and effects within its owning process |
+
+Downloaded packages are data. They cannot load Rust, Python, shell, Nix modules
+or additional Wasm guests. Native adapters require source review and a host
+rebuild; Rust module boundaries do not sandbox malicious native code.
+
+The host API and generated schemas define accepted inputs. Package instructions
+cannot add operations, widen permissions or override validation. See
+[package format, compatibility and publication](../docs/pea-packages.md).
 
 ## Design a domain, not a recipe
 
-A pea describes a domain's resources, observable state, and guarded changes.
-Peasy discovers bounded, nonsecret facts about the computer; the AI reasons from
-those facts and the user's intent to a structured proposal. Trusted code validates
-resource identity, supported values, permissions and preconditions, renders the
-actual effects for review, executes the confirmed proposal, and handles recovery.
+- Expose reusable resources and structured changes. Let the LLM compose them
+  from the user's request and discovered machine state.
+- Do not dispatch by request keywords or add an installer workflow per application.
+  Examples are test cases, not routing rules.
+- Prefer a data package when existing operations suffice. Add native code only
+  for missing host operations or required validation and lifecycle behaviour.
+- Discover missing facts through bounded reads. Report unsupported requirements;
+  do not invent operations or bypass the host with commands.
+- Every operation must define inputs, preconditions, effects, ownership,
+  persistence, review, failure and recovery. Secrets use separate local input.
 
-Do not route on request keywords or implement one workflow for each example.
-A networking pea exposes interfaces, profiles, addressing and activation; a
-hotspot is one composition of those primitives. Examples are acceptance cases,
-not the capability's scope. Give the model the schema and constraints, rather
-than hardcoding its decisions in Rust. Missing facts should trigger a bounded
-read-only discovery step and another model turn.
+Current system setup uses an allowlisted option catalogue. A broader structured
+NixOS interface is a possible host API extension, not an existing capability.
+It must retain review, authorization, ownership and recovery; it should avoid
+requiring a separate application recipe. Changing accepted values or permissions
+requires an explicit compatibility decision and updated schemas and tests.
 
-A schema is a format boundary, not authorization. Validate again against current
-resources before mutation. Define ownership, persistence, secrets, partial failure,
-undo and unsupported requirements explicitly. Never expand the schema into an
-arbitrary command, property bag, file writer or Nix evaluator. New value types and
-privileged effects require reviewed host implementations. Keep AI/provider access,
-review, authorization and transactions in the shared host.
+## Execution contract
 
-## Existing peas
+| Stage | Required behaviour |
+| --- | --- |
+| Interpretation | LLM returns a supported structured action; explanation text is never executed |
+| Validation | Host checks types, bounds, permissions and discovered resource identities |
+| Review | Show the proposed effects and, for system changes, generated Nix diff |
+| System Apply | Daemon authenticates the caller, checks the expiring UID-bound proposal and current state, builds, verifies the result and requests activation |
+| Session Apply | Client executes the reviewed local action under the session's existing permissions |
+| Recovery | Report partial failure; preserve unrelated state and use shared recovery handling |
 
-| Folder | Abilities | Owned code |
+System configuration belongs in `.peasy/peasy-managed.nix` and NixOS generations.
+Session operations use their service's persistence and undo semantics; they do not
+claim NixOS rollback. Generations do not undo user files, database writes or pairing.
+Installing a pea does not approve its later actions. Disabling a pea removes its
+instructions, not configuration previously created with them.
+
+Keep provider access, credential guarding, review, authorization, cancellation,
+transactions and activation in the shared host. Secrets must not enter model
+context, command arguments, logs, system IPC or managed Nix state.
+
+Wasm provides additional containment for pure policy. Keep consistent engine
+routing; add policy logic only where needed. Resource checks belong in native
+adapters, and system changes require independent daemon validation. No WASI,
+host imports, filesystem, network or process access may be added to the guest.
+
+## Native source layout
+
+| File | Owning crate | Responsibility |
 | --- | --- | --- |
-| [packages](packages/) | Nixpkgs search, availability checks, exact-version selection, install/remove, follow-up selection | `types.rs`, `client.rs`, `system.rs`, `policy.rs` |
-| [system_configuration](system_configuration/) | Generic package setup and uninstall: supporting packages, reviewed NixOS enable options and caller-bound groups | `types.rs`, `client.rs`, `system.rs` |
-| [appimages](appimages/) | GitHub discovery, release/architecture selection, prefetch/hash, reviewed install/update/remove, administrator policy | `types.rs`, `client.rs`, `system.rs` |
-| [appearance](appearance/) | Supported theme choices, declarative accents/light/dark settings, live GNOME/Plasma application | `types.rs`, `desktop.rs`, `client.rs`, `adapters.rs`, `system.rs` |
-| [networking](networking/) | Discover NetworkManager resources; compose persistent profiles and reviewed live connection changes | `types.rs`, `client.rs`, `system.rs` |
-| [wifi](wifi/) | List nearby networks and connect using a separately supplied local password | `types.rs`, `client.rs` |
-| [bluetooth](bluetooth/) | Discover matching devices, connect and pair when needed | `client.rs` |
-| [calendar](calendar/) | Validate local dates, prepare private iCalendar files, open the default calendar handler | `types.rs`, `client.rs` |
-| [hyprland](hyprland/) | Inspect a running session and apply the existing bounded live settings/dispatchers, with legacy/modern CLI support | `types.rs`, `client.rs` |
+| `types.rs` | `peasy-core` | Types, validation and declarative rendering |
+| `client.rs` | `peasy-client` | Discovery, proposals and local execution |
+| `system.rs` | `peasy-system` | Privileged-side checks and system proposals |
+| `policy.rs` | `peasy-engine` | Pure policy when required |
 
-`tests/` holds cross-pea compatibility fixtures. Ability-specific tests live next
-to their implementation; shared state, authorization and transaction tests stay
-in the crates that enforce those contracts.
+Files are optional and included through explicit `#[path]` declarations.
+Appearance also has desktop detection and adapters. Keep this layout until a
+concrete dependency or maintenance problem justifies changing it.
 
-## How the files fit together
+## Domains
 
-The same pea folder can contribute source to different compilation boundaries:
-
-| File | Compiled by | Responsibility |
+| Pea | Operations | State |
 | --- | --- | --- |
-| `types.rs` | `peasy-core` | Existing closed types, constants and validation; re-exported under the same `peasy_core` names |
-| `client.rs` | `peasy-client` | Unprivileged discovery, review proposals and session execution; shared by CLI and GUI |
-| `system.rs` | `peasy-system::nix_backend` | Privileged-side verification and declarative proposals, using the existing backend |
-| `policy.rs` | `peasy-engine` | Pure ability-specific policy, compiled into the zero-import Wasm guest |
+| [Packages](packages/README.md) | Search, check, install, remove | NixOS |
+| [System configuration](system_configuration/README.md) | Compose packages, options and caller access | NixOS; service data separate |
+| [AppImages](appimages/README.md) | Discover and install pinned external releases | NixOS |
+| [Appearance](appearance/README.md) | List and apply supported theme values | NixOS and live desktop |
+| [Networking](networking/README.md) | Inspect, configure and activate profiles | Explicit system or session scope |
+| [Wi-Fi](wifi/README.md) | Scan and connect | NetworkManager |
+| [Bluetooth](bluetooth/README.md) | Discover, connect and pair | BlueZ |
+| [Calendar](calendar/README.md) | Prepare an event for import | Local file and calendar application |
+| [Hyprland](hyprland/README.md) | Inspect and change supported live settings | Current compositor session |
 
-Not every pea needs every file. Bluetooth uses the shared query/action types and
-validates discovered addresses in its client. Only packages currently need
-additional Wasm membership rules; the engine's other existing arms forward
-already-typed values. Appearance also owns desktop detection and adapters.
+## Adding or extending a pea
 
-Rust `#[path = "../../../peas/<name>/<layer>.rs"]` declarations in the owning
-crates make these connections explicit. A `system.rs` file is a child of the
-Nix backend, not part of the unprivileged client. Client code and its networking
-dependencies are never pulled into Wasm by registering a pea.
+1. Write its domain contract: operations, effects, persistence, recovery and limits.
+2. If the host already supports it, add instructions and metadata using the
+   [package authoring procedure](../docs/pea-packages.md#authoring-and-compatibility).
+3. Otherwise add reusable native operations in the owning layers. Update model
+   decoding, schemas, engine/client dispatch and daemon IPC only as required.
+   Keep fixed tools in trusted packaging and preserve managed-state migrations.
+4. Regenerate schema, catalogue and prompt fixtures for intentional changes.
+   Preserve existing meanings or version the host API.
+5. Test accepted and hostile inputs, permission boundaries, review/cancellation,
+   failure and recovery. System changes also need ownership, uninstall, shared
+   dependency and generation-reconciliation coverage. Use mocked local services.
+6. Update the domain README and relevant capability documentation. Package
+   dependencies for both desktop and headless builds.
 
-This avoids putting privileged execution, HTTP clients and pure policy in one
-plugin crate. It also preserves existing public APIs used by the CLI, GUI and
-tray. Helpers remain private to their owning crate.
+Preserve regression coverage for Nix escaping, privileged activation, managed-source
+reconciliation, UID-bound proposal expiry/replay and package permission enforcement.
+New operations must use the reviewed host API and IPC, never an alternate executor.
 
-## What stays shared
+Use shared cancellable reads and HTTP transport. Do not detach work from its
+cancellation scope. Once activation or a local mutation is protected, closing
+Peasy is not an undo request.
 
-- `crates/peasy-client/src/lib.rs`: provider/key storage, credential checks before
-  contacting the model, exact model prompts/schema, bounded context, orchestration,
-  public proposal types, progress messages and exhaustive dispatch.
-- `crates/peasy-core/src/lib.rs`: the closed model/IPC enums and envelope decoding,
-  shared validation, canonical managed state, migration, Nix rendering and diffs.
-- `crates/peasy-engine/src/lib.rs`: Wasm ABI and exhaustive action routing.
-- `crates/peasy-engine-host/`: import rejection, memory/fuel limits and typed calls.
-- `crates/peasy-system/`: peer identity, authorization, proposal expiry/replay
-  checks, locking, atomic state handling, build validation and activation.
-- `nix/`: trusted packaging, fixed tool paths, system sandbox and installer wiring.
-
-Package search can still hand off to AppImage discovery. Appearance still uses
-the normal declarative apply path followed by its unprivileged desktop adapter.
-Wi-Fi credential guarding remains a shared pre-model check, not an optional
-step that another pea can accidentally omit.
-
-## Security and compatibility rules
-
-Native pea adapters are trusted application code, **not security sandboxes for third-party Rust**.
-A malicious source contribution could misuse its owning process's authority;
-it requires normal review and a rebuild. There is no claim that sibling Rust
-modules isolate credentials from malicious contributors.
-
-The AI still receives only constructed data and returns a closed typed action.
-It can select a compatible official pea id, but cannot choose a pea file, executable, shell command, Nix expression or an
-arbitrary setting/path. Wasm has no imports, WASI, filesystem or network access.
-Per-user operations keep their existing review/confirmation flow. System Apply
-still requires daemon-side administrator authorization and a UID-bound proposal.
-Do not add a new direct activation or configuration-writing route inside a pea.
-
-Do not expose provider credentials through a new context field, log or error.
-Secrets must use separate local input and must not go into model text or command
-arguments. External discovery is data, never instructions or trusted code.
-
-`.peasy/peasy-managed.nix` remains the source of truth for Peasy-managed system
-state. Existing NixOS builds, generations and rollback handling are unchanged.
-Session changes retain their current semantics: calendar import is not proof an
-event was saved, and live Hyprland changes are not persistent NixOS settings.
-
-## Adding a pea
-
-First check whether the installed host API already exposes the required resources
-and changes. If it does, author a data package with domain instructions, the exact
-host schema and declared permissions; update the official catalogue and Nix
-package output. Follow [package authoring](../docs/pea-packages.md#authoring-and-compatibility).
-A new native primitive needs the host work below. Do not add native dispatch for
-an example that existing primitives can already express.
-
-
-1. Define a domain and its reusable resources and typed changes, supported desktops, read/write effects, confirmation
-   requirements and failure behaviour. Start with the least authority needed.
-2. Add `peas/<name>/client.rs` and tests. Add `types.rs`, `system.rs` or `policy.rs`
-   only when that responsibility is actually needed. Use explicit imports and
-   existing shared helpers; do not copy a second transaction or provider stack.
-3. Register source modules in their owning crates. Extend the closed
-   `ModelAction`, `ModelEnvelope` validation and `EngineDecision` as necessary.
-   Wire exhaustive matches in the engine and client. Do not add a catch-all
-   command action or dynamic native-code dispatcher.
-4. Add model instructions/schema fields deliberately. Keep existing meanings and
-   names; retain `additionalProperties: false`, bounded data and local validation.
-   Regenerate `tests/model-schema.json` and the pea package schemas with the core
-   catalogue generator; update the prompt fixtures and `tests/actions.json`
-   only for intentional additions. Existing action fixtures must still pass.
-5. For a session change, add a typed `LocalAction`, reviewable `LocalProposal`,
-   and fixed execution handler reached only through the existing confirmation
-   path. Add fixed tools through `LocalTools` and trusted Nix wrappers, never from
-   model-selected executable paths. Report unsupported desktops explicitly.
-   Read-only subprocesses should use `CancellableCommand::cancellable_output`;
-   HTTP reads use the shared cancellable transport. UI work runs inside its
-   native `Cancellation` scope. Do not detach extra work from that lifetime or
-   introduce process/socket imports to Wasm. Reviewed local mutations are
-   protected once `apply_local` starts; closing is not an undo operation.
-6. For a system change, extend the closed IPC/proposal/state types only as needed.
-   Prepare the reviewed change in `system.rs`; keep Apply authorization, stale
-   proposal checks, rendering, build verification and activation in the shared
-   backend. Preserve old managed-state parsing/migration and rollback behaviour.
-   Such changes need transaction and installed-system tests, not just a unit test.
-7. Test valid inputs, malformed/hostile values, missing tools, command failures,
-   confirmation/cancellation, and any desktop/version fallbacks. Use temporary
-   fixtures and mock tools; tests must not modify the developer's real desktop.
-8. Update this table, the capability/security documentation and examples. Check
-   packaging if adding dependencies: both full and headless source snapshots
-   include `peas/`, and the full package carries it into ISO-installed systems.
-
-### Checks
-
-From the repository root, use the development shell for the pinned toolchain
-and desktop libraries (`nix develop`). After adding files, make sure they are
-tracked before testing a Git-backed flake; Nix otherwise omits untracked files.
+## Verification
 
 ```console
-cargo fmt --all -- --check
-cargo test --locked -p peasy-core -p peasy-engine -p peasy-client -p peasy-system -p peasy-engine-host -- --test-threads=1
-cargo build --locked --release -p peasy-engine --target wasm32-unknown-unknown
-PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm" \
-  cargo test --locked -p peasy-engine-host compiled_wasm_preserves_all_pea_decisions -- --ignored
-PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm" \
-  cargo test --locked -p peasy-client setup_selection_retains_the_exact_candidate_for_follow_up_uninstall -- --ignored
+nix develop --command bash scripts/check-rust.sh
 nix build .#peasy .#peasy-core
 ```
 
-The localhost provider tests use mock servers, not real AI credentials. The Wasm
-and setup-selection integration tests are explicitly ignored in ordinary local
-Cargo runs because they need a built guest; Nix package checks supply that guest
-and run them automatically.
-For changes touching desktop execution or installation, also follow the
-[desktop](../docs/desktop-compatibility.md) and [ISO](../docs/iso.md#verification)
-test procedures. A new pea does not automatically require rebuilding every ISO
-while iterating, but the release still has its normal acceptance gates.
-
-## Example prompt for adding a pea
-
-This is a contributor prompt, not a capability already implemented by this split:
-
-> Work in the existing Peasy repository. Read `peas/README.md` and add an `audio`
-> pea that answers “what is my current output volume?” on PipeWire desktops. Keep
-> this addition read-only: use a fixed, trusted `wpctl get-volume
-> @DEFAULT_AUDIO_SINK@` call, validate and bound its output, and report a clear
-> unsupported/unavailable result when appropriate. Do not add volume changes,
-> muting, arbitrary commands, model-chosen paths or new privileges. Put the
-> implementation and tests in `peas/audio/`, wire it into the existing closed
-> model validation, Wasm decision and client routing, and package its fixed tool
-> dependency through Nix. Preserve every existing action, prompt meaning, public
-> API, credential boundary, confirmation flow and NixOS transaction/rollback
-> behaviour. Add mock-command success/failure/malformed-output tests and extend
-> the compatibility corpus for the new action without weakening existing cases.
-> Update the pea table and user documentation, run the relevant Rust and Wasm
-> checks, and report any checks you could not run. Do not switch my host system,
-> contact a real AI provider, commit, tag or publish.
+The Rust script checks formatting, builds the Wasm guest, runs workspace and
+integration tests, checks Clippy, and verifies generated package artifacts.
+[Cross-domain fixtures](tests/) cover model decoding and native/Wasm decisions.
+Run relevant [desktop](../docs/desktop-compatibility.md) and
+[installed-system checks](../docs/iso.md#verification) for affected behaviour;
+[release validation](../docs/release-validation.md) defines the release gates.

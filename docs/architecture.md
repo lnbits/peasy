@@ -66,8 +66,10 @@ tray crates as well as all graphical assets, and its runtime wrapper references
 Nix, coreutils and the NetworkManager command-line client.
 
 `services.peasy.desktop.enable = false` selects `peasy-core`, defaults the tray
-off, omits graphical user units and autostart data, and does not enable
-NetworkManager or Bluetooth. Both variants use the identical typed IPC,
+off, and omits graphical user units and autostart data. Neither variant enables
+NetworkManager or Bluetooth merely by enabling Peasy. ISO and installed-target
+modules default those services on; reviewed persistent network profiles also
+declare NetworkManager as a dependency. Both variants use the identical typed IPC,
 zero-import policy engine, proposal validation, system sandbox, build, and
 activation paths.
 
@@ -111,6 +113,11 @@ Bluetooth addresses. Hyprland setting names, values, and dispatchers are also
 closed enums; arbitrary Lua or hyprctl commands never cross this boundary.
 
 ## Wasmtime boundary
+
+Wasm contains pure policy execution; it supplements native validation and
+daemon authorization. Keep action routing consistent without duplicating resource
+discovery or transaction handling inside the guest. The [pea contract](../peas/README.md)
+defines how packages and native adapters extend the host.
 
 `peasy-engine.wasm` is built for `wasm32-unknown-unknown`. It exports a small
 typed-value ABI described by `wit/peasy-engine.wit` and imports nothing. The

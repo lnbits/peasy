@@ -20,6 +20,8 @@ let
     in
     builtins.elem cached.seed system.config.isoImage.storeContents
     && !(cached.configuration ? isoImage)
+    && cached.configuration.networking.networkmanager.enable
+    && cached.configuration.hardware.bluetooth.enable
     && cached.configuration.boot.loader.grub.theme == null
     && cached.configuration.system.nixos.version == system.config.system.nixos.version
     && cached.configuration.services.speechd.package == pkgs.speechd
@@ -28,6 +30,8 @@ let
   valid =
     cfg:
     cfg.services.peasy.enable
+    && cfg.networking.networkmanager.enable
+    && cfg.hardware.bluetooth.enable
     && !(builtins.elem "nixpkgs=flake:nixpkgs" cfg.nix.nixPath)
     && builtins.elem isoPkgs.calamares-nixos cfg.environment.systemPackages
     && cfg.environment.etc."peasy/wallpaper.png".source == ../.. + "/assets/peasy_bg.png"

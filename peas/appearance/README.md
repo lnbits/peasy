@@ -1,13 +1,16 @@
 # Appearance pea
 
-List supported appearance choices, persist existing theme enums through NixOS, and apply them to supported live desktops.
+List supported theme choices and apply a reviewed declarative theme.
 
-Example requests: “Which themes can I use?”, “change to a green dark theme”.
+- **Inputs:** supported accent colour and colour-scheme enums.
+- **Checks:** detect desktop capabilities and reject unsupported choices.
+- **Effects:** authenticated NixOS configuration plus a local desktop update.
+  Login and generation changes synchronize the configured theme.
+- **Support:** GNOME and Plasma accents and light/dark modes; GNOME also supports
+  system-default mode. Other desktops have no appearance adapter.
+- **Limits:** no wallpaper changes or arbitrary desktop settings. ISO wallpaper
+  is build-time configuration.
 
-`types.rs` owns theme enums; `desktop.rs` owns desktop detection/capabilities; `client.rs` owns review and live theme helpers; `adapters.rs` owns fixed GNOME/Plasma calls; `system.rs` owns declarative proposals.
-
-Supported choices and fallback behaviour are unchanged. Declarative Apply retains administrator authorization. Wallpaper requests are not added; the ISO's wallpaper remains build-time branding.
-
-See the [peas contributor guide](../README.md) for shared wiring, tests and the
-example prompt for adding an ability. Existing implementation tests are retained;
-cross-pea wire/policy fixtures live in [tests/](../tests/).
+`types.rs` defines values; `desktop.rs` detects capabilities; `adapters.rs` owns
+fixed desktop calls; `client.rs` and `system.rs` prepare/apply changes.
+Example: “Change to a green dark theme.” Follow the [pea contract](../README.md).

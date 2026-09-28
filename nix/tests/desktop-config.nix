@@ -25,6 +25,24 @@ let
   hyprland = evaluate { programs.hyprland.enable = true; };
   xfce = evaluate { services.xserver.desktopManager.xfce.enable = true; };
   generic = evaluate { };
+  explicitServices = evaluate {
+    networking.networkmanager.enable = true;
+    hardware.bluetooth.enable = true;
+  };
+  disabledServices = evaluate {
+    networking.networkmanager.enable = false;
+    hardware.bluetooth.enable = false;
+  };
+  # Exercise the installed target's defaults without its deployment-relative imports.
+  targetDefaults = builtins.removeAttrs (import ../installer-target.nix { lib = pkgs.lib; }) [
+    "imports"
+  ];
+  installedTarget = evaluate targetDefaults;
+  installedOverrides = evaluate {
+    imports = [ targetDefaults ];
+    networking.networkmanager.enable = false;
+    hardware.bluetooth.enable = false;
+  };
   headless = evaluate { services.peasy.desktop.enable = false; };
   headlessXfce = evaluate {
     services.peasy.desktop.enable = false;
@@ -39,6 +57,16 @@ let
     && pkgs.lib.hasInfix "/bin/peasy-tray --ui" (genericTray cfg);
   appRefresh = cfg: cfg.systemd.services.peasy-applications-refresh.serviceConfig;
 in
+assert pkgs.lib.all (cfg: !cfg.networking.networkmanager.enable && !cfg.hardware.bluetooth.enable) [
+  generic
+  headless
+  disabledServices
+  installedOverrides
+];
+assert pkgs.lib.all (cfg: cfg.networking.networkmanager.enable && cfg.hardware.bluetooth.enable) [
+  explicitServices
+  installedTarget
+];
 assert pkgs.lib.all validTray [
   gnome
   plasma

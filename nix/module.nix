@@ -403,8 +403,6 @@ in
       fi
     '';
 
-    networking.networkmanager.enable = lib.mkIf cfg.desktop.enable (lib.mkDefault true);
-    hardware.bluetooth.enable = lib.mkIf cfg.desktop.enable (lib.mkDefault true);
     services.ollama.enable = lib.mkIf cfg.ollama.enable true;
 
     services.desktopManager.gnome = lib.mkIf (cfg.tray.enable && gnomeEnabled) {
