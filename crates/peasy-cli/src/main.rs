@@ -91,6 +91,7 @@ enum PanelCommand {
     Select { index: usize },
     Apply { password: Option<String> },
     Cancel,
+    KeepDisplay,
 }
 
 fn main() -> Result<()> {
@@ -298,22 +299,32 @@ fn configure_provider(keys: &KeyStore, providers: &ProviderStore) -> Result<()> 
 }
 
 fn panel_worker(client: &PeasyClient) -> Result<()> {
-    let stdin = io::stdin();
-    let mut input = stdin.lock();
-    let first = read_panel_command(&mut input)?;
+    let (tx, input) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        let mut reader = stdin.lock();
+        loop {
+            let command = read_panel_command(&mut reader);
+            let failed = command.is_err();
+            if tx.send(command).is_err() || failed {
+                break;
+            }
+        }
+    });
+    let first = receive_panel_command(&input)?;
     let PanelCommand::Request { text } = first else {
         anyhow::bail!("the panel worker expected a request");
     };
     let resolution = client.resolve_with_progress(&text, |stage| {
         let _ = send_panel_progress(stage);
     })?;
-    finish_panel(client, resolution, &mut input)
+    finish_panel(client, resolution, &input)
 }
 
 fn finish_panel(
     client: &PeasyClient,
     mut resolution: Resolution,
-    input: &mut impl BufRead,
+    input: &std::sync::mpsc::Receiver<Result<PanelCommand>>,
 ) -> Result<()> {
     loop {
         match resolution {
@@ -322,7 +333,7 @@ fn finish_panel(
                     "event": "choice",
                     "candidates": choice.candidates,
                 }))?;
-                resolution = match read_panel_command(input)? {
+                resolution = match receive_panel_command(input)? {
                     PanelCommand::Select { index } => {
                         client.select_with_progress(choice, index, |stage| {
                             let _ = send_panel_progress(stage);
@@ -347,7 +358,7 @@ fn finish_panel(
                     "diff": proposal.diff,
                     "password_required": false,
                 }))?;
-                match read_panel_command(input)? {
+                match receive_panel_command(input)? {
                     PanelCommand::Apply { password: None } => {
                         let result = client.apply_with_progress(&proposal, |stage| {
                             let _ = send_panel_event(
@@ -361,10 +372,7 @@ fn finish_panel(
                             resolution = next;
                             continue;
                         }
-                        send_panel_event(&json!({
-                            "event": "done",
-                            "message": result.message,
-                        }))?;
+                        send_panel_event(&json!({ "event": "done", "message": result.message }))?;
                         return Ok(());
                     }
                     PanelCommand::Cancel => {
@@ -382,7 +390,7 @@ fn finish_panel(
                     "diff": proposal.diff,
                     "password_required": password_required,
                 }))?;
-                match read_panel_command(input)? {
+                match receive_panel_command(input)? {
                     PanelCommand::Apply { password } => {
                         if let Some(password) = &password
                             && (password.is_empty()
@@ -404,10 +412,21 @@ fn finish_panel(
                         };
                         send_panel_event(&json!({ "event": "progress", "message": progress }))?;
                         let result = client.apply_local(&proposal, password.as_deref())?;
-                        send_panel_event(&json!({
-                            "event": "done",
-                            "message": result.message,
-                        }))?;
+                        let message = if let Some(trial) = result.display_trial {
+                            send_panel_event(
+                                &json!({"event":"confirm_display", "seconds":20, "message":"Keep these display settings? Send keep_display within 20 seconds; otherwise they revert."}),
+                            )?;
+                            // The independent watchdog restores on timeout even if
+                            // the panel stops sending commands or this worker exits.
+                            let keep = matches!(
+                                input.recv_timeout(Duration::from_secs(20)),
+                                Ok(Ok(PanelCommand::KeepDisplay))
+                            );
+                            trial.finish(keep)?
+                        } else {
+                            result.message
+                        };
+                        send_panel_event(&json!({ "event": "done", "message": message }))?;
                         return Ok(());
                     }
                     PanelCommand::Cancel => {
@@ -427,6 +446,12 @@ fn finish_panel(
             }
         }
     }
+}
+
+fn receive_panel_command(
+    input: &std::sync::mpsc::Receiver<Result<PanelCommand>>,
+) -> Result<PanelCommand> {
+    input.recv().context("panel input disconnected")?
 }
 
 fn read_panel_command(input: &mut impl BufRead) -> Result<PanelCommand> {
@@ -613,7 +638,21 @@ fn confirm_and_apply_local(client: &PeasyClient, proposal: LocalProposal) -> Res
     };
     println!("\n{progress}");
     let result = client.apply_local(&proposal, supplied_password.as_deref())?;
-    if result.completed {
+    if let Some(trial) = result.display_trial {
+        print!("Keep these display settings? [y/N] (reverts in 20 seconds) ");
+        io::stdout().flush()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            let keep = io::stdin().read_line(&mut line).is_ok()
+                && matches!(line.trim(), "y" | "Y" | "yes" | "YES");
+            let _ = tx.send(keep);
+        });
+        let keep = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .unwrap_or(false);
+        println!("{}", trial.finish(keep)?);
+    } else if result.completed {
         println!("✓ {}", result.message);
     }
     Ok(())

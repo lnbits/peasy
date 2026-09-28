@@ -668,22 +668,15 @@
             "idle_minutes": {
               "maximum": 1440,
               "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             },
             "lid": {
               "enum": [
                 "ignore",
                 "suspend",
-                "hibernate",
-                null
+                "hibernate"
               ],
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             },
             "operation": {
               "enum": [
@@ -763,12 +756,12 @@
             },
             "x": {
               "maximum": 16384,
-              "minimum": -16384,
+              "minimum": 0,
               "type": "integer"
             },
             "y": {
               "maximum": 16384,
-              "minimum": -16384,
+              "minimum": 0,
               "type": "integer"
             }
           },

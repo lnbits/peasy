@@ -1,7 +1,7 @@
 {
   "id": "power",
-  "version": "1.3.0",
-  "host_api": 4,
+  "version": "1.4.0",
+  "host_api": 5,
   "capabilities": [
     "Power: bounded inspection and reviewed resource management"
   ],
@@ -9,7 +9,7 @@
     "power.read",
     "power.write"
   ],
-  "instructions": "Inspect battery status and available power profiles. Select an existing power-profiles-daemon profile with desktop authorization. Configure persistent logind lid handling and idle suspension through NixOS; desktop inhibitors may override it. Do not claim hibernation works without host support. No automatic installation of competing power managers, sleep inhibition or forced shutdown.",
+  "instructions": "Inspect battery status and available power profiles. Select an existing power-profiles-daemon profile with desktop authorization. Configure persistent logind lid handling and idle suspension through NixOS; desktop inhibitors may override it. Do not claim hibernation works without host support. No automatic installation of competing power managers, sleep inhibition or forced shutdown. Specify only the requested lid action or idle timeout; use null for the other field to preserve its current contribution. At least one field must be non-null.",
   "response_schema": {
     "additionalProperties": false,
     "properties": {
@@ -312,15 +312,22 @@
               "idle_minutes": {
                 "maximum": 1440,
                 "minimum": 0,
-                "type": "integer"
+                "type": [
+                  "integer",
+                  "null"
+                ]
               },
               "lid": {
                 "enum": [
                   "ignore",
                   "suspend",
-                  "hibernate"
+                  "hibernate",
+                  null
                 ],
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "operation": {
                 "enum": [

@@ -4,6 +4,9 @@ Inspect and change GNOME, Plasma or Hyprland display layouts using exact discove
 
 ## Contract
 
+- Positions accept −16384…16384; GNOME translates all outputs to a non-negative origin.
+- After applying, Keep must be selected within 20 seconds. Timeout, Revert, closing the client or a failed apply triggers restoration by a separate session watchdog.
+
 - `inspect_resources` accepts domain `displays`; only service inspection accepts a target.
 - `change_resources` accepts only this domain's typed operations. Every mutation requires review.
 - Native discovery bounds responses; resource identities and preconditions are checked again before applying.

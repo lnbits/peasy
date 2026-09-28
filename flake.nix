@@ -144,6 +144,9 @@
                   ${./nix/tests/resources.nix} \
                   ${./nix/tests/resources-eval.nix} \
                   ${./nix/tests/resources-vm.nix} \
+                  ${./nix/tests/resource-tools.nix} \
+                  ${./nix/tests/resources-lifecycle-vm.nix} \
+                  ${./nix/tests/resources-session-vm.nix} \
                   ${./nix/tests/networking.nix} \
                   ${./nix/tests/networking-eval.nix} \
                   ${./nix/tests/networking-vm.nix} \
@@ -201,6 +204,15 @@
             package = corePackage;
           };
           resources = import ./nix/tests/resources.nix {
+            inherit pkgs;
+            package = corePackage;
+          };
+          resources-lifecycle-vm = import ./nix/tests/resources-lifecycle-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
+          };
+          resources-session-vm = import ./nix/tests/resources-session-vm.nix {
             inherit pkgs;
             package = corePackage;
           };

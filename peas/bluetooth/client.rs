@@ -92,6 +92,7 @@ impl PeasyClient {
             }
         }
         Ok(LocalResult {
+            display_trial: None,
             completed: true,
             message: format!("Connected Bluetooth device {name}."),
         })

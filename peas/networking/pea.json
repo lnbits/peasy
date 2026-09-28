@@ -1,7 +1,7 @@
 {
   "id": "networking",
-  "version": "1.3.0",
-  "host_api": 4,
+  "version": "1.4.0",
+  "host_api": 5,
   "capabilities": [
     "Inspect interfaces, connection profiles, IPv4 addressing and routes",
     "Configure DHCP, static IPv4, DNS, shared connectivity, Wi-Fi modes and profile activation"

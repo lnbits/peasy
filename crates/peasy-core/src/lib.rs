@@ -1,4 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
+pub mod display_trial;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod resource_native;
 pub mod resources;
 pub use resources::{ResourceChange, ResourceDomain, ResourceQuery, ResourceState};

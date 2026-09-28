@@ -2,7 +2,8 @@
 
 Host API 4 adds diagnostics, services, storage, Nix maintenance, users, firewall,
 printing, displays, audio and power. These are native host capabilities with
-data-only pea manifests. API 1–3 schemas and permissions remain unchanged.
+data-only pea manifests. API 5 adds signed display positions and independently
+optional power settings. API 1–4 schemas and permissions remain unchanged.
 
 ## Discovery and permission
 
@@ -54,6 +55,12 @@ replacement, changed service identity and reused audio IDs require a new review.
 Once mutation begins, cancellation does not pretend to undo it. Tool failure is
 reported; live operations do not claim transactional or generation rollback.
 
+The CLI asks for a second confirmation after a display apply; the desktop shows a
+countdown with Keep and Revert. The panel worker emits `confirm_display` with
+`seconds: 20` and accepts `{"action":"keep_display"}` during that interval. Cancel,
+EOF or timeout reverts. The final result reports whether settings were kept or
+restored; model responses cannot supply this confirmation.
+
 ## Limits
 
 - Storage refuses internal/system disks, layered devices, non-leaf targets and
@@ -74,10 +81,38 @@ reported; live operations do not claim transactional or generation rollback.
 - Displays preserve other outputs. GNOME layouts with HDR, underscanning or
   mirrored target displays, custom modes,
   output disabling and Hyprland primary selection are unsupported. GNOME changes
-  require the packaged `gdctl` tool. No automatic display-revert timer is provided.
+  require the packaged `gdctl` tool. Positions are bounded to −16384…16384; GNOME
+  translates the complete layout to a non-negative origin. A separate session
+  watchdog restores the previous layout after 20 seconds unless the user selects
+  Keep. Revert, closing Peasy, or a failed apply also triggers restoration. One
+  trial may run per user session. Restoration failures are reported when the
+  client remains open; disconnected hardware or a stopped compositor can prevent
+  recovery. Killing the watchdog itself prevents its timer from running.
+- Power settings merge only non-null fields into Peasy’s existing contribution.
+  `lid` and `idle_minutes` are independently nullable; both null is invalid. Omitted
+  fields in native requests have the same preservation semantics. Zero disables
+  idle suspension. Existing full power records remain readable.
 - Power policy does not enable a daemon or configure hibernation storage. Desktop
   inhibitors may override logind. Sleep inhibition and forced shutdown are excluded.
 
 No generic files, terminal, shell or commands pea is added. Native adapters live in
 each domain's `native.rs`; shared types, dispatch and proposal handling remain in
 the host. Follow the [pea contract](../peas/README.md).
+
+## Regression checks
+
+- `resources-lifecycle-vm` formats, mounts and unmounts a disposable USB disk with
+  real UDisks. It rejects mounted, system and device-mapper targets, activates a
+  UUID mount, and checks real firewall traffic and account lifecycle behavior.
+  Its NixOS generations are built from the Rust renderer before VM boot, then
+  activated with the real switch script. Proposal ownership checks use the daemon.
+- `resources-session-vm` exercises a PipeWire null sink, power-profiles-daemon and
+  an emulated IPP printer through the native adapters.
+- Rust display tests cover all three backend command plans and a separate worker
+  process: Keep, Revert, timeout, disconnect, stale snapshots, concurrent trials
+  and partial apply failure. These fixtures do not replace physical multi-monitor
+  testing on each desktop.
+
+Run the VM checks with `nix build .#checks.x86_64-linux.resources-lifecycle-vm
+.#checks.x86_64-linux.resources-session-vm`; run the Rust checks with
+`nix develop --command bash scripts/check-rust.sh`.

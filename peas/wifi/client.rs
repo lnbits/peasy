@@ -138,6 +138,7 @@ impl PeasyClient {
             );
         }
         Ok(LocalResult {
+            display_trial: None,
             completed: true,
             message: format!("Connected to Wi-Fi {ssid}."),
         })

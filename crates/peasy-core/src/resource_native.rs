@@ -239,8 +239,39 @@ pub fn apply_live(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRun
             r.run(Tool::Powerprofilesctl, &["set", profile.value()])?;
         }
         ResourceChange::Printer { .. } => printing::apply(change, r)?,
-        ResourceChange::Display { .. } => displays::apply(change, snapshot, r)?,
+        ResourceChange::Display { .. } => {
+            bail!("display changes require the confirmation watchdog")
+        }
         _ => bail!("unsupported live resource change"),
     }
     Ok(())
+}
+
+pub(crate) fn prepare_display(
+    change: &ResourceChange,
+    before: &Value,
+    r: &dyn ResourceRunner,
+) -> Result<()> {
+    change.validate()?;
+    if !matches!(change, ResourceChange::Display { .. }) {
+        bail!("not a display change");
+    }
+    if &displays::snapshot(change, r)? != before {
+        bail!("selected resources changed; review again");
+    }
+    Ok(())
+}
+pub(crate) fn set_display(
+    change: &ResourceChange,
+    before: &Value,
+    r: &dyn ResourceRunner,
+) -> Result<()> {
+    displays::apply(change, before, r)
+}
+pub(crate) fn restore_display(
+    change: &ResourceChange,
+    before: &Value,
+    r: &dyn ResourceRunner,
+) -> Result<()> {
+    displays::restore(change, before, r)
 }

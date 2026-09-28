@@ -377,3 +377,15 @@ Host API 4 adds domain-bound read/write permissions and independently captured
 resource snapshots. See the [resource protocol](resources.md) for destructive
 effects, protected resources, helper confinement, ownership and recovery limits.
 Inspections exclude raw logs, command lines, credential files and arbitrary paths.
+
+Display trials use a separate, unprivileged `peasy-display-guard` process. It
+accepts only a typed Display change and the reviewed snapshot, validates both
+against current discovery, and serializes trials with a per-user runtime lock.
+Only an explicit Keep response within 20 seconds suppresses restoration. EOF,
+timeout and failed applies restore the captured layout; the ordinary live-action
+entry point rejects display changes without this watchdog. Neither executable
+paths nor command arguments are accepted through this protocol.
+
+API 5 makes display coordinates signed and power fields independently nullable.
+Frozen API 4 manifests retain the earlier schema and native permission limits;
+partial power updates merge only specified fields into existing managed state.

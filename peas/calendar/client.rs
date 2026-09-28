@@ -174,6 +174,7 @@ impl PeasyClient {
         let calendar = write_calendar_invite(title, start_local, *duration_minutes)?;
         open_calendar_file(&self.tools.gio, &calendar)?;
         Ok(LocalResult {
+            display_trial: None,
             completed: true,
             message: format!(
                 "The event was handed to your default application for review/import. The iCalendar file is saved at {}.",

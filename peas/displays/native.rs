@@ -42,7 +42,7 @@ fn inspect_for(desktop: &str, r: &dyn ResourceRunner) -> Result<Value> {
     }
     if desktop.contains("hyprland") || std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
         let monitors = json_run(r, Tool::Hyprctl, &["-j", "monitors", "all"])?;
-        let monitors=monitors.as_array().context("invalid Hyprland monitors")?.iter().map(|m|json!({"name":m["name"],"description":m["description"],"serial":m["serial"],"width":m["width"],"height":m["height"],"refreshRate":m["refreshRate"],"x":m["x"],"y":m["y"],"scale":m["scale"],"disabled":m["disabled"],"availableModes":m["availableModes"]})).collect::<Vec<_>>();
+        let monitors=monitors.as_array().context("invalid Hyprland monitors")?.iter().map(|m|json!({"name":m["name"],"description":m["description"],"serial":m["serial"],"width":m["width"],"height":m["height"],"refreshRate":m["refreshRate"],"x":m["x"],"y":m["y"],"scale":m["scale"],"disabled":m["disabled"],"transform":m["transform"],"availableModes":m["availableModes"]})).collect::<Vec<_>>();
         return Ok(json!({"backend":"hyprland","outputs":monitors}));
     }
     bail!("display layout control currently supports GNOME, Plasma and Hyprland sessions")
@@ -50,6 +50,7 @@ fn inspect_for(desktop: &str, r: &dyn ResourceRunner) -> Result<Value> {
 pub fn snapshot(change: &ResourceChange, r: &dyn ResourceRunner) -> Result<Value> {
     let data = inspect(r)?;
     validate_snapshot(change, &data)?;
+    restore_commands(change, &data)?;
     Ok(data)
 }
 fn validate_snapshot(change: &ResourceChange, data: &Value) -> Result<()> {
@@ -167,7 +168,12 @@ pub fn apply(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRunner) 
                 &[
                     "keyword",
                     "monitor",
-                    &format!("{connector},{mode},{x}x{y},{scale}"),
+                    &format!(
+                        "{connector},{mode},{x}x{y},{scale},transform,{}",
+                        hypr_output(snapshot, connector)?["transform"]
+                            .as_u64()
+                            .context("missing display transform")?
+                    ),
                 ],
             )?;
         }
@@ -186,6 +192,29 @@ pub fn apply(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRunner) 
             )?;
         }
         Some("gnome") => {
+            // Mutter requires a layout rooted at (0, 0). Translate every output
+            // together so a signed request retains its relative placement.
+            let layout = snapshot["layout"].as_array().context("missing layout")?;
+            let min_coord = |axis: usize, proposed: i16| -> Result<i64> {
+                layout
+                    .iter()
+                    .map(|l| {
+                        if l[5]
+                            .as_array()
+                            .is_some_and(|ms| ms.iter().any(|m| m[0] == *connector))
+                        {
+                            Ok(i64::from(proposed))
+                        } else {
+                            l[axis].as_i64().context("invalid display position")
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .min()
+                    .context("empty layout")
+            };
+            let dx = min_coord(0, *x)?;
+            let dy = min_coord(1, *y)?;
             let mut args = vec!["set".to_string()];
             let layout_mode = variant(&snapshot["properties"]["layout-mode"])
                 .as_u64()
@@ -206,14 +235,14 @@ pub fn apply(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRunner) 
                     args.push("--primary".into());
                 }
                 let lx = if selected {
-                    x.to_string()
+                    (i64::from(*x) - dx).to_string()
                 } else {
-                    logical[0].to_string()
+                    (logical[0].as_i64().context("invalid x")? - dx).to_string()
                 };
                 let ly = if selected {
-                    y.to_string()
+                    (i64::from(*y) - dy).to_string()
                 } else {
-                    logical[1].to_string()
+                    (logical[1].as_i64().context("invalid y")? - dy).to_string()
                 };
                 let ls = if selected {
                     scale.clone()
@@ -282,6 +311,111 @@ pub fn apply(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRunner) 
     Ok(())
 }
 
+fn hypr_output<'a>(snapshot: &'a Value, connector: &str) -> Result<&'a Value> {
+    snapshot["outputs"]
+        .as_array()
+        .context("missing outputs")?
+        .iter()
+        .find(|o| o["name"] == connector)
+        .context("display disconnected")
+}
+// Build restoration before mutation. Unknown or incomplete state cannot start a trial.
+fn restore_commands(change: &ResourceChange, snapshot: &Value) -> Result<Vec<(Tool, Vec<String>)>> {
+    let ResourceChange::Display { connector, .. } = change else {
+        bail!("not a display change");
+    };
+    let mut commands = vec![];
+    match snapshot["backend"].as_str() {
+        Some("gnome") => {
+            struct Capture(std::cell::RefCell<Vec<(Tool, Vec<String>)>>);
+            impl ResourceRunner for Capture {
+                fn run(&self, t: Tool, a: &[&str]) -> Result<String> {
+                    self.0
+                        .borrow_mut()
+                        .push((t, a.iter().map(|s| s.to_string()).collect()));
+                    Ok(String::new())
+                }
+            }
+            let capture = Capture(std::cell::RefCell::new(vec![]));
+            // An unmatched connector preserves every original mode and logical monitor.
+            apply(
+                &ResourceChange::Display {
+                    connector: String::new(),
+                    mode: String::new(),
+                    scale_percent: 100,
+                    x: 0,
+                    y: 0,
+                    primary: false,
+                },
+                snapshot,
+                &capture,
+            )?;
+            commands = capture.0.into_inner();
+        }
+        Some("plasma") => {
+            let mut args = vec![];
+            let outputs = snapshot["configuration"]["outputs"]
+                .as_array()
+                .context("missing outputs")?;
+            for o in outputs
+                .iter()
+                .filter(|o| o["connected"] == true && o["enabled"] != false)
+            {
+                let name = o["name"].as_str().context("missing connector")?;
+                let id = o["currentModeId"]
+                    .as_str()
+                    .context("missing current mode")?;
+                let scale = o["scale"].as_f64().context("missing scale")?;
+                let x = o["pos"]["x"].as_i64().context("missing x")?;
+                let y = o["pos"]["y"].as_i64().context("missing y")?;
+                let priority = o["priority"].as_u64().context("missing priority")?;
+                args.extend([
+                    format!("output.{name}.mode.{id}"),
+                    format!("output.{name}.scale.{scale}"),
+                    format!("output.{name}.position.{x},{y}"),
+                    format!("output.{name}.priority.{priority}"),
+                ]);
+            }
+            if !outputs
+                .iter()
+                .any(|o| o["name"] == *connector && o["enabled"] != false)
+            {
+                bail!("enable this display in desktop settings first");
+            }
+            commands.push((Tool::KscreenDoctor, args));
+        }
+        Some("hyprland") => {
+            let o = hypr_output(snapshot, connector)?;
+            if o["disabled"] != false {
+                bail!("enable this display in desktop settings first");
+            }
+            let w = o["width"].as_u64().context("missing width")?;
+            let h = o["height"].as_u64().context("missing height")?;
+            let rate = o["refreshRate"].as_f64().context("missing refresh rate")?;
+            let x = o["x"].as_i64().context("missing x")?;
+            let y = o["y"].as_i64().context("missing y")?;
+            let scale = o["scale"].as_f64().context("missing scale")?;
+            let transform = o["transform"].as_u64().context("missing transform")?;
+            commands.push((
+                Tool::Hyprctl,
+                vec![
+                    "keyword".into(),
+                    "monitor".into(),
+                    format!("{connector},{w}x{h}@{rate},{x}x{y},{scale},transform,{transform}"),
+                ],
+            ));
+        }
+        _ => bail!("unsupported display backend"),
+    }
+    Ok(commands)
+}
+pub fn restore(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRunner) -> Result<()> {
+    for (tool, args) in restore_commands(change, snapshot)? {
+        r.run(tool, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +470,57 @@ mod tests {
         unsupported["outputs"][0]["properties"]["current-color-mode"] =
             json!({"type":"u","data":1});
         assert!(validate_snapshot(&change(), &unsupported).is_err());
+    }
+    #[test]
+    fn signed_gnome_layout_translates_all_outputs_and_restores_original_state() {
+        let spec = |name| json!([name, "Vendor", "Model", "serial"]);
+        let mode = json!(["1920x1080@60",1920,1080,60.0,1.0,[1.0,1.5,2.0],{"is-current":true}]);
+        let data = json!({"backend":"gnome","outputs":[{"connector":"DP-1","modes":[mode.clone()]},{"connector":"DP-2","modes":[mode]}],"layout":[[0,0,1.0,0,false,[spec("DP-1")],{}],[1920,0,1.5,1,true,[spec("DP-2")],{}]],"properties":{"layout-mode":1}});
+        let r = Mock {
+            response: Value::Null,
+            calls: RefCell::new(vec![]),
+        };
+        let mut requested = change();
+        if let ResourceChange::Display { x, .. } = &mut requested {
+            *x = -1920;
+        }
+        apply(&requested, &data, &r).unwrap();
+        restore(&requested, &data, &r).unwrap();
+        let calls = r.calls.borrow();
+        assert!(calls[1].1.windows(2).any(|v| v == ["--x", "3840"]));
+        assert!(calls[3].1.windows(2).any(|v| v == ["--x", "1920"]));
+        assert!(calls[3].1.windows(2).any(|v| v == ["--transform", "90"]));
+        assert!(calls[3].1.windows(2).any(|v| v == ["--scale", "1.5"]));
+        // Original primary was DP-2, despite the requested DP-1 primary.
+        let primary = calls[3].1.iter().position(|s| s == "--primary").unwrap();
+        assert!(calls[3].1[primary..].contains(&"DP-2".to_string()));
+        assert!(!calls[3].1[primary..].contains(&"DP-1".to_string()));
+    }
+    #[test]
+    fn plasma_restore_preserves_original_modes_positions_and_output_priorities() {
+        let data = json!({"backend":"plasma","configuration":{"outputs":[
+            {"name":"DP-1","connected":true,"enabled":true,"currentModeId":"old1","scale":1.25,"pos":{"x":-1920,"y":0},"priority":2},
+            {"name":"DP-2","connected":true,"enabled":true,"currentModeId":"old2","scale":1.0,"pos":{"x":0,"y":0},"priority":1}
+        ]}});
+        let r = Mock {
+            response: Value::Null,
+            calls: RefCell::new(vec![]),
+        };
+        restore(&change(), &data, &r).unwrap();
+        let calls = r.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        for arg in [
+            "output.DP-1.mode.old1",
+            "output.DP-1.scale.1.25",
+            "output.DP-1.position.-1920,0",
+            "output.DP-1.priority.2",
+            "output.DP-2.priority.1",
+        ] {
+            assert!(calls[0].1.contains(&arg.into()), "{arg}");
+        }
+        let mut missing = data;
+        missing["configuration"]["outputs"][0]["currentModeId"] = Value::Null;
+        assert!(restore_commands(&change(), &missing).is_err());
     }
     #[test]
     fn plasma_and_hyprland_require_real_modes_and_supported_primary_semantics() {

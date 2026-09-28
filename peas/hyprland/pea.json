@@ -1,7 +1,7 @@
 {
   "id": "hyprland",
-  "version": "1.3.0",
-  "host_api": 4,
+  "version": "1.4.0",
+  "host_api": 5,
   "capabilities": [
     "Inspect and control supported live Hyprland settings and window actions"
   ],

@@ -458,6 +458,7 @@ impl PeasyClient {
             );
         }
         Ok(LocalResult {
+            display_trial: None,
             completed: true,
             message: "Network connection state updated. Internet reachability has not been tested."
                 .into(),

@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
-pub const HOST_API: u32 = 4;
+pub const HOST_API: u32 = 5;
 pub const POLICY_PATH: &str = "/etc/peasy/pea-policy.json";
 pub const MAX_PACK_BYTES: usize = 64 * 1024;
 pub const PERMISSIONS: &[&str] = &[
@@ -133,7 +133,9 @@ fn validate_permissions(permissions: &[String]) -> Result<(), ValidationError> {
     Ok(())
 }
 pub fn schema_for_permissions(permissions: &[String]) -> Value {
-    let mut schema = model_response_schema();
+    schema_with_permissions(model_response_schema(), permissions)
+}
+fn schema_with_permissions(mut schema: Value, permissions: &[String]) -> Value {
     let mut actions = vec!["explain", "cancel"];
     for p in permissions {
         actions.extend(match p.as_str() {
@@ -214,6 +216,13 @@ const LEGACY_MESSAGE_CHARS: usize = 400;
 // Do not derive legacy enums from the expanding current catalogue.
 fn schema_for_api(permissions: &[String], api: u32) -> Value {
     let mut schema = schema_for_permissions(permissions);
+    if api == 4 {
+        schema = schema_with_permissions(
+            serde_json::from_str(include_str!("../../../peas/tests/api4-model-schema.json"))
+                .expect("frozen API 4 schema"),
+            permissions,
+        );
+    }
     if api < 4 {
         let actions = schema["properties"]["action"]["enum"].clone();
         schema = serde_json::from_str(include_str!("../../../peas/tests/api3-model-schema.json"))
@@ -252,7 +261,7 @@ impl PeaManifest {
         {
             return Err(invalid("resource permissions require host API 4"));
         }
-        if !matches!(self.host_api, 1 | 2 | 3 | HOST_API) {
+        if !matches!(self.host_api, 1 | 2 | 3 | 4 | HOST_API) {
             return Err(invalid("pea requires a different host API; update Peasy"));
         }
         if !bounded(&self.version, 32)
@@ -310,6 +319,17 @@ impl PeaManifest {
                     .contains(&format!("{}.read", query.domain.id()));
         }
         if let ModelAction::ChangeResources { change } = action {
+            if self.host_api < 5
+                && match change {
+                    crate::ResourceChange::Display { x, y, .. } => *x < 0 || *y < 0,
+                    crate::ResourceChange::PowerSettings { lid, idle_minutes } => {
+                        lid.is_none() || idle_minutes.is_none()
+                    }
+                    _ => false,
+                }
+            {
+                return false;
+            }
             return self.host_api >= 4
                 && change.validate().is_ok()
                 && self
@@ -361,7 +381,7 @@ impl PeaPin {
         {
             return Err(invalid("resource permissions require host API 4"));
         }
-        if !matches!(self.host_api, 1 | 2 | 3 | HOST_API)
+        if !matches!(self.host_api, 1 | 2 | 3 | 4 | HOST_API)
             || !bounded(&self.version, 32)
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
@@ -446,6 +466,39 @@ pub(crate) fn legacy_render(pins: &[PeaPin]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn api4_pins_keep_original_power_and_display_limits() {
+        for (id, change) in [
+            (
+                "power",
+                crate::ResourceChange::PowerSettings {
+                    lid: None,
+                    idle_minutes: Some(30),
+                },
+            ),
+            (
+                "displays",
+                crate::ResourceChange::Display {
+                    connector: "DP-1".into(),
+                    mode: "1920x1080@60".into(),
+                    scale_percent: 100,
+                    x: -1920,
+                    y: 0,
+                    primary: false,
+                },
+            ),
+        ] {
+            let mut manifest = manifest_for_api(4);
+            manifest.permissions = vec![format!("{id}.write")];
+            manifest.response_schema = schema_for_api(&manifest.permissions, 4);
+            manifest.validate().unwrap();
+            let action = ModelAction::ChangeResources { change };
+            assert!(!manifest.permits(&action));
+            manifest.host_api = HOST_API;
+            manifest.response_schema = schema_for_api(&manifest.permissions, HOST_API);
+            assert!(manifest.permits(&action));
+        }
+    }
     fn manifest_for_api(api: u32) -> PeaManifest {
         let mut manifest: PeaManifest =
             serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();

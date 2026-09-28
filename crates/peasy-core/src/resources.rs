@@ -127,8 +127,8 @@ pub enum ResourceChange {
         profile: PowerProfile,
     },
     PowerSettings {
-        lid: LidAction,
-        idle_minutes: u16,
+        lid: Option<LidAction>,
+        idle_minutes: Option<u16>,
     },
     Printer {
         name: String,
@@ -139,8 +139,8 @@ pub enum ResourceChange {
         connector: String,
         mode: String,
         scale_percent: u16,
-        x: u16,
-        y: u16,
+        x: i16,
+        y: i16,
         primary: bool,
     },
 }
@@ -292,8 +292,11 @@ impl ResourceChange {
                     return Err(invalid("invalid audio target or volume"));
                 }
             }
-            Self::PowerSettings { idle_minutes, .. } => {
-                if *idle_minutes > 1440 {
+            Self::PowerSettings { lid, idle_minutes } => {
+                if lid.is_none() && idle_minutes.is_none() {
+                    return Err(invalid("specify a lid action or idle timeout"));
+                }
+                if idle_minutes.is_some_and(|minutes| minutes > 1440) {
                     return Err(invalid("idle timeout exceeds one day"));
                 }
             }
@@ -331,8 +334,8 @@ impl ResourceChange {
                         .all(|b| b.is_ascii_digit() || b"x@.".contains(&b))
                     || !mode.contains('x')
                     || !(50..=300).contains(scale_percent)
-                    || *x > 16384
-                    || *y > 16384
+                    || !(-16384..=16384).contains(x)
+                    || !(-16384..=16384).contains(y)
                 {
                     return Err(invalid("invalid display layout"));
                 }
@@ -426,15 +429,20 @@ impl ResourceChange {
                 volume.map(|v| format!(" to {v}%")).unwrap_or_default()
             ),
             Self::PowerProfile { profile } => format!("Select {} power profile", profile.value()),
-            Self::PowerSettings { lid, idle_minutes } => format!(
-                "Lid action: {}; idle suspension: {}",
-                lid.value(),
-                if *idle_minutes == 0 {
-                    "disabled".into()
-                } else {
-                    format!("after {idle_minutes} minutes")
+            Self::PowerSettings { lid, idle_minutes } => {
+                let mut parts = vec![];
+                if let Some(lid) = lid {
+                    parts.push(format!("Lid action: {}", lid.value()));
                 }
-            ),
+                if let Some(minutes) = idle_minutes {
+                    parts.push(if *minutes == 0 {
+                        "Idle suspension: disabled".into()
+                    } else {
+                        format!("Idle suspension: after {minutes} minutes")
+                    });
+                }
+                parts.join("; ")
+            }
             Self::Printer { name, action, uri } => format!(
                 "{} printer {}{}",
                 action.value(),
@@ -505,7 +513,7 @@ impl ResourceChange {
                 "Selects a live power-profiles-daemon profile, subject to hardware support and desktop authorization."
             }
             Self::PowerSettings { .. } => {
-                "Changes system logind idle and lid policy. Desktop inhibitors may override it; zero disables idle suspension. Hibernate requires a working host hibernation setup."
+                "Changes only the specified system logind policy; omitted lid or idle settings are preserved. Desktop inhibitors may override it; zero disables idle suspension. Hibernate requires a working host hibernation setup."
             }
             Self::Printer {
                 action: PrinterAction::Add,
@@ -519,7 +527,7 @@ impl ResourceChange {
             } => "Sends one fixed test page to this printer; consumes paper and ink.",
             Self::Printer { .. } => "Changes the current user's CUPS default printer.",
             Self::Display { .. } => {
-                "Changes the live display layout. Desktop persistence varies. Keep the desktop's display settings available to restore an unsuitable layout."
+                "Changes the live display layout. Keep it within 20 seconds or the previous layout is restored. Desktop persistence varies."
             }
         }
     }
@@ -572,8 +580,8 @@ pub struct CallerGroups {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PowerSettings {
-    pub lid: LidAction,
-    pub idle_minutes: u16,
+    pub lid: Option<LidAction>,
+    pub idle_minutes: Option<u16>,
 }
 impl ResourceState {
     pub fn is_empty(&self) -> bool {
@@ -728,8 +736,8 @@ impl ResourceState {
             }
             ResourceChange::PowerSettings { lid, idle_minutes } => {
                 next.power = Some(PowerSettings {
-                    lid: *lid,
-                    idle_minutes: *idle_minutes,
+                    lid: lid.or(self.power.as_ref().and_then(|p| p.lid)),
+                    idle_minutes: idle_minutes.or(self.power.as_ref().and_then(|p| p.idle_minutes)),
                 });
             }
             _ => return Err(invalid("operation is not declarative")),
@@ -783,7 +791,18 @@ impl ResourceState {
             s.push_str("  ];\n");
         }
         if let Some(p) = &self.power {
-            s.push_str(&format!("  services.logind.settings.Login = {{ HandleLidSwitch = {}; IdleAction = {}; IdleActionSec = {}; }};\n",nix_string(p.lid.value()),nix_string(if p.idle_minutes==0 {"ignore"} else {"suspend"}),nix_string(&format!("{}min",p.idle_minutes))));
+            // Preserve the original source representation for existing full
+            // records, which participate in source/state reconciliation.
+            if let (Some(lid), Some(minutes)) = (p.lid, p.idle_minutes) {
+                s.push_str(&format!("  services.logind.settings.Login = {{ HandleLidSwitch = {}; IdleAction = {}; IdleActionSec = {}; }};\n", nix_string(lid.value()), nix_string(if minutes == 0 { "ignore" } else { "suspend" }), nix_string(&format!("{minutes}min"))));
+            } else if let Some(lid) = p.lid {
+                s.push_str(&format!(
+                    "  services.logind.settings.Login.HandleLidSwitch = {};\n",
+                    nix_string(lid.value())
+                ));
+            } else if let Some(minutes) = p.idle_minutes {
+                s.push_str(&format!("  services.logind.settings.Login.IdleAction = {};\n  services.logind.settings.Login.IdleActionSec = {};\n", nix_string(if minutes == 0 { "ignore" } else { "suspend" }), nix_string(&format!("{minutes}min"))));
+            }
         }
         Ok(s)
     }
@@ -908,8 +927,14 @@ pub fn change_schema() -> Value {
     add(
         "power_settings",
         vec![
-            ("lid", enumeration(vec!["ignore", "suspend", "hibernate"])),
-            ("idle_minutes", integer(0, 1440)),
+            (
+                "lid",
+                json!({"type":["string","null"],"enum":["ignore","suspend","hibernate",null]}),
+            ),
+            (
+                "idle_minutes",
+                json!({"type":["integer","null"],"minimum":0,"maximum":1440}),
+            ),
         ],
     );
     add(
@@ -926,10 +951,86 @@ pub fn change_schema() -> Value {
             ("connector", string(64)),
             ("mode", string(48)),
             ("scale_percent", integer(50, 300)),
-            ("x", integer(0, 16384)),
-            ("y", integer(0, 16384)),
+            ("x", integer(-16384, 16384)),
+            ("y", integer(-16384, 16384)),
             ("primary", bool_schema),
         ],
     );
     json!({"anyOf":variants})
+}
+
+#[cfg(test)]
+mod composition_tests {
+    use super::*;
+    #[test]
+    fn partial_power_changes_preserve_unspecified_contributions_and_old_records() {
+        let mut state = ResourceState::default();
+        state = state
+            .changed(
+                &ResourceChange::PowerSettings {
+                    lid: Some(LidAction::Ignore),
+                    idle_minutes: None,
+                },
+                None,
+            )
+            .unwrap();
+        let rendered = state.render().unwrap();
+        assert!(rendered.contains("HandleLidSwitch"));
+        assert!(!rendered.contains("IdleAction"));
+        state = state
+            .changed(
+                &ResourceChange::PowerSettings {
+                    lid: None,
+                    idle_minutes: Some(30),
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(state.power.as_ref().unwrap().lid, Some(LidAction::Ignore));
+        assert_eq!(state.power.as_ref().unwrap().idle_minutes, Some(30));
+        state = state
+            .changed(
+                &ResourceChange::PowerSettings {
+                    lid: Some(LidAction::Suspend),
+                    idle_minutes: None,
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(state.power.as_ref().unwrap().idle_minutes, Some(30));
+        assert!(
+            ResourceChange::PowerSettings {
+                lid: None,
+                idle_minutes: None
+            }
+            .validate()
+            .is_err()
+        );
+        let old: PowerSettings =
+            serde_json::from_str(r#"{"lid":"suspend","idle_minutes":30}"#).unwrap();
+        assert_eq!(state.power, Some(old));
+        let idle_only: ResourceChange =
+            serde_json::from_str(r#"{"operation":"power_settings","idle_minutes":0}"#).unwrap();
+        let rendered = ResourceState::default()
+            .changed(&idle_only, None)
+            .unwrap()
+            .render()
+            .unwrap();
+        assert!(rendered.contains("IdleAction = \"ignore\""));
+        assert!(!rendered.contains("HandleLidSwitch"));
+    }
+    #[test]
+    fn display_coordinates_are_signed_and_bounded() {
+        for x in [-32768, -16385, -16384, -2560, 0, 16384, 16385, 32767] {
+            let change = ResourceChange::Display {
+                connector: "DP-1".into(),
+                mode: "1920x1080@60".into(),
+                scale_percent: 100,
+                x,
+                y: 0,
+                primary: false,
+            };
+            assert_eq!(change.validate().is_ok(), (-16384..=16384).contains(&x));
+        }
+    }
 }

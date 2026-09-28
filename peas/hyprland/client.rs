@@ -278,6 +278,7 @@ impl PeasyClient {
         };
         ensure_hyprland_success(output, "change the setting")?;
         Ok(LocalResult {
+            display_trial: None,
             completed: true,
             message: format!("Hyprland {} changed for this live session.", change.setting),
         })
@@ -305,6 +306,7 @@ impl PeasyClient {
         };
         ensure_hyprland_success(output, "perform the requested action")?;
         Ok(LocalResult {
+            display_trial: None,
             completed: true,
             message: hyprland_dispatch_description(*dispatch, argument.as_deref()),
         })

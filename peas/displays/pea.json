@@ -1,7 +1,7 @@
 {
   "id": "displays",
-  "version": "1.3.0",
-  "host_api": 4,
+  "version": "1.4.0",
+  "host_api": 5,
   "capabilities": [
     "Displays: bounded inspection and reviewed resource management"
   ],
@@ -9,7 +9,7 @@
     "displays.read",
     "displays.write"
   ],
-  "instructions": "Inspect and change GNOME, Plasma or Hyprland display layouts using exact discovered outputs and modes. Propose position, refresh/mode, supported scale and primary output where the desktop supports it. Preserve other outputs. Hyprland has no primary flag; use false. No output disabling, mirrored GNOME layout edits, custom modes, compositor configuration files or claims of NixOS rollback.",
+  "instructions": "Inspect and change GNOME, Plasma or Hyprland display layouts using exact discovered outputs and modes. Propose position, refresh/mode, supported scale and primary output where the desktop supports it. Preserve other outputs. Hyprland has no primary flag; use false. No output disabling, mirrored GNOME layout edits, custom modes, compositor configuration files or claims of NixOS rollback. Positions accept signed coordinates from -16384 to 16384. GNOME translates the complete layout to a non-negative origin while preserving relative positions. Changes require the user to keep them within 20 seconds or the host restores the previous layout.",
   "response_schema": {
     "additionalProperties": false,
     "properties": {
@@ -309,12 +309,12 @@
               },
               "x": {
                 "maximum": 16384,
-                "minimum": 0,
+                "minimum": -16384,
                 "type": "integer"
               },
               "y": {
                 "maximum": 16384,
-                "minimum": 0,
+                "minimum": -16384,
                 "type": "integer"
               }
             },

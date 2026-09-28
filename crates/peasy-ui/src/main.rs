@@ -1263,7 +1263,11 @@ fn apply_local(
         }
         match result {
             Ok(Ok(result)) => {
-                show_message(&window, state.clone(), &format!("✓ {}", result.message));
+                if let Some(trial) = result.display_trial {
+                    show_display_confirmation(&window, state.clone(), trial);
+                } else {
+                    show_message(&window, state.clone(), &format!("✓ {}", result.message));
+                }
                 glib::ControlFlow::Break
             }
             Ok(Err(error)) => {
@@ -1281,6 +1285,71 @@ fn apply_local(
             }
         }
     });
+}
+
+fn show_display_confirmation(
+    window: &adw::ApplicationWindow,
+    state: AppState,
+    trial: peasy_core::display_trial::DisplayTrial,
+) {
+    let dialog = adw::AlertDialog::builder()
+        .heading("Keep these display settings?")
+        .build();
+    dialog.add_response("revert", "Revert");
+    dialog.add_response("keep", "Keep settings");
+    dialog.set_default_response(Some("revert"));
+    dialog.set_close_response("revert");
+    dialog.set_response_appearance("keep", adw::ResponseAppearance::Suggested);
+    let trial = Rc::new(RefCell::new(Some(trial)));
+    let pending = trial.clone();
+    let weak_dialog = dialog.downgrade();
+    glib::timeout_add_local(Duration::from_millis(200), move || {
+        let Some(dialog) = weak_dialog.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let remaining = pending.borrow().as_ref().map(|t| t.seconds_remaining());
+        match remaining {
+            Some(0) => {
+                dialog.close();
+                glib::ControlFlow::Break
+            }
+            Some(seconds) => {
+                dialog.set_body(&format!(
+                    "Previous settings will be restored in {seconds} seconds."
+                ));
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        }
+    });
+    let response_window = window.clone();
+    dialog.connect_response(None, move |_, response| {
+        let Some(trial) = trial.borrow_mut().take() else {
+            return;
+        };
+        let keep = response == "keep";
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(trial.finish(keep).map_err(|e| format!("{e:#}")));
+        });
+        let window = response_window.clone();
+        let state = state.clone();
+        glib::timeout_add_local(Duration::from_millis(80), move || {
+            match rx.try_recv() {
+                Ok(Ok(message)) => show_message(&window, state.clone(), &message),
+                Ok(Err(error)) => show_error_message(&window, state.clone(), &error),
+                Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+                Err(_) => show_error_message(
+                    &window,
+                    state.clone(),
+                    "Display safety worker disconnected.",
+                ),
+            }
+            glib::ControlFlow::Break
+        });
+    });
+    dialog.set_body("Previous settings will be restored in 20 seconds unless you keep them.");
+    dialog.present(Some(window));
 }
 
 fn show_message(window: &adw::ApplicationWindow, state: AppState, message: &str) {

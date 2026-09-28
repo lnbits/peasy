@@ -164,6 +164,8 @@ rustPlatform.buildRustPackage {
       lib.attrValues resourceTools
     )}
     install -Dm755 target/${stdenv.hostPlatform.rust.rustcTarget}/release/peasy "$out/bin/peasy"
+    install -Dm755 target/${stdenv.hostPlatform.rust.rustcTarget}/release/peasy-display-guard "$out/bin/peasy-display-guard"
+    wrapProgram "$out/bin/peasy-display-guard" ${resourceWrapperArgs}
     install -Dm755 target/${stdenv.hostPlatform.rust.rustcTarget}/release/peasy-system "$out/libexec/peasy-system"
     install -Dm644 target/wasm32-unknown-unknown/release/peasy_engine.wasm \
       "$out/lib/peasy/peasy-engine.wasm"
@@ -187,21 +189,23 @@ rustPlatform.buildRustPackage {
     ${
       if withGui then
         ''
-            wrapProgram "$out/bin/peasy" ${resourceWrapperArgs} \
-              --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
-              --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
-              --set-default PEASY_NIX "${nix}/bin/nix" \
-              --set-default PEASY_DATE "${coreutils}/bin/date" \
-          --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \
-          --set-default PEASY_BLUETOOTHCTL "${bluez}/bin/bluetoothctl" \
-          --set-default PEASY_GIO "${glib}/bin/gio" \
-              --set-default PEASY_GSETTINGS "${glib}/bin/gsettings" \
-              --set-default PEASY_VARIANT "desktop" \
-              --set-default PEASY_NIX_SYSTEM "${stdenv.hostPlatform.system}"
+          wrapProgram "$out/bin/peasy" ${resourceWrapperArgs} \
+            --set-default PEASY_DISPLAY_GUARD "$out/bin/peasy-display-guard" \
+            --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
+            --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
+            --set-default PEASY_NIX "${nix}/bin/nix" \
+            --set-default PEASY_DATE "${coreutils}/bin/date" \
+            --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \
+            --set-default PEASY_BLUETOOTHCTL "${bluez}/bin/bluetoothctl" \
+            --set-default PEASY_GIO "${glib}/bin/gio" \
+            --set-default PEASY_GSETTINGS "${glib}/bin/gsettings" \
+            --set-default PEASY_VARIANT "desktop" \
+            --set-default PEASY_NIX_SYSTEM "${stdenv.hostPlatform.system}"
         ''
       else
         ''
           wrapProgram "$out/bin/peasy" ${resourceWrapperArgs} \
+            --set-default PEASY_DISPLAY_GUARD "$out/bin/peasy-display-guard" \
             --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
             --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
             --set-default PEASY_NIX "${nix}/bin/nix" \
@@ -217,6 +221,7 @@ rustPlatform.buildRustPackage {
   # GTK's folder chooser aborts if its Settings.FileChooser schema is missing.
   preFixup = lib.optionalString withGui ''
     wrapProgram "$out/bin/peasy-ui" ${resourceWrapperArgs} \
+      --set-default PEASY_DISPLAY_GUARD "$out/bin/peasy-display-guard" \
       "''${gappsWrapperArgs[@]}" \
       --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
       --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \

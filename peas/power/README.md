@@ -4,6 +4,8 @@ Inspect battery status and available power profiles. Select an existing power-pr
 
 ## Contract
 
+- Specify `lid`, `idle_minutes`, or both. Null or omitted fields preserve Peasy’s existing contribution; both absent is invalid. Zero disables idle suspension.
+
 - `inspect_resources` accepts domain `power`; only service inspection accepts a target.
 - `change_resources` accepts only this domain's typed operations. Every mutation requires review.
 - Native discovery bounds responses; resource identities and preconditions are checked again before applying.

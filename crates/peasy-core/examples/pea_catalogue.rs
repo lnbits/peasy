@@ -93,7 +93,7 @@ fn main() {
     for (id, capabilities, permissions, instructions) in entries {
         let manifest = PeaManifest {
             id: id.into(),
-            version: "1.3.0".into(),
+            version: "1.4.0".into(),
             host_api: HOST_API,
             capabilities,
             response_schema: schema_for_permissions(&permissions),

@@ -1039,6 +1039,7 @@ impl LocalProposal {
 }
 
 pub struct LocalResult {
+    pub display_trial: Option<peasy_core::display_trial::DisplayTrial>,
     pub completed: bool,
     pub message: String,
 }
@@ -1570,12 +1571,22 @@ impl PeasyClient {
                 if change.privileged() {
                     bail!("privileged resource changes require daemon authorization");
                 }
+                if matches!(change, peasy_core::ResourceChange::Display { .. }) {
+                    return Ok(LocalResult {
+                        display_trial: Some(peasy_core::display_trial::DisplayTrial::start(
+                            change, snapshot,
+                        )?),
+                        completed: false,
+                        message: "Keep these display settings?".into(),
+                    });
+                }
                 peasy_core::resource_native::apply_live(
                     change,
                     snapshot,
                     &peasy_core::resource_native::SessionRunner,
                 )?;
                 Ok(LocalResult {
+                    display_trial: None,
                     completed: true,
                     message: format!("Resource operation completed. {}", change.note()),
                 })
