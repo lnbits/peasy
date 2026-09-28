@@ -17,7 +17,8 @@ or additional Wasm guests. Native adapters require source review and a host
 rebuild; Rust module boundaries do not sandbox malicious native code.
 
 The host API and generated schemas define accepted inputs. Package instructions
-cannot add operations, widen permissions or override validation. See
+cannot add operations, widen permissions or override validation. Model responses
+and package-selection continuations must retain the originating pea's API limits. See
 [package format, compatibility and publication](../docs/pea-packages.md).
 
 ## Design a domain, not a recipe

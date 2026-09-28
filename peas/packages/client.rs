@@ -78,6 +78,7 @@ pub(super) fn has_direct_package_match(candidates: &[PackageCandidate], query: &
 
 pub(super) fn package_choices(candidates: Vec<PackageCandidate>, request: &str) -> Resolution {
     Resolution::Choose(Choice {
+        pea: None,
         intro: Some("I found these installable matches. Choose the one you want:".into()),
         candidates: candidates
             .into_iter()
@@ -96,6 +97,7 @@ impl PeasyClient {
         installed: &[String],
         theme: &ThemeSettings,
         managed_configuration: &str,
+        pea: Option<&peasy_core::pea::PeaManifest>,
         progress: &mut F,
     ) -> Result<Resolution>
     where
@@ -124,6 +126,7 @@ impl PeasyClient {
                 Some(installed),
                 theme,
                 None,
+                pea,
             )?;
             match self.engine.resolve(&EngineInput {
                 action,
@@ -145,9 +148,11 @@ impl PeasyClient {
                             item.source = ChoiceSource::SystemSetup { candidate, setup };
                         }
                         return Ok(Resolution::Choose(Choice {
+                            pea: None,
                             intro: Some(message),
                             candidates: vec![item],
-                        }));
+                        })
+                        .with_pea(pea));
                     }
                     progress(ResolveStage::PreparingChange);
                     if let Some(setup) = setup {
@@ -161,7 +166,7 @@ impl PeasyClient {
                 } => {
                     if next_query.eq_ignore_ascii_case(&query) && next_version == version {
                         if has_direct_package_match(&candidates, &query) {
-                            return Ok(package_choices(candidates, request));
+                            return Ok(package_choices(candidates, request).with_pea(pea));
                         }
                         break;
                     }
@@ -174,7 +179,9 @@ impl PeasyClient {
                     repository,
                 } => {
                     progress(ResolveStage::SearchingAppImages);
-                    return self.search_appimages(&query, version.as_ref(), repository.as_deref());
+                    return self
+                        .search_appimages(&query, version.as_ref(), repository.as_deref())
+                        .map(|r| r.with_pea(pea));
                 }
                 EngineDecision::Explain(message) => {
                     if let Some(candidate) = candidates.iter().find(|candidate| {
@@ -342,6 +349,7 @@ mod tests {
                     &[],
                     &ThemeSettings::default(),
                     "",
+                    None,
                     &mut |_| {},
                 )
                 .unwrap();

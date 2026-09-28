@@ -20,6 +20,7 @@ impl PeasyClient {
         &self,
         candidate: peasy_core::PackageCandidate,
         request: &str,
+        pea: Option<&peasy_core::pea::PeaManifest>,
     ) -> Result<Resolution> {
         let installed = match self.ipc.request(&IpcRequest::GetPackages)? {
             IpcResponse::Packages { packages } => packages,
@@ -40,7 +41,7 @@ impl PeasyClient {
         };
         let action = self.model.interpret(
             &format!("Original request: {request}\nSelected package: `{}`. Prepare the installation consistent with the original request, including supported service setup when requested. Preserve tools-only intent. Give concrete numbered manual steps for unsupported requirements or ask whether a local server or tools only are wanted when ambiguous. Do not substitute another package.", candidate.attribute),
-            &module, Some(std::slice::from_ref(&candidate)), Some(&installed), &theme, None,
+            &module, Some(std::slice::from_ref(&candidate)), Some(&installed), &theme, None, pea,
         )?;
         let decision = self.engine.resolve(&peasy_core::EngineInput {
             action,
@@ -253,6 +254,7 @@ mod tests {
             serde_json::from_str(include_str!("example.json")).unwrap();
         let guidance = "1. Create a guest VM after applying. 2. Select its storage and installation media in the application; Peasy has not created a VM.";
         let choice = crate::Choice {
+            pea: None,
             intro: Some(guidance.into()),
             candidates: vec![crate::ChoiceItem {
                 name: candidate.name.clone(),

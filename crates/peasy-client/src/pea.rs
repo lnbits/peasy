@@ -71,7 +71,7 @@ impl PeasyClient {
         theme: &ThemeSettings,
     ) -> Result<ModelAction> {
         manifest.validate()?;
-        let mut context = json!({"enabled_pea":manifest, "instruction":"Use this pea's domain instructions and return an action matching its response_schema. The host independently enforces its permissions."});
+        let mut context = json!({"instruction":"Use this pea's domain instructions and return an action matching its response_schema. The host independently enforces its permissions."});
         for _ in 0..2 {
             let action = self.model.interpret_with_feedback(
                 request,
@@ -81,10 +81,8 @@ impl PeasyClient {
                 theme,
                 None,
                 Some(&context.to_string()),
+                Some(manifest),
             )?;
-            if !manifest.permits(&action) {
-                bail!("pea proposed an operation outside its declared permissions");
-            }
             if matches!(action, ModelAction::InspectNetwork) {
                 context["network_snapshot"] = serde_json::to_value(self.network_snapshot()?)?;
                 context["instruction"] = json!(
@@ -160,6 +158,7 @@ impl PeasyClient {
                 theme,
                 None,
                 Some(&context.to_string()),
+                None,
             )? {
                 ModelAction::UsePea { id } => id,
                 ModelAction::Explain { message } => return Ok(Resolution::Explain(message)),
@@ -268,6 +267,217 @@ impl PeasyClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn legacy_packages() -> PeaManifest {
+        serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap()
+    }
+
+    fn docker_action() -> Value {
+        json!({"action":"install_package", "package":"docker", "setup": {
+            "packages":[], "enable":["virtualisation.docker.enable"], "groups":["docker"]
+        }})
+    }
+
+    fn mock_model(
+        action: Value,
+    ) -> (
+        crate::ModelBackend,
+        std::sync::mpsc::Receiver<(String, Value)>,
+    ) {
+        let (base_url, request) = crate::tests::serve_json_once(
+            json!({"message":{"role":"assistant","content":action.to_string()},"done":true}),
+        );
+        let model = crate::ModelBackend::new(crate::ModelProvider::Ollama {
+            base_url,
+            model: "fixture".into(),
+        })
+        .unwrap();
+        (model, request)
+    }
+
+    fn client(socket: std::path::PathBuf) -> PeasyClient {
+        PeasyClient::with_provider(
+            socket,
+            Path::new(&std::env::var_os("PEASY_TEST_ENGINE").expect("compiled guest")),
+            crate::ModelProvider::Ollama {
+                base_url: "http://127.0.0.1:11434".into(),
+                model: "unused".into(),
+            },
+        )
+        .unwrap()
+    }
+
+    fn read_only_ipc(socket: &Path, count: usize) -> std::thread::JoinHandle<()> {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            for _ in 0..count {
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(value) => break value,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "missing IPC request");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("{e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let response = match serde_json::from_str::<IpcRequest>(&line).unwrap() {
+                    IpcRequest::SearchPackages { .. } => IpcResponse::SearchResults {
+                        candidates: vec![peasy_core::PackageCandidate {
+                            attribute: "docker".into(),
+                            name: "Docker".into(),
+                            description: "Containers".into(),
+                            version: "1".into(),
+                        }],
+                    },
+                    IpcRequest::GetPackages => IpcResponse::Packages { packages: vec![] },
+                    IpcRequest::GetTheme => IpcResponse::Theme {
+                        theme: ThemeSettings::default(),
+                    },
+                    IpcRequest::GetManagedModule => IpcResponse::ManagedModule {
+                        module: peasy_core::render_packages_module(&PackageState::default())
+                            .unwrap(),
+                    },
+                    request => panic!("rejected pea must not propose a change: {request:?}"),
+                };
+                serde_json::to_writer(&mut stream, &response).unwrap();
+                stream.write_all(b"\n").unwrap();
+            }
+        })
+    }
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
+    fn pea_schema_is_sent_to_provider_and_enforced_on_native_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut client = client(temp.path().join("unused.sock"));
+        let mut current: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/packages/pea.json")).unwrap();
+        current.instructions = "A domain instruction retained across model turns.".into();
+        for (manifest, action, allowed) in [
+            (legacy_packages(), docker_action(), false),
+            (
+                legacy_packages(),
+                json!({"action":"install_package", "package":"docker", "setup":null}),
+                true,
+            ),
+            (current, docker_action(), true),
+        ] {
+            let (model, request) = mock_model(action);
+            client.model = model;
+            let result = client.interpret_pea(
+                &manifest,
+                "Install Docker",
+                "",
+                &[],
+                &ThemeSettings::default(),
+            );
+            assert_eq!(result.is_ok(), allowed);
+            if !allowed {
+                assert!(result.unwrap_err().to_string().contains("declared schema"));
+            }
+            let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(body["format"], manifest.response_schema);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
+    fn legacy_pea_cannot_expand_during_package_search_or_selection() {
+        for fallback in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let socket = temp.path().join("ipc.sock");
+            let server = read_only_ipc(&socket, if fallback { 4 } else { 1 });
+            let mut client = client(socket);
+            let manifest = legacy_packages();
+            let first_action = if fallback {
+                json!({"action":"search_package", "query":"docker"})
+            } else {
+                docker_action()
+            };
+            let (model, request) = mock_model(first_action);
+            client.model = model;
+            let first = client.resolve_package_agent(
+                "Install Docker",
+                "docker".into(),
+                None,
+                &[],
+                &ThemeSettings::default(),
+                "",
+                Some(&manifest),
+                &mut |_| {},
+            );
+            let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(body["format"], manifest.response_schema);
+            let result = if fallback {
+                let Resolution::Choose(choice) = first.unwrap() else {
+                    panic!("expected fallback choice")
+                };
+                assert_eq!(choice.pea, Some(manifest.clone()));
+                let (model, request) = mock_model(docker_action());
+                client.model = model;
+                let result = client.select(choice, 0);
+                let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert_eq!(body["format"], manifest.response_schema);
+                result
+            } else {
+                first
+            };
+            assert!(
+                result
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("declared schema")
+            );
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
+    fn prepared_setup_selection_is_revalidated_before_ipc() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = client(temp.path().join("no-daemon.sock"));
+        let candidate = peasy_core::PackageCandidate {
+            attribute: "docker".into(),
+            name: "Docker".into(),
+            description: "Containers".into(),
+            version: "1".into(),
+        };
+        let choice = crate::Choice {
+            pea: Some(legacy_packages()),
+            intro: None,
+            candidates: vec![crate::ChoiceItem {
+                name: candidate.name.clone(),
+                attribute: candidate.attribute.clone(),
+                description: candidate.description.clone(),
+                version: candidate.version.clone(),
+                source: crate::ChoiceSource::SystemSetup {
+                    candidate,
+                    setup: serde_json::from_value(docker_action()["setup"].clone()).unwrap(),
+                },
+            }],
+        };
+        assert!(
+            client
+                .select(choice, 0)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("declared schema")
+        );
+    }
+
     #[test]
     #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
     fn cancellation_clears_continuations_even_when_the_daemon_is_unavailable() {

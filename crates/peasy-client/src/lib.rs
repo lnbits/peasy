@@ -43,6 +43,7 @@ use calendar::current_local_time;
 use hyprland::hyprland_session_available;
 
 use anyhow::{Context, Result, bail};
+use peasy_core::pea::PeaManifest;
 use peasy_core::{AppearanceCapabilities, DesktopEnvironment as DesktopKind};
 use peasy_core::{
     DiffLine, EngineDecision, EngineInput, HyprlandDispatch, HyprlandSettingChange, IpcRequest,
@@ -575,6 +576,7 @@ impl OpenAi {
         installed: Option<&[String]>,
         theme: &ThemeSettings,
         recent_package: Option<&PackageCandidate>,
+        pea: Option<&PeaManifest>,
     ) -> Result<ModelAction> {
         if !self.key.is_empty() && user_request.contains(self.key.as_str()) {
             bail!("The request contains your API key. Remove it before sending a request.");
@@ -607,7 +609,7 @@ impl OpenAi {
                 "type": "json_schema",
                 "name": "peasy_model_action",
                 "strict": true,
-                "schema": model_schema()
+                "schema": pea.map(|p| p.response_schema.clone()).unwrap_or_else(model_schema)
             }}
         });
         let request = self
@@ -674,6 +676,7 @@ impl Ollama {
         installed: Option<&[String]>,
         theme: &ThemeSettings,
         recent_package: Option<&PackageCandidate>,
+        pea: Option<&PeaManifest>,
     ) -> Result<ModelAction> {
         let boundary = serde_json::to_string(&Boundary {
             user_request,
@@ -687,7 +690,9 @@ impl Ollama {
             recent_package,
             hyprland_session: hyprland_session_available(),
         })?;
-        let schema = model_schema();
+        let schema = pea
+            .map(|p| p.response_schema.clone())
+            .unwrap_or_else(model_schema);
         let schema_text = serde_json::to_string(&schema)?;
         let system = format!(
             "{} {} {} {} {} Return only JSON matching this schema exactly: {}",
@@ -742,6 +747,7 @@ impl ModelBackend {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // Explicit provider context and originating pea.
     fn interpret(
         &self,
         user_request: &str,
@@ -750,6 +756,7 @@ impl ModelBackend {
         installed: Option<&[String]>,
         theme: &ThemeSettings,
         recent_package: Option<&PackageCandidate>,
+        pea: Option<&PeaManifest>,
     ) -> Result<ModelAction> {
         self.interpret_with_feedback(
             user_request,
@@ -759,6 +766,7 @@ impl ModelBackend {
             theme,
             recent_package,
             None,
+            pea,
         )
     }
     #[allow(clippy::too_many_arguments)] // Explicit, bounded model context, shared by both providers.
@@ -771,8 +779,15 @@ impl ModelBackend {
         theme: &ThemeSettings,
         recent_package: Option<&PackageCandidate>,
         context: Option<&str>,
+        pea: Option<&PeaManifest>,
     ) -> Result<ModelAction> {
-        let mut agent_feedback = context.map(str::to_owned);
+        if let Some(manifest) = pea {
+            manifest.validate()?;
+        }
+        let context = pea
+            .map(|manifest| json!({"enabled_pea": manifest, "feedback": context}).to_string())
+            .or_else(|| context.map(str::to_owned));
+        let mut agent_feedback = context.clone();
         for attempt in 0..2 {
             let result = match self {
                 Self::OpenAi(client) => client.interpret(
@@ -783,6 +798,7 @@ impl ModelBackend {
                     installed,
                     theme,
                     recent_package,
+                    pea,
                 ),
                 Self::Ollama(client) => client.interpret(
                     user_request,
@@ -792,14 +808,22 @@ impl ModelBackend {
                     installed,
                     theme,
                     recent_package,
+                    pea,
                 ),
             };
             match result {
-                Ok(action) => return Ok(action),
+                Ok(action) => {
+                    if pea.is_some_and(|manifest| !manifest.permits(&action)) {
+                        bail!(
+                            "pea proposed an operation outside its declared schema or permissions"
+                        );
+                    }
+                    return Ok(action);
+                }
                 Err(error) if attempt == 0 && error.downcast_ref::<ValidationError>().is_some() => {
                     agent_feedback = Some(format!(
                         "{} Your previous proposed action was invalid: {error}. Re-evaluate the original request and return a complete valid action.",
-                        context.unwrap_or("")
+                        context.as_deref().unwrap_or("")
                     ));
                 }
                 Err(error) => return Err(error),
@@ -903,6 +927,15 @@ pub enum Resolution {
     Choose(Choice),
     Explain(String),
     Cancel,
+}
+
+impl Resolution {
+    fn with_pea(mut self, pea: Option<&PeaManifest>) -> Self {
+        if let Self::Choose(choice) = &mut self {
+            choice.pea = pea.cloned();
+        }
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1043,6 +1076,7 @@ pub struct ChoiceItem {
 }
 
 pub struct Choice {
+    pub(crate) pea: Option<PeaManifest>,
     pub intro: Option<String>,
     pub candidates: Vec<ChoiceItem>,
 }
@@ -1186,6 +1220,7 @@ impl PeasyClient {
                 &theme,
                 None,
                 Some(&available.to_string()),
+                None,
             )?;
             pea::selected_enabled_id(route, &enabled)
         } else {
@@ -1201,6 +1236,7 @@ impl PeasyClient {
                 Some(&installed),
                 &theme,
                 recent_package.as_ref(),
+                None,
                 None,
             )?
         };
@@ -1263,6 +1299,7 @@ impl PeasyClient {
                 &installed,
                 &theme,
                 &managed_configuration,
+                origin,
                 progress,
             ),
             EngineDecision::SearchAppImage {
@@ -1296,6 +1333,7 @@ impl PeasyClient {
                     &theme,
                     None,
                     Some(&feedback),
+                    origin,
                 )?;
                 match self.engine.resolve(&EngineInput {
                     action,
@@ -1366,7 +1404,7 @@ impl PeasyClient {
             }
             pending.insert(proposal.id.clone(), FollowUp::Network { pin });
         }
-        Ok(resolution)
+        Ok(resolution.with_pea(origin))
     }
 
     pub fn select(&self, choice: Choice, index: usize) -> Result<Resolution> {
@@ -1387,8 +1425,21 @@ impl PeasyClient {
             .get(index)
             .context("invalid package choice")?
             .clone();
-        match candidate.source {
+        let pea = choice.pea.as_ref();
+        if let Some(manifest) = pea {
+            manifest.validate()?;
+        }
+        let resolution = match candidate.source {
             ChoiceSource::SystemSetup { candidate, setup } => {
+                if pea.is_some_and(|manifest| {
+                    !manifest.permits(&ModelAction::InstallPackage {
+                        package: candidate.attribute.clone(),
+                        setup: Some(setup.clone()),
+                        message: choice.intro.clone(),
+                    })
+                }) {
+                    bail!("pea selection exceeds its declared schema or permissions");
+                }
                 progress(ResolveStage::PreparingChange);
                 let resolution = self.propose_setup_candidate(candidate, setup)?;
                 Ok(packages::with_install_guidance(
@@ -1398,7 +1449,7 @@ impl PeasyClient {
             }
             ChoiceSource::Nixpkgs { candidate, request } => {
                 progress(ResolveStage::EvaluatingResults);
-                let resolution = self.propose_selected_package(candidate, &request)?;
+                let resolution = self.propose_selected_package(candidate, &request, pea)?;
                 Ok(packages::with_install_guidance(
                     resolution,
                     choice.intro.as_deref(),
@@ -1415,7 +1466,8 @@ impl PeasyClient {
                 progress(ResolveStage::PreparingChange);
                 self.propose_appimage(package)
             }
-        }
+        }?;
+        Ok(resolution.with_pea(pea))
     }
 
     pub fn inspect(&self) -> Result<peasy_core::ServiceStatus> {
@@ -1969,6 +2021,7 @@ mod tests {
                 Some(&[]),
                 &ThemeSettings::default(),
                 None,
+                None,
             )
             .unwrap();
         assert!(matches!(result, ModelAction::Explain { .. }));
@@ -2024,6 +2077,7 @@ mod tests {
                 Some(&[]),
                 Some(&[]),
                 &ThemeSettings::default(),
+                None,
                 None,
             )
             .unwrap();
@@ -2142,7 +2196,16 @@ mod tests {
         let client = OpenAi::new(key.into(), DEFAULT_OPENAI_MODEL.into()).unwrap();
         // Fails before constructing context or attempting any HTTP request.
         let error = client
-            .interpret(key, None, "", None, None, &ThemeSettings::default(), None)
+            .interpret(
+                key,
+                None,
+                "",
+                None,
+                None,
+                &ThemeSettings::default(),
+                None,
+                None,
+            )
             .unwrap_err();
         assert!(!error.to_string().contains(key));
         assert!(error.to_string().contains("API key"));

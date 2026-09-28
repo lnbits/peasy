@@ -431,6 +431,7 @@ impl PeasyClient {
             );
         }
         Ok(Resolution::Choose(Choice {
+            pea: None,
             intro: Some("External AppImages are third-party software. Check the GitHub repository and release before choosing a download.".into()),
             candidates: candidates.into_iter().map(appimage_choice).collect(),
         }))

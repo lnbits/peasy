@@ -125,6 +125,10 @@ session permission from persistent system permission even though both use the
 other packs. Unknown host APIs, schema changes and unsupported permissions fail
 closed with a host-update requirement. Version the host API when changing this
 contract; do not silently change schema semantics under the same API version.
+Both providers receive the originating pea's response schema. Native checks enforce
+its API-specific option, group, PostgreSQL and message limits even if the model
+ignores that schema. Package searches and selection follow-ups retain the same
+pea contract; they cannot silently switch to the current host's broader schema.
 
 For repository-maintained peas, regenerate and check the artifacts:
 

@@ -144,22 +144,26 @@ pub fn schema_for_permissions(permissions: &[String]) -> Value {
     schema["properties"]["action"]["enum"] = serde_json::json!(actions);
     schema
 }
+const LEGACY_ENABLE_OPTIONS: &[&str] = &[
+    "virtualisation.libvirtd.enable",
+    "programs.virt-manager.enable",
+    "services.printing.enable",
+    "hardware.sane.enable",
+    "hardware.bluetooth.enable",
+];
+const LEGACY_GROUPS: &[&str] = &["libvirtd", "lp", "scanner"];
+const LEGACY_MESSAGE_CHARS: usize = 400;
+
 // Immutable API 1/2 pins retain exactly their original, narrower schema.
 // Do not derive legacy enums from the expanding current catalogue.
 fn schema_for_api(permissions: &[String], api: u32) -> Value {
     let mut schema = schema_for_permissions(permissions);
     if api < 3 {
-        schema["properties"]["message"]["maxLength"] = serde_json::json!(400);
+        schema["properties"]["message"]["maxLength"] = serde_json::json!(LEGACY_MESSAGE_CHARS);
         schema["properties"]["setup"]["properties"]["enable"]["items"]["enum"] =
-            serde_json::json!([
-                "virtualisation.libvirtd.enable",
-                "programs.virt-manager.enable",
-                "services.printing.enable",
-                "hardware.sane.enable",
-                "hardware.bluetooth.enable"
-            ]);
+            serde_json::json!(LEGACY_ENABLE_OPTIONS);
         schema["properties"]["setup"]["properties"]["groups"]["items"]["enum"] =
-            serde_json::json!(["libvirtd", "lp", "scanner"]);
+            serde_json::json!(LEGACY_GROUPS);
     }
     if api == 1 {
         schema["properties"]["setup"]["properties"]
@@ -198,6 +202,36 @@ impl PeaManifest {
         Ok(())
     }
     pub fn permits(&self, action: &ModelAction) -> bool {
+        // The manifest schema is immutable, but providers can ignore it. Enforce
+        // its version-specific differences on native actions as well.
+        if self.validate().is_err() {
+            return false;
+        }
+        if self.host_api < 3 {
+            let message = match action {
+                ModelAction::Explain { message } => Some(message),
+                ModelAction::InstallPackage { message, .. } => message.as_ref(),
+                _ => None,
+            };
+            if message.is_some_and(|m| m.chars().count() > LEGACY_MESSAGE_CHARS) {
+                return false;
+            }
+            if let ModelAction::InstallPackage {
+                setup: Some(setup), ..
+            } = action
+                && (setup
+                    .enable
+                    .iter()
+                    .any(|o| !LEGACY_ENABLE_OPTIONS.contains(&o.as_str()))
+                    || setup
+                        .groups
+                        .iter()
+                        .any(|g| !LEGACY_GROUPS.contains(&g.as_str()))
+                    || (self.host_api == 1 && setup.postgresql.is_some()))
+            {
+                return false;
+            }
+        }
         let permission = match action {
             ModelAction::InspectNetwork => "network.read",
             ModelAction::ConfigureNetwork { plan } => {
@@ -320,6 +354,95 @@ pub(crate) fn legacy_render(pins: &[PeaPin]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn manifest_for_api(api: u32) -> PeaManifest {
+        let mut manifest: PeaManifest =
+            serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();
+        manifest.host_api = api;
+        manifest.response_schema = schema_for_api(&manifest.permissions, api);
+        manifest.validate().unwrap();
+        manifest
+    }
+
+    #[test]
+    fn legacy_peas_cannot_gain_new_setup_options_or_groups() {
+        for (enable, groups) in [
+            (
+                vec!["virtualisation.docker.enable".into()],
+                vec!["docker".into()],
+            ),
+            (vec!["programs.direnv.enable".into()], vec![]),
+            (vec![], vec!["video".into()]),
+        ] {
+            let setup = crate::SystemSetup {
+                packages: vec![],
+                enable,
+                groups,
+                postgresql: None,
+            };
+            setup.validate().unwrap(); // Valid host actions are not necessarily valid pea actions.
+            let action = ModelAction::InstallPackage {
+                package: "hello".into(),
+                message: None,
+                setup: Some(setup),
+            };
+            assert!(!manifest_for_api(1).permits(&action));
+            assert!(!manifest_for_api(2).permits(&action));
+            assert!(manifest_for_api(3).permits(&action));
+        }
+        let action = ModelAction::InstallPackage {
+            package: "virt-manager".into(),
+            message: None,
+            setup: Some(crate::SystemSetup {
+                packages: vec![],
+                enable: vec!["virtualisation.libvirtd.enable".into()],
+                groups: vec!["libvirtd".into()],
+                postgresql: None,
+            }),
+        };
+        for api in 1..=3 {
+            assert!(manifest_for_api(api).permits(&action));
+        }
+    }
+
+    #[test]
+    fn postgres_and_message_limits_follow_the_declared_api() {
+        let action = ModelAction::InstallPackage {
+            package: "postgresql_17".into(),
+            message: None,
+            setup: Some(crate::SystemSetup {
+                packages: vec![],
+                enable: vec![],
+                groups: vec![],
+                postgresql: Some(crate::PostgresqlSetup {
+                    package: "postgresql_17".into(),
+                    caller_database: true,
+                }),
+            }),
+        };
+        assert!(!manifest_for_api(1).permits(&action));
+        assert!(manifest_for_api(2).permits(&action));
+        assert!(manifest_for_api(3).permits(&action));
+        for length in [400, 401] {
+            for action in [
+                ModelAction::Explain {
+                    message: "é".repeat(length),
+                },
+                ModelAction::InstallPackage {
+                    package: "hello".into(),
+                    setup: None,
+                    message: Some("é".repeat(length)),
+                },
+            ] {
+                assert_eq!(manifest_for_api(1).permits(&action), length == 400);
+                assert_eq!(manifest_for_api(2).permits(&action), length == 400);
+                assert!(manifest_for_api(3).permits(&action));
+            }
+        }
+        let mut invalid = manifest_for_api(2);
+        invalid.host_api = 99;
+        assert!(!invalid.permits(&ModelAction::Cancel));
+    }
+
     #[test]
     fn original_api_one_pins_remain_compatible_without_widening_permissions() {
         let mut manifest: PeaManifest =
@@ -365,10 +488,13 @@ mod tests {
         let mut plan: crate::NetworkPlan =
             serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
         manifest.permissions = vec!["network.system".into()];
+        manifest.response_schema = schema_for_api(&manifest.permissions, manifest.host_api);
         assert!(!manifest.permits(&ModelAction::ConfigureNetwork { plan: plan.clone() }));
         manifest.permissions.push("network.session".into());
+        manifest.response_schema = schema_for_api(&manifest.permissions, manifest.host_api);
         assert!(manifest.permits(&ModelAction::ConfigureNetwork { plan: plan.clone() }));
         manifest.permissions.retain(|p| p != "network.session");
+        manifest.response_schema = schema_for_api(&manifest.permissions, manifest.host_api);
         plan.activate = None;
         assert!(manifest.permits(&ModelAction::ConfigureNetwork { plan }));
     }
