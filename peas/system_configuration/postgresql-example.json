@@ -1,0 +1,14 @@
+{
+  "package": "postgresql_17",
+  "settings": {
+    "packages": [],
+    "enable": [],
+    "groups": [],
+    "postgresql": {
+      "package": "postgresql_17",
+      "caller_database": true
+    }
+  },
+  "user": "peasytest",
+  "uid": 1000
+}

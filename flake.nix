@@ -27,6 +27,12 @@
             ps.pyyaml
           ]);
         }
+        // builtins.listToAttrs (
+          map (entry: {
+            name = "pea-${entry.package.id}";
+            value = pkgs.callPackage ./nix/pea.nix { id = entry.package.id; };
+          }) (builtins.fromJSON (builtins.readFile ./peas/catalogue.json)).peas
+        )
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           iso-gnome = self.nixosConfigurations.peasy-iso-gnome.config.system.build.isoImage;
           iso-plasma = self.nixosConfigurations.peasy-iso-plasma.config.system.build.isoImage;
@@ -71,6 +77,10 @@
         {
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
+            PEASY_TEST_NIX = "${pkgs.nix}/bin/nix-instantiate";
+            PEASY_TEST_NIX_CLI = "${pkgs.nix}/bin/nix";
+            PEASY_TEST_NIXPKGS = "${pkgs.path}";
+            PEASY_TEST_SYSTEM = system;
             packages = with pkgs; [
               cargo
               clippy
@@ -105,6 +115,10 @@
             inherit pkgs;
             releaseTools = self.packages.${system}.iso-release-tools;
           };
+          updates = import ./nix/tests/update.nix {
+            inherit pkgs;
+            package = corePackage;
+          };
           core-package =
             pkgs.runCommand "peasy-core-package-check" { nativeBuildInputs = [ pkgs.gnugrep ]; }
               ''
@@ -124,7 +138,13 @@
                 nixfmt --check \
                   ${./flake.nix} \
                   ${./nix/module.nix} \
+                  ${./nix/update-module.nix} \
                   ${./nix/package.nix} \
+                  ${./nix/pea.nix} \
+                  ${./nix/tests/networking.nix} \
+                  ${./nix/tests/networking-eval.nix} \
+                  ${./nix/tests/networking-vm.nix} \
+                  ${./nix/tests/pea-fetch-vm.nix} \
                   ${./nix/package-core.nix} \
                   ${./nix/iso-common.nix} \
                   ${./nix/iso-appearance.nix} \
@@ -146,8 +166,11 @@
                   ${./nix/tests/installed-instrumentation.nix} \
                   ${./nix/tests/sandbox.nix} \
                   ${./nix/tests/sandbox-system.nix} \
+                  ${./nix/tests/update.nix} \
+                  ${./nix/tests/update-eval.nix} \
                   ${./nix/tests/system-configuration.nix} \
                   ${./nix/tests/system-configuration-eval.nix} \
+                  ${./nix/tests/postgresql-vm.nix} \
                   ${./nix/tests/sandbox-system-check.nix}
             touch $out
           '';
@@ -160,9 +183,28 @@
             touch $out
           '';
           sandbox = sandboxTest;
+          networking-vm = import ./nix/tests/networking-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
+          };
+          pea-fetch-vm = import ./nix/tests/pea-fetch-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
+          };
+          networking = import ./nix/tests/networking.nix {
+            inherit pkgs;
+            package = corePackage;
+          };
           system-configuration = import ./nix/tests/system-configuration.nix {
             inherit pkgs;
             package = corePackage;
+          };
+          postgresql-vm = import ./nix/tests/postgresql-vm.nix {
+            inherit pkgs;
+            package = corePackage;
+            module = self.nixosModules.default;
           };
           sandbox-fixture = import ./nix/tests/sandbox-system-check.nix {
             inherit pkgs sandboxTest;

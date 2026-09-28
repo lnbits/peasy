@@ -1,0 +1,1 @@
+Use the local desktop capability profile to propose supported accent colours and colour schemes. Respect unsupported desktop features. The host selects the desktop adapter and handles declarative state.

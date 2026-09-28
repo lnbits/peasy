@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use peasy_client::{
-    Choice, DEFAULT_OLLAMA_URL, DEFAULT_OPENAI_MODEL, KeyStore, LocalAction, LocalProposal,
-    PeasyClient, ProviderSettings, ProviderStore, Resolution, ResolveStage, list_ollama_models,
-    load_model_provider, sync_live_theme_from_file,
+    Choice, DEFAULT_OLLAMA_URL, DEFAULT_OPENAI_MODEL, IpcClient, KeyStore, LocalAction,
+    LocalProposal, PeasyClient, ProviderSettings, ProviderStore, Resolution, ResolveStage,
+    list_ollama_models, load_model_provider, sync_live_theme_from_file,
 };
-use peasy_core::{DiffKind, DiffLine, Proposal};
+use peasy_core::{DiffKind, DiffLine, IpcRequest, IpcResponse, Proposal};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -60,6 +60,12 @@ impl Drop for TerminalAgent {
 #[derive(Parser)]
 #[command(name = "peasy", about = "Tell your computer what you want.")]
 struct Args {
+    /// Inspect system status and interrupted changes without an AI provider.
+    #[arg(long, conflicts_with_all = ["recover", "request", "setup_key", "setup_provider", "panel_worker", "sync_theme"])]
+    status: bool,
+    /// Review and restore the previous generation after an interrupted change.
+    #[arg(long, conflicts_with_all = ["request", "setup_key", "setup_provider", "panel_worker", "sync_theme"])]
+    recover: bool,
     #[arg(value_name = "REQUEST", trailing_var_arg = true)]
     request: Vec<String>,
     #[arg(long, default_value = "/run/peasy/peasy.sock", hide = true)]
@@ -89,6 +95,9 @@ enum PanelCommand {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.status || args.recover {
+        return system_command(&IpcClient::new(args.socket), args.recover);
+    }
     if args.sync_theme {
         let gsettings = std::env::var_os("PEASY_GSETTINGS")
             .map(PathBuf::from)
@@ -157,6 +166,66 @@ fn main() -> Result<()> {
     } else {
         handle(&client, &args.request.join(" "))
     }
+}
+
+// Release daemon tokens on decline, EOF, errors, and after completion.
+struct ProposalReview<'a> {
+    ipc: &'a IpcClient,
+    client: Option<&'a PeasyClient>,
+    id: &'a str,
+}
+impl Drop for ProposalReview<'_> {
+    fn drop(&mut self) {
+        if let Some(client) = self.client {
+            client.discard_continuation(self.id);
+        }
+        let _ = self.ipc.request(&IpcRequest::Cancel {
+            proposal: self.id.into(),
+        });
+    }
+}
+
+fn system_command(ipc: &IpcClient, recover: bool) -> Result<()> {
+    if !recover {
+        let IpcResponse::Inspection { status } = ipc.request(&IpcRequest::Inspect)? else {
+            anyhow::bail!("unexpected system status response");
+        };
+        println!("{}", serde_json::to_string_pretty(&status)?);
+        return Ok(());
+    }
+    let IpcResponse::Proposal { proposal } = ipc.request(&IpcRequest::ProposeRecovery)? else {
+        anyhow::bail!("unexpected recovery proposal response");
+    };
+    let _review = ProposalReview {
+        ipc,
+        client: None,
+        id: &proposal.id,
+    };
+    println!("{}\n", proposal.title);
+    print_diff(&proposal.diff);
+    print!("\nRestore this generation? [y/N] ");
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+        println!("Cancelled.");
+        return Ok(());
+    }
+    let _agent = TerminalAgent::start()?;
+    let IpcResponse::Applied { result } = ipc.request_with_progress(
+        &IpcRequest::ApplyWithProgress {
+            proposal: proposal.id.clone(),
+        },
+        |stage| eprintln!("{}", stage.message()),
+    )?
+    else {
+        anyhow::bail!("unexpected recovery result");
+    };
+    if !result.activated {
+        anyhow::bail!(result.message);
+    }
+    println!("{}", result.message);
+    Ok(())
 }
 
 fn configure_provider(keys: &KeyStore, providers: &ProviderStore) -> Result<()> {
@@ -267,6 +336,11 @@ fn finish_panel(
                 };
             }
             Resolution::Proposal(proposal) => {
+                let _review = ProposalReview {
+                    ipc: client.ipc_client(),
+                    client: Some(client),
+                    id: &proposal.id,
+                };
                 send_panel_event(&json!({
                     "event": "review",
                     "title": proposal.title,
@@ -283,6 +357,10 @@ fn finish_panel(
                         if !result.activated {
                             anyhow::bail!(result.message);
                         }
+                        if let Some(next) = client.resume_after_apply(&proposal)? {
+                            resolution = next;
+                            continue;
+                        }
                         send_panel_event(&json!({
                             "event": "done",
                             "message": result.message,
@@ -297,14 +375,7 @@ fn finish_panel(
                 }
             }
             Resolution::LocalProposal(proposal) => {
-                let password_required = matches!(
-                    &proposal.action,
-                    LocalAction::Wifi {
-                        password: None,
-                        password_required: true,
-                        ..
-                    }
-                );
+                let password_required = proposal.password_required();
                 send_panel_event(&json!({
                     "event": "review",
                     "title": proposal.title,
@@ -321,6 +392,7 @@ fn finish_panel(
                             anyhow::bail!("invalid Wi-Fi password");
                         }
                         let progress = match &proposal.action {
+                            LocalAction::Network { .. } => "Changing network connections…",
                             LocalAction::Wifi { .. } => "Connecting to Wi-Fi…",
                             LocalAction::Bluetooth { .. } => "Connecting Bluetooth device…",
                             LocalAction::Calendar { .. } => "Opening calendar event…",
@@ -422,6 +494,9 @@ fn finish(client: &PeasyClient, resolution: Resolution) -> Result<()> {
 }
 
 fn choose(choice: &Choice) -> Result<usize> {
+    if let Some(intro) = &choice.intro {
+        println!("{intro}\n");
+    }
     println!("I found:\n");
     for (index, candidate) in choice.candidates.iter().enumerate() {
         println!(
@@ -451,6 +526,11 @@ fn choose(choice: &Choice) -> Result<usize> {
 }
 
 fn confirm_and_apply(client: &PeasyClient, proposal: Proposal) -> Result<()> {
+    let _review = ProposalReview {
+        ipc: client.ipc_client(),
+        client: Some(client),
+        id: &proposal.id,
+    };
     println!("Proposed change:\n\n{}\n", proposal.title);
     print_diff(&proposal.diff);
     print!("\nApply this change? [y/N] ");
@@ -471,6 +551,9 @@ fn confirm_and_apply(client: &PeasyClient, proposal: Proposal) -> Result<()> {
     }
     if result.activated {
         println!("✓ Activated\n\n{}", result.message);
+        if let Some(next) = client.resume_after_apply(&proposal)? {
+            return finish(client, next);
+        }
     } else {
         anyhow::bail!(result.message);
     }
@@ -506,6 +589,9 @@ fn confirm_and_apply_local(client: &PeasyClient, proposal: LocalProposal) -> Res
         return Ok(());
     }
     let supplied_password = match &proposal.action {
+        LocalAction::Network { .. } if proposal.password_required() => {
+            Some(rpassword::prompt_password("Wi-Fi password: ")?)
+        }
         LocalAction::Wifi {
             password: None,
             password_required: true,
@@ -514,6 +600,7 @@ fn confirm_and_apply_local(client: &PeasyClient, proposal: LocalProposal) -> Res
         _ => None,
     };
     let progress = match &proposal.action {
+        LocalAction::Network { .. } => "Changing network connections…",
         LocalAction::Wifi { .. } => "Connecting to Wi-Fi...",
         LocalAction::Bluetooth { .. } => "Connecting Bluetooth device...",
         LocalAction::Calendar { .. } => "Opening calendar event...",

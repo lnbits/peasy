@@ -1,5 +1,12 @@
+mod release;
+pub use release::{PeasyRelease, PeasyUpdateStatus, UPDATE_ASSET, UPDATE_FORMAT};
+mod backup;
+pub use backup::{PortableBackup, RestoreMode};
+mod model_schema;
+pub use model_schema::model_response_schema;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cancellation;
+pub mod pea;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod process;
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,11 +52,21 @@ mod pea_contracts;
 mod desktop;
 pub use desktop::{AppearanceCapabilities, DesktopEnvironment};
 
+#[path = "../../../peas/networking/types.rs"]
+mod networking;
+pub use networking::{
+    Ipv4Method, NetworkKind, NetworkPlan, NetworkProfile, NetworkScope, WifiMode, network_schema,
+    validate_interface, validate_network_id, validate_network_uuid,
+};
+
 pub const MAX_QUERY_BYTES: usize = 160;
 
 #[path = "../../../peas/system_configuration/types.rs"]
 mod system_configuration;
-pub use system_configuration::{ManagedSetup, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS, SystemSetup};
+pub use system_configuration::{
+    ManagedSetup, POSTGRESQL_PACKAGES, PostgresqlSetup, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS,
+    SystemSetup, setup_schema,
+};
 
 const MANAGED_STATE_PREFIX: &str = "# peasy-state-json: ";
 
@@ -78,7 +95,9 @@ pub fn validate_query(value: &str) -> Result<&str, ValidationError> {
     Ok(value)
 }
 
-fn normalize_model_message(mut value: String) -> Result<String, ValidationError> {
+pub const MAX_MODEL_MESSAGE_CHARS: usize = 8000;
+
+fn normalize_model_message(value: String) -> Result<String, ValidationError> {
     if value
         .chars()
         .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
@@ -87,12 +106,10 @@ fn normalize_model_message(mut value: String) -> Result<String, ValidationError>
             "agent response contains invalid control characters".into(),
         ));
     }
-    if value.len() > 400 {
-        let mut end = 400;
-        while !value.is_char_boundary(end) {
-            end -= 1;
-        }
-        value.truncate(end);
+    if value.chars().count() > MAX_MODEL_MESSAGE_CHARS {
+        return Err(ValidationError::InvalidRequest(
+            "agent explanation exceeds its length limit".into(),
+        ));
     }
     Ok(value)
 }
@@ -100,6 +117,13 @@ fn normalize_model_message(mut value: String) -> Result<String, ValidationError>
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ModelAction {
+    DiscoverPeas,
+    DisablePea {
+        id: String,
+    },
+    UsePea {
+        id: String,
+    },
     SearchPackage {
         query: String,
         version: Option<RequestedVersion>,
@@ -114,6 +138,10 @@ pub enum ModelAction {
     },
     ListThemes,
     ListWifi,
+    InspectNetwork,
+    ConfigureNetwork {
+        plan: NetworkPlan,
+    },
     HyprlandStatus,
     InstallPackage {
         package: String,
@@ -156,6 +184,10 @@ pub enum ModelAction {
 pub struct ModelEnvelope {
     pub action: String,
     #[serde(default)]
+    pub network: Option<NetworkPlan>,
+    #[serde(default)]
+    pub pea_id: Option<String>,
+    #[serde(default)]
     pub setup: Option<SystemSetup>,
     #[serde(default)]
     pub query: Option<String>,
@@ -195,6 +227,16 @@ impl TryFrom<ModelEnvelope> for ModelAction {
     type Error = ValidationError;
 
     fn try_from(value: ModelEnvelope) -> Result<Self, Self::Error> {
+        if value.pea_id.is_some() && !matches!(value.action.as_str(), "use_pea" | "disable_pea") {
+            return Err(ValidationError::InvalidRequest(
+                "pea_id requires use_pea or disable_pea".into(),
+            ));
+        }
+        if value.network.is_some() && value.action != "configure_network" {
+            return Err(ValidationError::InvalidRequest(
+                "network requires configure_network".into(),
+            ));
+        }
         if value.setup.is_some() && value.action != "install_package" {
             return Err(ValidationError::InvalidRequest(
                 "setup requires install_package".into(),
@@ -242,8 +284,28 @@ impl TryFrom<ModelEnvelope> for ModelAction {
                     Ok(Self::CheckPackage { query })
                 }
             }
+            "discover_peas" => Ok(Self::DiscoverPeas),
+            "use_pea" | "disable_pea" => {
+                let id = value
+                    .pea_id
+                    .ok_or_else(|| ValidationError::InvalidRequest("pea_id required".into()))?;
+                validate_network_id(&id)?;
+                Ok(if value.action == "disable_pea" {
+                    Self::DisablePea { id }
+                } else {
+                    Self::UsePea { id }
+                })
+            }
             "list_themes" => Ok(Self::ListThemes),
             "list_wifi" => Ok(Self::ListWifi),
+            "inspect_network" => Ok(Self::InspectNetwork),
+            "configure_network" => {
+                let plan = value.network.ok_or_else(|| {
+                    ValidationError::InvalidRequest("network plan required".into())
+                })?;
+                plan.validate()?;
+                Ok(Self::ConfigureNetwork { plan })
+            }
             "hyprland_status" => Ok(Self::HyprlandStatus),
             "install_package" | "remove_package" => {
                 let package = value.package.ok_or_else(|| {
@@ -387,6 +449,9 @@ pub struct EngineInput {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "decision", content = "value", rename_all = "snake_case")]
 pub enum EngineDecision {
+    DiscoverPeas,
+    DisablePea(String),
+    UsePea(String),
     Search {
         query: String,
         version: Option<RequestedVersion>,
@@ -399,6 +464,8 @@ pub enum EngineDecision {
     CheckPackage(String),
     ListThemes,
     ListWifi,
+    InspectNetwork,
+    ConfigureNetwork(NetworkPlan),
     HyprlandStatus,
     Install {
         package: String,
@@ -431,20 +498,57 @@ pub const IPC_RESTARTING_MESSAGE: &str = "Peasy is updating. Retry the request s
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "request", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcRequest {
-    SearchPackages { query: String },
+    CheckPeasyUpdate {
+        #[serde(default)]
+        force: bool,
+    },
+    ProposePeasyUpdate {
+        release: PeasyRelease,
+    },
+    SearchPackages {
+        query: String,
+    },
     GetPackages,
     GetTheme,
     GetManagedModule,
-    ProposeInstall { package: String },
-    ProposeSetup { package: String, setup: SystemSetup },
-    ProposeAppImageInstall { package: AppImagePackage },
-    ProposeRemove { package: String },
-    ProposeTheme { theme: ThemeSettings },
-    Apply { proposal: String },
-    ApplyWithProgress { proposal: String },
+    ProposeInstall {
+        package: String,
+    },
+    ProposeSetup {
+        package: String,
+        setup: SystemSetup,
+    },
+    ProposeAppImageInstall {
+        package: AppImagePackage,
+    },
+    ProposeRemove {
+        package: String,
+    },
+    ProposeTheme {
+        theme: ThemeSettings,
+    },
+    ProposeNetwork {
+        plan: NetworkPlan,
+    },
+    ProposePea {
+        pin: pea::PeaPin,
+        enable: bool,
+    },
+    Apply {
+        proposal: String,
+    },
+    ApplyWithProgress {
+        proposal: String,
+    },
     Inspect,
     ProposeRecovery,
-    Cancel { proposal: String },
+    ProposeRestore {
+        backup: PortableBackup,
+        mode: RestoreMode,
+    },
+    Cancel {
+        proposal: String,
+    },
     Status,
 }
 
@@ -461,6 +565,20 @@ pub struct Proposal {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProposalChange {
+    PeasyUpdate {
+        release: PeasyRelease,
+    },
+    Restore {
+        backup: PortableBackup,
+        mode: RestoreMode,
+    },
+    Pea {
+        pin: pea::PeaPin,
+        enable: bool,
+    },
+    Network {
+        plan: NetworkPlan,
+    },
     Recovery {
         generation: String,
     },
@@ -507,6 +625,7 @@ pub struct ApplyResult {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    PeasyUpdate { status: PeasyUpdateStatus },
     SearchResults { candidates: Vec<PackageCandidate> },
     Packages { packages: Vec<String> },
     Theme { theme: ThemeSettings },
@@ -575,6 +694,8 @@ pub struct ServiceStatus {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peasy_release: Option<PeasyRelease>,
     pub packages: Vec<String>,
     #[serde(default)]
     pub appimages: Vec<AppImagePackage>,
@@ -582,10 +703,41 @@ pub struct PackageState {
     pub theme: ThemeSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub setups: Vec<ManagedSetup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub networks: Vec<NetworkProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub peas: Vec<pea::PeaPin>,
 }
 
 impl PackageState {
     pub fn normalize(&mut self) -> Result<(), ValidationError> {
+        if let Some(release) = &self.peasy_release {
+            release.validate()?;
+        }
+        if self.peas.len() > 32 {
+            return Err(ValidationError::TooLong);
+        }
+        let mut pea_ids = BTreeSet::new();
+        for p in &self.peas {
+            p.validate()?;
+            if !pea_ids.insert(p.id.clone()) {
+                return Err(ValidationError::InvalidRequest("duplicate pea".into()));
+            }
+        }
+        self.peas.sort_by(|a, b| a.id.cmp(&b.id));
+        if self.networks.len() > 32 {
+            return Err(ValidationError::TooLong);
+        }
+        let mut network_ids = BTreeSet::new();
+        for p in &self.networks {
+            p.validate()?;
+            if !network_ids.insert(p.id.clone()) {
+                return Err(ValidationError::InvalidRequest(
+                    "duplicate network id".into(),
+                ));
+            }
+        }
+        self.networks.sort_by(|a, b| a.id.cmp(&b.id));
         let mut identities = BTreeSet::new();
         for setup in &mut self.setups {
             setup.normalize()?;
@@ -596,6 +748,16 @@ impl PackageState {
             }
         }
         self.setups.sort_by(|a, b| a.package.cmp(&b.package));
+        let postgres_packages: BTreeSet<_> = self
+            .setups
+            .iter()
+            .filter_map(|s| s.settings.postgresql.as_ref().map(|p| &p.package))
+            .collect();
+        if postgres_packages.len() > 1 {
+            return Err(ValidationError::InvalidRequest(
+                "conflicting PostgreSQL server versions".into(),
+            ));
+        }
         let mut unique = BTreeSet::new();
         for package in &self.packages {
             validate_attribute(package)?;
@@ -636,6 +798,9 @@ impl PackageState {
             appimages: self.appimages.clone(),
             theme: self.theme.clone(),
             setups: self.setups.clone(),
+            networks: self.networks.clone(),
+            peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         })
     }
 
@@ -655,6 +820,9 @@ impl PackageState {
             appimages,
             theme: self.theme.clone(),
             setups: self.setups.clone(),
+            networks: self.networks.clone(),
+            peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -672,6 +840,9 @@ impl PackageState {
                 .collect(),
             theme: self.theme.clone(),
             setups: self.setups.clone(),
+            networks: self.networks.clone(),
+            peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -688,6 +859,9 @@ impl PackageState {
             appimages: self.appimages.clone(),
             theme: self.theme.merged(change),
             setups: self.setups.clone(),
+            networks: self.networks.clone(),
+            peas: self.peas.clone(),
+            peasy_release: self.peasy_release.clone(),
         })
     }
 }
@@ -714,16 +888,39 @@ fn render_packages_module_version(
     let package_lines = state
         .effective_packages()
         .iter()
+        .filter(|package| {
+            !state.setups.iter().any(|setup| {
+                setup.settings.postgresql.is_some()
+                    && &setup.package == *package
+                    && (package.as_str() == "postgresql"
+                        || POSTGRESQL_PACKAGES.contains(&package.as_str()))
+            })
+        })
         .map(|package| format!("      \"{package}\""))
         .collect::<Vec<_>>()
         .join("\n");
     let mut appearance = system_configuration::render(&state.setups);
+    appearance.push_str(&release::render(state.peasy_release.as_ref()));
+    appearance.push_str(&networking::render(&state.networks));
+    appearance.push_str(&pea::render(&state.peas));
     if !state.theme.is_empty() {
-        appearance.push_str(if legacy_gnome {
+        // The setup and theme share one module; emit the enable assignment once.
+        let explicit_dconf = state.setups.iter().any(|s| {
+            s.settings
+                .enable
+                .iter()
+                .any(|o| o == "programs.dconf.enable")
+        });
+        let theme_header = if legacy_gnome {
             "\n  programs.dconf.enable = true;\n  programs.dconf.profiles.user.databases = [\n    {\n      settings.\"org/gnome/desktop/interface\" = {\n"
         } else {
             "\n  programs.dconf.enable = lib.mkIf (config.services.desktopManager.gnome.enable or false) true;\n  programs.dconf.profiles.user.databases = lib.mkIf (config.services.desktopManager.gnome.enable or false) [\n    {\n      settings.\"org/gnome/desktop/interface\" = {\n"
-        });
+        };
+        for line in theme_header.split_inclusive('\n') {
+            if !explicit_dconf || !line.contains("programs.dconf.enable =") {
+                appearance.push_str(line);
+            }
+        }
         if let Some(color) = state.theme.accent_color {
             appearance.push_str(&format!("        accent-color = \"{color}\";\n"));
         }
@@ -770,6 +967,10 @@ pub fn parse_packages_module(source: &str) -> Result<PackageState, ValidationErr
     })?;
     state.normalize()?;
     if render_packages_module(&state)? != source
+        && (state.peas.is_empty()
+            || render_packages_module(&state)?
+                .replace(&pea::render(&state.peas), &pea::legacy_render(&state.peas))
+                != source)
         && (!state.setups.is_empty() || render_packages_module_version(&state, true)? != source)
     {
         return Err(ValidationError::InvalidRequest(
@@ -1104,6 +1305,9 @@ mod tests {
         let mut state = PackageState {
             packages: vec!["vlc".into(), "telegram-desktop".into(), "vlc".into()],
             setups: Vec::new(),
+            networks: Vec::new(),
+            peas: Vec::new(),
+            peasy_release: None,
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -1127,6 +1331,9 @@ mod tests {
             let state = PackageState {
                 packages: vec!["hello".into()],
                 setups: Vec::new(),
+                networks: Vec::new(),
+                peas: Vec::new(),
+                peasy_release: None,
                 appimages: vec![],
                 theme,
             };

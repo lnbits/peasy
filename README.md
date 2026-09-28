@@ -21,7 +21,8 @@ have not started activation. Cancelled builds restore the previous managed
 configuration. Activation and desktop actions already being applied finish
 safely; closing a window does not undo completed changes.
 
-And because NixOS has excellent rollback support, if anything goes wrong, you can easily restore the system to a previous working state.
+NixOS generations let you roll back system packages and configuration. Personal
+files and database changes need separate backups.
 
 ## Install NixOS with Peasy
 
@@ -99,7 +100,10 @@ Peasy's abilities are organised into **peas**: built-in modules in [`peas/`](pea
 
 The [system-configuration pea](peas/system_configuration/README.md) lets the AI
 combine a package with supporting packages, reviewed NixOS settings and user
-permissions—for example, setting up Virtual Machine Manager with libvirt.
+permissions for containers, virtual machines, development tools, application runtimes,
+desktop integration and peripherals. Unsupported requirements come with manual
+setup steps. Peasy performs the normal NixOS build and activation without launching
+applications for extra checks afterward.
 Install and uninstall use the same reviewed NixOS transaction; shared dependencies,
 administrator settings and user data are retained when removing a setup.
 
@@ -138,6 +142,23 @@ Packages and settings applied through Peasy therefore participate in normal
 NixOS builds and generations; `/run/peasy` contains temporary runtime data
 only.
 
+## Updating Peasy
+
+Settings checks for newer stable GitHub releases. When available, **Update Peasy**
+lets you review and approve an update through the normal NixOS rebuild and
+rollback flow. Reopen Peasy afterward. See [updates](docs/updates.md) for initial
+setup, flake support and release requirements.
+
+## Backups and restore
+
+**Export backup** saves active Peasy software selections and appearance settings
+for restoration on another NixOS machine, including traditional and flake hosts.
+Use **Restore backup** to choose Merge or Replace, review the changes, and apply
+with administrator authentication. The destination keeps its hardware configuration.
+Service setups, network profiles
+and AppImages require review there; original host files are archived for reference.
+Personal files and databases need separate backups. See [backup and restore](docs/backups.md).
+
 ## Build
 
 ```console
@@ -162,3 +183,9 @@ packages, the headless closure, Wasm imports, and the NixOS VM regressions.
 ## License
 
 MIT
+
+Networking requests use the [generic networking pea](peas/networking/README.md):
+Peasy discovers interfaces and connections, the AI proposes guarded profile or
+activation changes, and you review the effects. Compatible abilities can also be
+found in the official [pea catalogue](docs/pea-packages.md) and installed as
+immutable Nix data packages, with their revisions and hashes retained in system state.

@@ -80,6 +80,7 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     import json
     import re
+    import shlex
 
     def user(command):
         # Preserve the real graphical session environment, including Plasma's
@@ -108,6 +109,35 @@ pkgs.testers.runNixOSTest {
     assert profile["peasy_variant"] == "desktop"
     machine.succeed("test -f /etc/peasy/module-import-path")
     machine.succeed("test -f /run/current-system/sw/share/peasy/source/nix/module.nix")
+    if ${if gnome || plasma then "True" else "False"}:
+        if ${if plasma then "True" else "False"}:
+            machine.wait_until_succeeds("test -f /home/alice/.local/state/peasy/iso-appearance-v1")
+        if ${if gnome then "True" else "False"}:
+            read_accent = "gsettings get org.gnome.desktop.interface accent-color"
+            read_scheme = "gsettings get org.gnome.desktop.interface color-scheme"
+        else:
+            read_accent = "kreadconfig6 --file kdeglobals --group General --key AccentColor --default 0,0,0"
+            read_scheme = "kreadconfig6 --file kdeglobals --group General --key ColorScheme --default BreezeLight"
+        original_accent = machine.succeed(user(read_accent)).strip()
+        original_scheme = machine.succeed(user(read_scheme)).strip()
+        if ${if plasma then "True" else "False"}:
+            read_background = "kreadconfig6 --file kdeglobals --group Colors:Window --key BackgroundNormal"
+            original_background = machine.succeed(user(read_background)).strip()
+        for missing in [False, True]:
+            theme = json.dumps({"accent_color": "blue", "color_scheme": "dark"})
+            machine.succeed("printf %s " + shlex.quote(theme) + " > /tmp/peasy-theme-test.json")
+            machine.succeed(user("peasy --sync-theme --theme-state /tmp/peasy-theme-test.json"))
+            accent = machine.succeed(user(read_accent)).strip()
+            assert accent == ${if gnome then ''"'blue'"'' else ''"53,132,228"''}, accent
+            if missing:
+                machine.succeed("rm /tmp/peasy-theme-test.json")
+            else:
+                machine.succeed("printf '{}' > /tmp/peasy-theme-test.json")
+            machine.succeed(user("peasy --sync-theme --theme-state /tmp/peasy-theme-test.json"))
+            assert machine.succeed(user(read_accent)).strip() == original_accent
+            assert machine.succeed(user(read_scheme)).strip() == original_scheme
+            if ${if plasma then "True" else "False"}:
+                assert machine.succeed(user(read_background)).strip() == original_background
     machine.succeed("test -f /run/current-system/sw/share/peasy/source/peas/packages/types.rs")
     machine.succeed("test -f /run/current-system/sw/share/peasy/source/peas/README.md")
     machine.succeed("test -f /run/current-system/sw/share/icons/hicolor/scalable/apps/io.github.peasy.Peasy.svg")

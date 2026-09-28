@@ -3,6 +3,10 @@
 Start with the [visual workflow and AI access map](workflow-map.md) for a
 diagram-led overview of the trust boundaries.
 
+Domain instructions can also be loaded from compatible, revision-and-hash-pinned
+[data-only pea packages](pea-packages.md). Packages compose the installed host
+API; they do not dynamically extend native execution authority.
+
 Ability-specific implementations live in [`peas/`](../peas/README.md). Each pea
 groups its types, client handlers and (where needed) system proposals or pure
 Wasm policy. Existing crates compile the appropriate layer; provider access,
@@ -59,7 +63,7 @@ host for the same SNI tray used by Plasma and other compatible desktops.
 The separate `peasy-core` derivation builds and installs only the CLI,
 `peasy-system`, and `peasy-engine.wasm`. Its source and build exclude the UI and
 tray crates as well as all graphical assets, and its runtime wrapper references
-only Nix and coreutils.
+Nix, coreutils and the NetworkManager command-line client.
 
 `services.peasy.desktop.enable = false` selects `peasy-core`, defaults the tray
 off, omits graphical user units and autostart data, and does not enable
@@ -132,10 +136,12 @@ request enum contains only:
 - `ProposeAppImageInstall`
 - `ProposeRemove`
 - `ProposeTheme`
+- `ProposeNetwork` (closed persistent NetworkManager profiles)
+- `ProposePea` (official immutable data-package pins)
 - `Apply`
 - `Status`
 
-There is no stringly command, path, networking, Bluetooth, calendar, or
+There is no stringly command, arbitrary path, arbitrary networking property, Bluetooth, calendar, or
 credential method. Apply uses a random, short-lived proposal token bound to the
 peer UID that requested it. The pending record contains the exact reviewed
 change and base state; stale proposals are rejected. Search and proposal strings
@@ -300,12 +306,42 @@ own host; Hyprland uses a bar's tray. Without a host the tray waits without busy
 polling and the application-menu launcher still works. No desktop is installed
 merely to provide a tray. See [desktop capabilities and adapters](desktop-compatibility.md).
 
-The settings view exports a private, portable system directory through a native
-GTK folder dialog. It contains the administrator's complete configuration tree,
-the packaged Peasy source, a wrapper `configuration.nix`, restore instructions,
-and the imported `.peasy/peasy-managed.nix` already present in the configuration
-tree. That generated module includes Peasy-managed packages, AppImages, and
-appearance state. The exporter rewrites Peasy's original checkout/store
-path to the bundled `/etc/nixos/peasy` location. Provider credentials and API
-keys remain outside the export; hardware configuration is included for faithful
-backup but must be regenerated when restoring to different hardware.
+The settings view exports a private backup through a native GTK folder dialog.
+It reads typed state and bundled Peasy source from one resolved active generation,
+so an unfinished change is not confused with an installed configuration. A closed
+subset (standalone packages, appearance and pea pins) is rendered into the portable
+`peasy-managed.nix`. It never imports the source host. Full active state is retained
+in `RESTORE-REVIEW.json`; service/account setups, interface-bound profiles and
+architecture-specific AppImages need a new destination review.
+
+Traditional and flake host trees are optional reference archives. If their bounded
+copy fails, the partial archive is removed and its absence reported in the README
+and inventory. Restore leaves the destination host, hardware modules and lockfile
+intact. The Restore backup button validates the portable module against the typed
+review record, offers Merge or Replace, and requests a daemon-owned restore
+proposal. It needs no model provider. The daemon revalidates the closed values,
+resolves package identities and checks new pea sources; Apply uses the existing
+authorization, stale-state, build and activation flow. Both modes preserve the
+destination's service setups, network profiles and AppImages. See
+[backup and restore](backups.md).
+
+## Generic networking resources
+
+The [networking pea](../peas/networking/README.md) adds bounded, nonsecret
+NetworkManager device, connection and IPv4 route discovery. The AI uses a second
+turn to reason over these resources and return a closed network plan. Native code
+validates capabilities and identity and renders every effect for review. Persistent
+profiles and interface-scoped sharing ports follow the system transaction; live
+activation/deactivation uses NetworkManager authorization and a reviewed snapshot.
+Persistent plans can hand off to a separate local activation review after a rebuild.
+Passwords remain local and outside system state. Live connectivity does not inherit
+NixOS rollback guarantees; profile files and pea pins do.
+
+Official pea installation uses a separate `peasy-pea-fetch.service` running as a
+dynamic, unprivileged user. It makes bounded HTTPS requests to verify the current
+official `main` revision, exact catalogue membership and manifest hash. The root
+daemon keeps its network restriction, passes a pin through a read-only request
+file, rechecks the returned bytes and imports them into the Nix store. Catalogue
+verification runs again before apply; existing pins remain immutable during
+ordinary rebuilds and rollback. A populated Nix cache is never used as evidence
+of publisher approval. See [pea package checks and limits](pea-packages.md).

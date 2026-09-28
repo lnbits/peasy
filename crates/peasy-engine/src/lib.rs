@@ -33,6 +33,9 @@ pub unsafe extern "C" fn peasy_dealloc(pointer: u32, length: u32) {
 
 fn decide(input: EngineInput) -> EngineDecision {
     match input.action {
+        ModelAction::DisablePea { id } => EngineDecision::DisablePea(id),
+        ModelAction::DiscoverPeas => EngineDecision::DiscoverPeas,
+        ModelAction::UsePea { id } => EngineDecision::UsePea(id),
         ModelAction::SearchPackage { query, version } => EngineDecision::Search { query, version },
         ModelAction::SearchAppImage {
             query,
@@ -46,6 +49,11 @@ fn decide(input: EngineInput) -> EngineDecision {
         ModelAction::CheckPackage { query } => EngineDecision::CheckPackage(query),
         ModelAction::ListThemes => EngineDecision::ListThemes,
         ModelAction::ListWifi => EngineDecision::ListWifi,
+        ModelAction::InspectNetwork => EngineDecision::InspectNetwork,
+        ModelAction::ConfigureNetwork { plan } => match plan.validate() {
+            Ok(()) => EngineDecision::ConfigureNetwork(plan),
+            Err(e) => EngineDecision::Reject(e.to_string()),
+        },
         ModelAction::HyprlandStatus => EngineDecision::HyprlandStatus,
         ModelAction::InstallPackage {
             package,

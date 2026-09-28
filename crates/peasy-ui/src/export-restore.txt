@@ -1,0 +1,71 @@
+PEASY PORTABLE CONFIGURATION BACKUP
+
+Restore Peasy-managed software and appearance preferences onto an already
+installed NixOS machine. Keep that machine's configuration.nix or flake.nix,
+hardware modules, disks, bootloader, drivers and user accounts in place.
+Use Settings > Restore backup on the destination. Exporting changes neither machine.
+
+peasy-managed.nix is the portable restore module. It contains standalone Nixpkgs
+packages, appearance preferences and pinned pea instructions from the active
+system generation. Changes that have not been activated are not included.
+
+RESTORE-REVIEW.json preserves the full active Peasy state. Service setups,
+network profiles and AppImages require a fresh review on the destination and
+are NOT applied by the portable module. The summary below lists their counts.
+Ask Peasy to recreate those setups there, selecting the destination's user,
+network interface and compatible release. Do not copy the original managed
+module from host-reference/ over the portable module.
+
+host-reference/, when available, is an archive for manual reference, not a
+restore entry point. It may contain the original machine's hardware modules,
+flake.nix, flake.lock, custom overlays and other administrator configuration.
+Those files are never imported by peasy-managed.nix. There is no safe general
+way to separate hardware settings embedded in arbitrary Nix code automatically.
+Migrate wanted administrator settings separately, keeping destination hardware.
+
+RESTORE IN PEASY
+
+1. Open Peasy settings on the destination and click Restore backup. Select this
+   folder. No AI provider or API key is needed for the restore workflow.
+   Use the bundled Peasy version or a newer compatible release. The destination
+   must already have Peasy configured, including its managed-module import.
+
+2. Choose Merge (default) or Replace:
+   - Merge adds saved standalone packages and pea instructions while retaining
+     the current selection. Saved appearance choices take precedence.
+   - Replace uses the backup's standalone package, appearance and pea selection.
+   Both modes preserve destination hardware, service setups, network profiles
+   and AppImages. A conflicting pea version in Merge requires choosing Replace.
+
+3. Read the list of saved items needing destination review. Click Review restore
+   to see the daemon-validated changes and destination package versions. Nothing
+   is applied yet. Unavailable packages or untrusted pea pins stop the proposal.
+
+4. Click Apply and authenticate as an administrator. Peasy builds and activates
+   through its normal transaction flow. The destination's host paths, flake lock
+   and architecture stay authoritative. Cancellation before activation or a failed
+   build restores the previous managed configuration. If activation is uncertain,
+   use System status and recovery (or peasy --recover).
+
+5. Recreate listed service setups, networking and AppImages through Peasy on the
+   destination. They need fresh service/account, interface or release choices.
+
+Do not import host-reference/ or run code from the backup. Peasy validates the
+portable module and its matching review record, then sends only typed restore
+values to the daemon. It does not copy the archived host configuration or execute
+bundled source. Newly restored pea pins are checked against the official published
+history and administrator policy; network access is needed for that verification.
+
+SCOPE AND PRIVACY
+
+This is configuration source and typed Peasy state, not a disk image, package
+closure, personal-file backup or database backup. No original disk identifiers,
+bootloader settings, driver configuration or interface bindings are imported by
+the portable module. NixOS generations provide rollback on the same machine;
+keep a separate copy of backups off that machine for disk failure protection.
+
+INVENTORY.json records included and excluded files and any unavailable host
+archive. Common secret files and Git metadata are excluded. Arbitrary Nix source
+can still contain inline secrets: keep the backup private and review it before
+sharing. Provider keys and Wi-Fi credentials are not part of Peasy's typed state.
+Restore deliberately excluded secrets separately from your secure backup.

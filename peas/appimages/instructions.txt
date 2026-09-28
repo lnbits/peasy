@@ -1,0 +1,1 @@
+Use search_appimage for suitable upstream Linux applications when native packages are unavailable or an AppImage is explicitly requested. Select real repositories and release candidates. The host pins downloads, reviews their identity, and enforces administrator policy.
