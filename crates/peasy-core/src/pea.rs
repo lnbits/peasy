@@ -6,10 +6,29 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
-pub const HOST_API: u32 = 3;
+pub const HOST_API: u32 = 4;
 pub const POLICY_PATH: &str = "/etc/peasy/pea-policy.json";
 pub const MAX_PACK_BYTES: usize = 64 * 1024;
 pub const PERMISSIONS: &[&str] = &[
+    "diagnostics.read",
+    "services.read",
+    "services.write",
+    "storage.read",
+    "storage.write",
+    "nix_maintenance.read",
+    "nix_maintenance.write",
+    "users.read",
+    "users.write",
+    "firewall.read",
+    "firewall.write",
+    "printing.read",
+    "printing.write",
+    "displays.read",
+    "displays.write",
+    "audio.read",
+    "audio.write",
+    "power.read",
+    "power.write",
     "network.read",
     "network.session",
     "network.system",
@@ -136,12 +155,49 @@ pub fn schema_for_permissions(permissions: &[String]) -> Value {
                 "set_hyprland_setting",
                 "hyprland_dispatch",
             ],
+            p if p.ends_with(".read") => vec!["inspect_resources"],
+            p if p.ends_with(".write") => vec!["change_resources"],
             _ => vec![],
         });
     }
     actions.sort();
     actions.dedup();
     schema["properties"]["action"]["enum"] = serde_json::json!(actions);
+    let reads = permissions
+        .iter()
+        .filter_map(|p| p.strip_suffix(".read"))
+        .filter(|p| *p != "network")
+        .collect::<Vec<_>>();
+    if reads.is_empty() {
+        schema["properties"]["resource_query"] = serde_json::json!({"type":"null"});
+    } else {
+        schema["properties"]["resource_query"]["properties"]["domain"]["enum"] =
+            serde_json::json!(reads);
+    }
+    let variants = schema["properties"]["resource_change"]["anyOf"]
+        .as_array_mut()
+        .expect("resource union");
+    variants.retain(|v| {
+        let Some(operation) = v["properties"]["operation"]["enum"][0].as_str() else {
+            return true;
+        };
+        let domain = match operation {
+            "service" | "service_enabled" => "services",
+            "disk" | "persistent_mount" => "storage",
+            "user_create" | "user_disabled" | "user_groups" => "users",
+            "nix_optimise" | "nix_garbage_collect" | "nix_delete_generations" => "nix_maintenance",
+            "power_profile" | "power_settings" => "power",
+            "printer" => "printing",
+            "display" => "displays",
+            "audio" => "audio",
+            "firewall" => "firewall",
+            _ => return false,
+        };
+        permissions.contains(&format!("{domain}.write"))
+    });
+    if variants.len() == 1 {
+        schema["properties"]["resource_change"] = serde_json::json!({"type":"null"});
+    }
     schema
 }
 const LEGACY_ENABLE_OPTIONS: &[&str] = &[
@@ -158,6 +214,12 @@ const LEGACY_MESSAGE_CHARS: usize = 400;
 // Do not derive legacy enums from the expanding current catalogue.
 fn schema_for_api(permissions: &[String], api: u32) -> Value {
     let mut schema = schema_for_permissions(permissions);
+    if api < 4 {
+        let actions = schema["properties"]["action"]["enum"].clone();
+        schema = serde_json::from_str(include_str!("../../../peas/tests/api3-model-schema.json"))
+            .expect("frozen API 3 schema");
+        schema["properties"]["action"]["enum"] = actions;
+    }
     if api < 3 {
         schema["properties"]["message"]["maxLength"] = serde_json::json!(LEGACY_MESSAGE_CHARS);
         schema["properties"]["setup"]["properties"]["enable"]["items"]["enum"] =
@@ -182,7 +244,15 @@ impl PeaManifest {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_network_id(&self.id)?;
         validate_permissions(&self.permissions)?;
-        if !matches!(self.host_api, 1 | 2 | HOST_API) {
+        if self.host_api < 4
+            && self
+                .permissions
+                .iter()
+                .any(|p| p.contains('.') && !p.starts_with("network."))
+        {
+            return Err(invalid("resource permissions require host API 4"));
+        }
+        if !matches!(self.host_api, 1 | 2 | 3 | HOST_API) {
             return Err(invalid("pea requires a different host API; update Peasy"));
         }
         if !bounded(&self.version, 32)
@@ -232,6 +302,20 @@ impl PeaManifest {
                 return false;
             }
         }
+        if let ModelAction::InspectResources { query } = action {
+            return self.host_api >= 4
+                && query.validate().is_ok()
+                && self
+                    .permissions
+                    .contains(&format!("{}.read", query.domain.id()));
+        }
+        if let ModelAction::ChangeResources { change } = action {
+            return self.host_api >= 4
+                && change.validate().is_ok()
+                && self
+                    .permissions
+                    .contains(&format!("{}.write", change.domain().id()));
+        }
         let permission = match action {
             ModelAction::InspectNetwork => "network.read",
             ModelAction::ConfigureNetwork { plan } => {
@@ -269,7 +353,15 @@ impl PeaPin {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_network_id(&self.id)?;
         validate_permissions(&self.permissions)?;
-        if !matches!(self.host_api, 1 | 2 | HOST_API)
+        if self.host_api < 4
+            && self
+                .permissions
+                .iter()
+                .any(|p| p.contains('.') && !p.starts_with("network."))
+        {
+            return Err(invalid("resource permissions require host API 4"));
+        }
+        if !matches!(self.host_api, 1 | 2 | 3 | HOST_API)
             || !bounded(&self.version, 32)
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())

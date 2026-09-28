@@ -354,6 +354,7 @@ mod tests {
     fn example_state() -> PackageState {
         let mut state = PackageState {
             peasy_release: None,
+            resources: peasy_core::ResourceState::default(),
             packages: vec!["hello".into()],
             peas: vec![peasy_core::pea::PeaPin {
                 id: "appearance".into(),

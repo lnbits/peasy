@@ -95,6 +95,7 @@ mod tests {
             networks: Vec::new(),
             peas: Vec::new(),
             peasy_release: None,
+            resources: peasy_core::ResourceState::default(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -117,6 +118,7 @@ mod tests {
             networks: Vec::new(),
             peas: Vec::new(),
             peasy_release: None,
+            resources: peasy_core::ResourceState::default(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -153,7 +155,7 @@ mod tests {
             revision: "a".repeat(40),
             sha256: "b".repeat(64),
         };
-        let configured = PackageState::default()
+        let mut configured = PackageState::default()
             .with_peasy_release(&release)
             .unwrap()
             .with_setup(setup)
@@ -161,6 +163,17 @@ mod tests {
             .with_network(&network)
             .unwrap()
             .with_pea(&pin, true)
+            .unwrap();
+        configured.resources = configured
+            .resources
+            .changed(
+                &peasy_core::ResourceChange::Firewall {
+                    tcp: vec![8080],
+                    udp: vec![],
+                    trusted_interfaces: vec![],
+                },
+                None,
+            )
             .unwrap();
         fs::write(&active, serde_json::to_vec(&configured).unwrap()).unwrap();
         restore_managed_from_generation(&active, &managed).unwrap();

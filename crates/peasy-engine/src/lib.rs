@@ -33,6 +33,14 @@ pub unsafe extern "C" fn peasy_dealloc(pointer: u32, length: u32) {
 
 fn decide(input: EngineInput) -> EngineDecision {
     match input.action {
+        ModelAction::InspectResources { query } => match query.validate() {
+            Ok(()) => EngineDecision::InspectResources(query),
+            Err(e) => EngineDecision::Reject(e.to_string()),
+        },
+        ModelAction::ChangeResources { change } => match change.validate() {
+            Ok(()) => EngineDecision::ChangeResources(change),
+            Err(e) => EngineDecision::Reject(e.to_string()),
+        },
         ModelAction::DisablePea { id } => EngineDecision::DisablePea(id),
         ModelAction::DiscoverPeas => EngineDecision::DiscoverPeas,
         ModelAction::UsePea { id } => EngineDecision::UsePea(id),

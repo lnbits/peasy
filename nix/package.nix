@@ -16,9 +16,51 @@
   polkit,
   cacert,
   python3,
+  util-linux,
+  systemd,
+  udisks,
+  iproute2,
+  wireplumber,
+  pipewire,
+  power-profiles-daemon,
+  upower,
+  cups,
+  mutter,
+  kdePackages,
   withGui ? true,
 }:
 
+let
+  resourceTools = {
+    SYSTEMCTL = "${systemd}/bin/systemctl";
+    BUSCTL = "${systemd}/bin/busctl";
+    LSBLK = "${util-linux}/bin/lsblk";
+    UDISKSCTL = "${udisks}/bin/udisksctl";
+    DF = "${coreutils}/bin/df";
+    IP = "${iproute2}/bin/ip";
+    NIX_ENV = "${nix}/bin/nix-env";
+    WPCTL = "${wireplumber}/bin/wpctl";
+    PW_DUMP = "${pipewire}/bin/pw-dump";
+    POWERPROFILESCTL = "${power-profiles-daemon}/bin/powerprofilesctl";
+    UPOWER = "${upower}/bin/upower";
+    LPSTAT = "${cups}/bin/lpstat";
+    LPINFO = "${cups}/bin/lpinfo";
+    IPPFIND = "${cups}/bin/ippfind";
+    LPADMIN = "${cups}/bin/lpadmin";
+    LPOPTIONS = "${cups}/bin/lpoptions";
+    LP = "${cups}/bin/lp";
+    CUPS_TESTPAGE = "${cups}/share/cups/ipptool/testfile.pdf";
+  }
+  // lib.optionalAttrs withGui {
+    GDCTL = "${mutter}/bin/gdctl";
+    KSCREEN_DOCTOR = "${kdePackages.libkscreen}/bin/kscreen-doctor";
+  };
+  resourceWrapperArgs = lib.concatStringsSep " " (
+    lib.mapAttrsToList (
+      name: path: "--set-default PEASY_${name} ${lib.escapeShellArg path}"
+    ) resourceTools
+  );
+in
 rustPlatform.buildRustPackage {
   pname = if withGui then "peasy" else "peasy-core";
   version = (builtins.fromTOML (builtins.readFile ../Cargo.toml)).workspace.package.version;
@@ -118,6 +160,9 @@ rustPlatform.buildRustPackage {
   '';
 
   postInstall = ''
+    ${lib.concatMapStringsSep "\n" (path: "test -e ${lib.escapeShellArg path}") (
+      lib.attrValues resourceTools
+    )}
     install -Dm755 target/${stdenv.hostPlatform.rust.rustcTarget}/release/peasy "$out/bin/peasy"
     install -Dm755 target/${stdenv.hostPlatform.rust.rustcTarget}/release/peasy-system "$out/libexec/peasy-system"
     install -Dm644 target/wasm32-unknown-unknown/release/peasy_engine.wasm \
@@ -142,7 +187,7 @@ rustPlatform.buildRustPackage {
     ${
       if withGui then
         ''
-            wrapProgram "$out/bin/peasy" \
+            wrapProgram "$out/bin/peasy" ${resourceWrapperArgs} \
               --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
               --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
               --set-default PEASY_NIX "${nix}/bin/nix" \
@@ -156,7 +201,7 @@ rustPlatform.buildRustPackage {
         ''
       else
         ''
-          wrapProgram "$out/bin/peasy" \
+          wrapProgram "$out/bin/peasy" ${resourceWrapperArgs} \
             --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
             --set-default PEASY_PKTTYAGENT "${polkit}/bin/pkttyagent" \
             --set-default PEASY_NIX "${nix}/bin/nix" \
@@ -171,7 +216,7 @@ rustPlatform.buildRustPackage {
   # The hook collects dependency schema paths before preFixup. In particular,
   # GTK's folder chooser aborts if its Settings.FileChooser schema is missing.
   preFixup = lib.optionalString withGui ''
-    wrapProgram "$out/bin/peasy-ui" \
+    wrapProgram "$out/bin/peasy-ui" ${resourceWrapperArgs} \
       "''${gappsWrapperArgs[@]}" \
       --set-default PEASY_ENGINE "$out/lib/peasy/peasy-engine.wasm" \
       --set-default PEASY_NMCLI "${networkmanager}/bin/nmcli" \

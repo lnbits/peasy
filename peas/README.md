@@ -47,7 +47,7 @@ requires an explicit compatibility decision and updated schemas and tests.
 | Interpretation | LLM returns a supported structured action; explanation text is never executed |
 | Validation | Host checks types, bounds, permissions and discovered resource identities |
 | Review | Show the proposed effects and, for system changes, generated Nix diff |
-| System Apply | Daemon authenticates the caller, checks the expiring UID-bound proposal and current state, builds, verifies the result and requests activation |
+| System Apply | Daemon authenticates the caller and checks the expiring UID-bound proposal and current state; persistent configuration then builds, verifies and activates, while privileged live operations recheck and apply directly |
 | Session Apply | Client executes the reviewed local action under the session's existing permissions |
 | Recovery | Report partial failure; preserve unrelated state and use shared recovery handling |
 
@@ -73,6 +73,7 @@ host imports, filesystem, network or process access may be added to the guest.
 | `types.rs` | `peasy-core` | Types, validation and declarative rendering |
 | `client.rs` | `peasy-client` | Discovery, proposals and local execution |
 | `system.rs` | `peasy-system` | Privileged-side checks and system proposals |
+| `native.rs` | Shared native host | Bounded resource probes and fixed service adapters |
 | `policy.rs` | `peasy-engine` | Pure policy when required |
 
 Files are optional and included through explicit `#[path]` declarations.
@@ -92,6 +93,21 @@ concrete dependency or maintenance problem justifies changing it.
 | [Bluetooth](bluetooth/README.md) | Discover, connect and pair | BlueZ |
 | [Calendar](calendar/README.md) | Prepare an event for import | Local file and calendar application |
 | [Hyprland](hyprland/README.md) | Inspect and change supported live settings | Current compositor session |
+
+The resource peas share the [resource protocol](../docs/resources.md):
+
+| Pea | Operations | State |
+| --- | --- | --- |
+| [Diagnostics](diagnostics/README.md) | Bounded health and failure inspection | Read-only |
+| [Services](services/README.md) | Inspect/control services; declare supported enablement | Live and NixOS |
+| [Storage](storage/README.md) | Removable filesystems and UUID mounts | UDisks and NixOS |
+| [Nix maintenance](nix_maintenance/README.md) | Generations, collection and optimisation | Nix store and system profile |
+| [Users](users/README.md) | Local accounts and caller groups | NixOS; home data separate |
+| [Firewall](firewall/README.md) | Inspect policy and manage port/interface contributions | NixOS |
+| [Printing](printing/README.md) | Driverless printers, defaults and test page | CUPS |
+| [Displays](displays/README.md) | Discover and configure outputs | Desktop session |
+| [Audio](audio/README.md) | Devices, defaults, volume and mute | WirePlumber |
+| [Power](power/README.md) | Battery, profiles and lid/idle settings | Session and NixOS |
 
 ## Adding or extending a pea
 

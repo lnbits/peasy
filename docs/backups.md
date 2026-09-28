@@ -10,7 +10,7 @@ Traditional and flake hosts use the same portable managed module.
 | File | Purpose |
 | --- | --- |
 | `peasy-managed.nix` | Portable standalone packages, appearance preferences and pinned pea instructions from the active generation |
-| `RESTORE-REVIEW.json` | Full active Peasy state, including service setups, network profiles and AppImages to recreate after destination review |
+| `RESTORE-REVIEW.json` | Full active Peasy state, including service setups, network profiles, resource settings and AppImages to recreate after destination review |
 | `host-reference/` | Original host source, including hardware modules and flake files, when readable; reference only |
 | `peasy/` | Bundled Peasy source and installation guide |
 | `README.txt` | Restore commands, counts of deferred items and any unavailable host archive |
@@ -21,6 +21,10 @@ Service setups may depend on existing services or user identities, network
 profiles on interface names, and AppImages on CPU architecture. They are retained
 in the review file, not applied unchanged. Recreate them through Peasy on the new
 machine so its normal discovery, review and authorization checks run there.
+
+Resource settings include account identities, mounts, firewall policy and power
+policy. Portable restore preserves the destination's resource settings; the
+original values remain reference data in `RESTORE-REVIEW.json`.
 
 The original host archive can contain arbitrary Nix code, external imports and
 inline secrets. Peasy cannot automatically separate all hardware dependencies

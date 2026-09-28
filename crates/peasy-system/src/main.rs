@@ -5,6 +5,9 @@ mod pea_fetch;
 mod postgresql_probe;
 mod process;
 mod recovery;
+#[path = "../../../peas/tests/resource_fixture.rs"]
+mod resource_fixture;
+mod resource_helper;
 mod server;
 mod state;
 mod update_check;
@@ -57,6 +60,8 @@ struct Args {
     #[arg(long, hide = true)]
     self_test_sandbox: bool,
     #[arg(long, hide = true)]
+    resource_helper: bool,
+    #[arg(long, hide = true)]
     fetch_pea: bool,
     #[arg(long, hide = true)]
     check_releases: bool,
@@ -68,6 +73,8 @@ struct Args {
     render_test_appimage: bool,
     #[arg(long, hide = true)]
     render_test_setup: bool,
+    #[arg(long, hide = true)]
+    render_test_resources: bool,
     #[arg(long, hide = true)]
     render_test_update: bool,
     #[arg(long, hide = true)]
@@ -101,6 +108,13 @@ fn sandbox_self_test() -> Result<()> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.render_test_resources {
+        print!("{}", resource_fixture::render());
+        return Ok(());
+    }
+    if args.resource_helper {
+        return resource_helper::run(&args.runtime_dir);
+    }
     if args.check_activation {
         return activation::check_guard(&args.runtime_dir);
     }
@@ -229,6 +243,7 @@ fn main() -> Result<()> {
     }
     if args.render_test_theme {
         let state = peasy_core::PackageState {
+            resources: peasy_core::ResourceState::default(),
             peasy_release: None,
             packages: vec!["hello".into()],
             setups: Vec::new(),
@@ -245,6 +260,7 @@ fn main() -> Result<()> {
     }
     if args.render_test_appimage {
         let state = peasy_core::PackageState {
+            resources: peasy_core::ResourceState::default(),
             peasy_release: None,
             packages: Vec::new(),
             setups: Vec::new(),

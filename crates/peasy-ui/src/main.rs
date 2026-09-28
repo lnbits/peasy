@@ -1233,6 +1233,7 @@ fn apply_local(
         return;
     };
     status.set_text(match &proposal.action {
+        LocalAction::Resources { .. } => "Applying the reviewed resource change…",
         LocalAction::Network { .. } => "Changing network connections…",
         LocalAction::Wifi { .. } => "…connecting to Wi-Fi",
         LocalAction::Bluetooth { .. } => "…connecting Bluetooth device",
@@ -1349,6 +1350,9 @@ fn review_again(window: &adw::ApplicationWindow, state: AppState) {
         None => {
             show_prompt(window, state);
             return;
+        }
+        Some(ProposalChange::Resources { plan, .. }) => {
+            IpcRequest::ProposeResources { change: plan }
         }
         Some(ProposalChange::Recovery { .. }) => IpcRequest::ProposeRecovery,
         Some(ProposalChange::PeasyUpdate { release }) => IpcRequest::ProposePeasyUpdate { release },

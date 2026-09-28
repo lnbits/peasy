@@ -578,9 +578,31 @@
     }
 
     .peas-heading {
-      margin-bottom: 24px;
+      margin-bottom: 8px;
       font-size: 1.15rem;
       font-weight: 650;
+    }
+
+    .peas-scroll-hint {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .peas-scroll {
+      max-height: min(36rem, 65vh);
+      max-height: min(36rem, 65svh);
+      overflow-y: auto;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      scrollbar-color: var(--mint) var(--panel-soft);
+      padding: 18px 16px 18px 0;
+      border-block: 1px solid var(--line);
+    }
+
+    .peas-scroll:focus-visible {
+      outline: 2px solid var(--mint);
+      outline-offset: 5px;
     }
 
     .peas-list {
@@ -832,20 +854,34 @@
             Follow a simple, shared structure to create your own peas and share them with the community.
           </p>
           <a class="peas-guide" href="https://github.com/lnbits/peasy/blob/main/peas/README.md">Create a pea <span aria-hidden="true">→</span></a>
-          <p class="peas-note">The guide includes an example prompt to get started. Peas are reviewed source modules, built into Peasy, not drop-in runtime plugins.</p>
+          <p class="peas-note">Peas are versioned data packages that use Peasy’s supported operations. The host enforces permissions, and you review changes before they run. New native operations require a Peasy update.</p>
         </div>
         <div class="reveal">
-          <h3 class="peas-heading">Currently, Peasy can:</h3>
-          <ul class="peas-list">
-            <li><strong>Manage packages</strong>Search Nixpkgs, check availability, choose versions, and install or remove software.</li>
-            <li><strong>Set up applications</strong>Install or uninstall supporting packages, reviewed NixOS settings and user access together, while preserving shared dependencies.</li>
-            <li><strong>Find AppImages</strong>Discover GitHub releases and prepare pinned AppImage installs, updates and removals for review.</li>
-            <li><strong>Change your theme</strong>Adjust accent colours and light or dark appearance on supported desktops.</li>
-            <li><strong>Connect to Wi-Fi</strong>List nearby networks and connect, keeping passwords out of AI prompts.</li>
-            <li><strong>Pair Bluetooth devices</strong>Find, pair and connect your devices.</li>
-            <li><strong>Prepare calendar events</strong>Create event files and open them in your default app for review and import.</li>
-            <li><strong>Control Hyprland</strong>Inspect your session and adjust supported live window and desktop settings.</li>
-          </ul>
+          <h3 class="peas-heading" id="peas-capabilities-title">Currently, Peasy can:</h3>
+          <p class="peas-scroll-hint" id="peas-scroll-hint">19 peas · Scroll to explore</p>
+          <div class="peas-scroll" role="region" aria-labelledby="peas-capabilities-title" aria-describedby="peas-scroll-hint" tabindex="0">
+            <ul class="peas-list">
+              <li data-pea="packages"><strong>Manage packages</strong>Search Nixpkgs, check availability, choose versions, and install or remove software.</li>
+              <li data-pea="system_configuration"><strong>Set up applications</strong>Manage supporting packages, NixOS settings and user access together, preserving shared dependencies.</li>
+              <li data-pea="appimages"><strong>Find AppImages</strong>Discover GitHub releases and review pinned AppImage installs, updates and removals.</li>
+              <li data-pea="appearance"><strong>Change your theme</strong>Adjust accent colours and light or dark appearance on supported desktops.</li>
+              <li data-pea="networking"><strong>Configure networking</strong>Inspect connections and configure supported Ethernet, Wi-Fi, IPv4, DNS and connection-sharing settings.</li>
+              <li data-pea="wifi"><strong>Connect to Wi-Fi</strong>List nearby networks and connect, keeping passwords out of AI prompts.</li>
+              <li data-pea="bluetooth"><strong>Pair Bluetooth devices</strong>Find, pair and connect your devices.</li>
+              <li data-pea="calendar"><strong>Prepare calendar events</strong>Create event files and open them in your default app for review and import.</li>
+              <li data-pea="hyprland"><strong>Control Hyprland</strong>Inspect your session and adjust supported live window and desktop settings.</li>
+              <li data-pea="diagnostics"><strong>Check system health</strong>Inspect CPU load, memory, disk capacity, failed services and network routes.</li>
+              <li data-pea="services"><strong>Manage services</strong>Check status, start, stop or restart supported services, and configure supported boot enablement through NixOS.</li>
+              <li data-pea="storage"><strong>Manage removable storage</strong>Inspect disks, mount or unmount removable drives, review formatting and configure persistent mounts.</li>
+              <li data-pea="nix_maintenance"><strong>Maintain Nix</strong>Inspect generations, optimise the store, collect unused paths and remove reviewed generation references.</li>
+              <li data-pea="users"><strong>Manage users</strong>Inspect accounts, create locked local users, disable Peasy-created accounts and manage your supplementary groups.</li>
+              <li data-pea="firewall"><strong>Configure the firewall</strong>Inspect declared policy and manage Peasy’s allowed ports and trusted interfaces, preserving administrator settings.</li>
+              <li data-pea="printing"><strong>Set up printers</strong>Discover driverless IPP printers, add queues, choose your default printer and print a test page.</li>
+              <li data-pea="displays"><strong>Arrange your displays</strong>Adjust position, resolution, refresh rate, scale and primary output where supported on GNOME, Plasma and Hyprland.</li>
+              <li data-pea="audio"><strong>Control audio</strong>List speakers and microphones, choose defaults, adjust volume and mute through PipeWire and WirePlumber.</li>
+              <li data-pea="power"><strong>Manage power</strong>Check battery status, choose supported power profiles and configure lid-close and idle-sleep behaviour.</li>
+            </ul>
+          </div>
         </div>
       </div>
     </section>

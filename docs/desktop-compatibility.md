@@ -55,7 +55,10 @@ Scheme and accent are separate calls because the upstream CLI treats them as
 separate modes ([KDE implementation](https://github.com/KDE/plasma-workspace/blob/master/kcms/colors/plasma-apply-colorscheme.cpp)).
 The model never selects executable paths, arguments, gsettings/KDE keys, config
 files, D-Bus methods or scripts. Unsupported adapters do not fall back to GNOME.
-The module does not pull Plasma tools into GNOME or GNOME Shell into Plasma.
+Appearance integration selects tools for the configured desktop. Display resource
+adapters additionally bundle `gdctl` and `kscreen-doctor` in the desktop package;
+Hyprland uses the session's `hyprctl`. See the [resource protocol](resources.md)
+for supported display operations and limitations.
 
 Peasy keeps one managed Nix source file and the existing generation snapshot,
 not a new settings database. The graphical-session sync service reapplies that

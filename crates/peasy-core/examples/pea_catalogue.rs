@@ -17,7 +17,7 @@ fn write(path: &Path, value: &impl serde::Serialize, check: bool) {
 fn main() {
     let check = std::env::args().any(|s| s == "--check");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let entries: Vec<(&str,Vec<String>,Vec<String>,&str)> = vec![
+    let mut entries: Vec<(&str,Vec<String>,Vec<String>,&str)> = vec![
         ("packages", vec!["Find, install and remove Nixpkgs applications and their reviewed system integration".into()], vec!["packages".into()], include_str!("../../../peas/packages/instructions.txt")),
         ("system_configuration", vec!["Configure application dependencies, reviewed NixOS enable options and caller-bound groups".into()], vec!["packages".into()], include_str!("../../../peas/system_configuration/instructions.txt")),
         ("appimages", vec!["Discover and install pinned upstream AppImage releases".into()], vec!["packages".into()], include_str!("../../../peas/appimages/instructions.txt")),
@@ -27,10 +27,73 @@ fn main() {
         ("calendar", vec!["Prepare local calendar events for import".into()], vec!["calendar".into()], include_str!("../../../peas/calendar/instructions.txt")),
         ("hyprland", vec!["Inspect and control supported live Hyprland settings and window actions".into()], vec!["hyprland".into()], include_str!("../../../peas/hyprland/instructions.txt")),
         ("networking", vec!["Inspect interfaces, connection profiles, IPv4 addressing and routes".into(),"Configure DHCP, static IPv4, DNS, shared connectivity, Wi-Fi modes and profile activation".into()], vec!["network.read".into(),"network.session".into(),"network.system".into()], include_str!("../../../peas/networking/instructions.txt")),    ];
+    entries.push((
+        "diagnostics",
+        vec!["System diagnostics: bounded inspection".into()],
+        vec!["diagnostics.read".into()],
+        include_str!("../../../peas/diagnostics/instructions.txt"),
+    ));
+    entries.push((
+        "services",
+        vec!["Services: bounded inspection and reviewed resource management".into()],
+        vec!["services.read".into(), "services.write".into()],
+        include_str!("../../../peas/services/instructions.txt"),
+    ));
+    entries.push((
+        "storage",
+        vec!["Storage: bounded inspection and reviewed resource management".into()],
+        vec!["storage.read".into(), "storage.write".into()],
+        include_str!("../../../peas/storage/instructions.txt"),
+    ));
+    entries.push((
+        "nix_maintenance",
+        vec!["Nix maintenance: bounded inspection and reviewed resource management".into()],
+        vec![
+            "nix_maintenance.read".into(),
+            "nix_maintenance.write".into(),
+        ],
+        include_str!("../../../peas/nix_maintenance/instructions.txt"),
+    ));
+    entries.push((
+        "users",
+        vec!["Users: bounded inspection and reviewed resource management".into()],
+        vec!["users.read".into(), "users.write".into()],
+        include_str!("../../../peas/users/instructions.txt"),
+    ));
+    entries.push((
+        "firewall",
+        vec!["Firewall: bounded inspection and reviewed resource management".into()],
+        vec!["firewall.read".into(), "firewall.write".into()],
+        include_str!("../../../peas/firewall/instructions.txt"),
+    ));
+    entries.push((
+        "printing",
+        vec!["Printing: bounded inspection and reviewed resource management".into()],
+        vec!["printing.read".into(), "printing.write".into()],
+        include_str!("../../../peas/printing/instructions.txt"),
+    ));
+    entries.push((
+        "displays",
+        vec!["Displays: bounded inspection and reviewed resource management".into()],
+        vec!["displays.read".into(), "displays.write".into()],
+        include_str!("../../../peas/displays/instructions.txt"),
+    ));
+    entries.push((
+        "audio",
+        vec!["Audio: bounded inspection and reviewed resource management".into()],
+        vec!["audio.read".into(), "audio.write".into()],
+        include_str!("../../../peas/audio/instructions.txt"),
+    ));
+    entries.push((
+        "power",
+        vec!["Power: bounded inspection and reviewed resource management".into()],
+        vec!["power.read".into(), "power.write".into()],
+        include_str!("../../../peas/power/instructions.txt"),
+    ));
     for (id, capabilities, permissions, instructions) in entries {
         let manifest = PeaManifest {
             id: id.into(),
-            version: "1.2.0".into(),
+            version: "1.3.0".into(),
             host_api: HOST_API,
             capabilities,
             response_schema: schema_for_permissions(&permissions),

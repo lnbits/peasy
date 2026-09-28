@@ -310,6 +310,12 @@ fn dispatch(
 ) -> Result<IpcResponse> {
     let uid = peer.uid;
     match request {
+        IpcRequest::InspectResources { query } => Ok(IpcResponse::Resources {
+            data: backend.inspect_resources(&query)?,
+        }),
+        IpcRequest::ProposeResources { change } => {
+            store_proposal(proposals, uid, backend.preview_resources(change, uid)?)
+        }
         IpcRequest::SearchPackages { query } => Ok(IpcResponse::SearchResults {
             candidates: backend.search(&query)?,
         }),
@@ -689,6 +695,44 @@ mod tests {
         assert_eq!(runner.0.load(Ordering::SeqCst), 1);
         assert_eq!(backend.managed_module().unwrap(), before);
         let mut update = preview();
+        for plan in [
+            peasy_core::ResourceChange::Service {
+                unit: "caddy.service".into(),
+                action: peasy_core::resources::ServiceAction::Restart,
+            },
+            peasy_core::ResourceChange::Firewall {
+                tcp: vec![8080],
+                udp: vec![],
+                trusted_interfaces: vec![],
+            },
+        ] {
+            let mut resource = preview();
+            resource.change = ProposalChange::Resources {
+                plan,
+                caller: None,
+                snapshot: "{}".into(),
+            };
+            let IpcResponse::Proposal { proposal } = store_proposal(&map, 1000, resource).unwrap()
+            else {
+                panic!()
+            };
+            assert!(
+                dispatch(
+                    IpcRequest::Apply {
+                        proposal: proposal.id
+                    },
+                    &peer,
+                    &backend,
+                    &map,
+                    &Authorization(false),
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("authorization denied")
+            );
+            assert_eq!(runner.0.load(Ordering::SeqCst), 1);
+            assert_eq!(backend.managed_module().unwrap(), before);
+        }
         update.change = ProposalChange::PeasyUpdate {
             release: peasy_core::PeasyRelease {
                 format: 1,

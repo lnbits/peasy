@@ -1,7 +1,7 @@
 {
   "id": "appearance",
-  "version": "1.2.0",
-  "host_api": 3,
+  "version": "1.3.0",
+  "host_api": 4,
   "capabilities": [
     "Inspect and configure supported desktop colours and light or dark appearance"
   ],
@@ -276,6 +276,12 @@
           "null"
         ]
       },
+      "resource_change": {
+        "type": "null"
+      },
+      "resource_query": {
+        "type": "null"
+      },
       "setup": {
         "additionalProperties": false,
         "properties": {
@@ -422,6 +428,8 @@
       }
     },
     "required": [
+      "resource_query",
+      "resource_change",
       "pea_id",
       "network",
       "action",

@@ -1,0 +1,546 @@
+{
+  "id": "services",
+  "version": "1.3.0",
+  "host_api": 4,
+  "capabilities": [
+    "Services: bounded inspection and reviewed resource management"
+  ],
+  "permissions": [
+    "services.read",
+    "services.write"
+  ],
+  "instructions": "Inspect loaded systemd services and exit/result status. Use exact discovered unit names for reviewed start, stop or restart. Protected infrastructure units cannot be controlled. Persistent service enablement uses supported NixOS options; disable withdraws Peasy contributions only. Never use systemctl enable or edit units.",
+  "response_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "description": "Choose the capability that best fulfills the user's actual request.",
+        "enum": [
+          "cancel",
+          "change_resources",
+          "explain",
+          "inspect_resources"
+        ],
+        "type": "string"
+      },
+      "device": {
+        "maxLength": 160,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "duration_minutes": {
+        "maximum": 1440,
+        "minimum": 5,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "event_start": {
+        "description": "Local date and time in exactly YYYY-MM-DDTHH:MM:SS format, resolved relative to current_local_time.",
+        "maxLength": 19,
+        "minLength": 19,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "event_title": {
+        "description": "Concise calendar event title inferred from the request.",
+        "maxLength": 160,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hyprland_argument": {
+        "maxLength": 32,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hyprland_dispatch": {
+        "enum": [
+          "switch_workspace",
+          "move_window_to_workspace",
+          "focus_direction",
+          "toggle_floating",
+          "toggle_fullscreen",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hyprland_setting": {
+        "enum": [
+          "gaps_inner",
+          "gaps_outer",
+          "border_size",
+          "corner_radius",
+          "animations",
+          "blur",
+          "active_opacity",
+          "inactive_opacity",
+          "natural_scroll",
+          "layout",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "hyprland_value": {
+        "maxLength": 32,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "message": {
+        "description": "Concise user-facing explanation when useful.",
+        "maxLength": 8000,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "network": {
+        "additionalProperties": false,
+        "properties": {
+          "activate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deactivate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profiles": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "addresses": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 4,
+                  "type": "array"
+                },
+                "autoconnect": {
+                  "type": "boolean"
+                },
+                "dns": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 4,
+                  "type": "array"
+                },
+                "gateway": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "maxLength": 48,
+                  "type": "string"
+                },
+                "interface": {
+                  "maxLength": 15,
+                  "type": "string"
+                },
+                "ipv4": {
+                  "enum": [
+                    "auto",
+                    "manual",
+                    "shared",
+                    "disabled"
+                  ],
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "ethernet",
+                    "wifi"
+                  ],
+                  "type": "string"
+                },
+                "ssid": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "wifi_mode": {
+                  "enum": [
+                    "infrastructure",
+                    "ap",
+                    null
+                  ],
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "interface",
+                "kind",
+                "wifi_mode",
+                "ssid",
+                "ipv4",
+                "addresses",
+                "gateway",
+                "dns",
+                "autoconnect"
+              ],
+              "type": "object"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "remove": {
+            "items": {
+              "maxLength": 48,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "scope": {
+            "enum": [
+              "session",
+              "system"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "profiles",
+          "remove",
+          "activate",
+          "deactivate"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "package": {
+        "description": "Exact package attribute from package_candidates or peasy_installed_packages.",
+        "maxLength": 180,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "package_version": {
+        "maxLength": 64,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "pea_id": {
+        "maxLength": 48,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "query": {
+        "description": "Concise package, application, project, device, or upstream search name; never the whole user sentence.",
+        "maxLength": 160,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "repository": {
+        "description": "Exact GitHub owner/repository for an upstream AppImage when known.",
+        "maxLength": 201,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "resource_change": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "start",
+                  "stop",
+                  "restart"
+                ],
+                "type": "string"
+              },
+              "operation": {
+                "enum": [
+                  "service"
+                ],
+                "type": "string"
+              },
+              "unit": {
+                "maxLength": 160,
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "unit",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "operation": {
+                "enum": [
+                  "service_enabled"
+                ],
+                "type": "string"
+              },
+              "service": {
+                "enum": [
+                  "ssh",
+                  "caddy",
+                  "tailscale",
+                  "printing",
+                  "bluetooth",
+                  "docker",
+                  "podman",
+                  "libvirtd"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "service",
+              "enabled"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "resource_query": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "enum": [
+              "services"
+            ],
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 160,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "domain",
+          "target"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "setup": {
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "items": {
+              "enum": [
+                "virtualisation.libvirtd.enable",
+                "programs.virt-manager.enable",
+                "services.printing.enable",
+                "hardware.sane.enable",
+                "hardware.bluetooth.enable",
+                "virtualisation.podman.enable",
+                "virtualisation.docker.enable",
+                "programs.nix-ld.enable",
+                "programs.direnv.enable",
+                "programs.zsh.enable",
+                "programs.fish.enable",
+                "programs.wireshark.enable",
+                "programs.mtr.enable",
+                "programs.appimage.enable",
+                "programs.appimage.binfmt",
+                "services.flatpak.enable",
+                "programs.dconf.enable",
+                "services.gnome.gnome-keyring.enable",
+                "services.gvfs.enable",
+                "services.udisks2.enable",
+                "services.upower.enable",
+                "services.pcscd.enable",
+                "services.ratbagd.enable",
+                "hardware.i2c.enable",
+                "hardware.openrazer.enable",
+                "hardware.steam-hardware.enable",
+                "programs.gamemode.enable",
+                "hardware.graphics.enable"
+              ],
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "enum": [
+                "dialout",
+                "docker",
+                "gamemode",
+                "i2c",
+                "kvm",
+                "libvirtd",
+                "lp",
+                "openrazer",
+                "render",
+                "scanner",
+                "video",
+                "wireshark"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "packages": {
+            "items": {
+              "maxLength": 180,
+              "type": "string"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "postgresql": {
+            "additionalProperties": false,
+            "properties": {
+              "caller_database": {
+                "type": "boolean"
+              },
+              "package": {
+                "enum": [
+                  "postgresql_14",
+                  "postgresql_15",
+                  "postgresql_16",
+                  "postgresql_17",
+                  "postgresql_18"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "package",
+              "caller_database"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "packages",
+          "enable",
+          "groups",
+          "postgresql"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "ssid": {
+        "maxLength": 32,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "theme_color": {
+        "enum": [
+          "blue",
+          "teal",
+          "green",
+          "yellow",
+          "orange",
+          "red",
+          "pink",
+          "purple",
+          "slate",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "theme_mode": {
+        "enum": [
+          "system",
+          "light",
+          "dark",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "resource_query",
+      "resource_change",
+      "pea_id",
+      "network",
+      "action",
+      "query",
+      "package",
+      "package_version",
+      "repository",
+      "message",
+      "theme_color",
+      "theme_mode",
+      "ssid",
+      "device",
+      "event_title",
+      "event_start",
+      "duration_minutes",
+      "hyprland_setting",
+      "hyprland_value",
+      "hyprland_dispatch",
+      "hyprland_argument",
+      "setup"
+    ],
+    "type": "object"
+  }
+}

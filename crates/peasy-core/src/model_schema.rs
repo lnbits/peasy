@@ -5,10 +5,12 @@ pub fn model_response_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
+            "resource_query": resources::query_schema(),
+            "resource_change": resources::change_schema(),
             "pea_id": {"type":["string","null"],"maxLength":48},
             "network": network_schema(),
             "setup": setup_schema(),
-            "action": { "type": "string", "description": "Choose the capability that best fulfills the user's actual request.", "enum": ["discover_peas", "use_pea", "disable_pea", "inspect_network", "configure_network", "search_package", "search_appimage", "check_package", "list_themes", "list_wifi", "hyprland_status", "install_package", "remove_package", "set_theme", "set_hyprland_setting", "hyprland_dispatch", "connect_wifi", "connect_bluetooth", "create_calendar_event", "explain", "cancel"] },
+            "action": { "type": "string", "description": "Choose the capability that best fulfills the user's actual request.", "enum": ["inspect_resources", "change_resources", "discover_peas", "use_pea", "disable_pea", "inspect_network", "configure_network", "search_package", "search_appimage", "check_package", "list_themes", "list_wifi", "hyprland_status", "install_package", "remove_package", "set_theme", "set_hyprland_setting", "hyprland_dispatch", "connect_wifi", "connect_bluetooth", "create_calendar_event", "explain", "cancel"] },
             "query": { "type": ["string", "null"], "description": "Concise package, application, project, device, or upstream search name; never the whole user sentence.", "maxLength": MAX_QUERY_BYTES },
             "package": { "type": ["string", "null"], "description": "Exact package attribute from package_candidates or peasy_installed_packages.", "maxLength": MAX_ATTRIBUTE_BYTES },
             "package_version": { "type": ["string", "null"], "maxLength": 64 },
@@ -26,6 +28,6 @@ pub fn model_response_schema() -> Value {
             "hyprland_dispatch": { "type": ["string", "null"], "enum": ["switch_workspace", "move_window_to_workspace", "focus_direction", "toggle_floating", "toggle_fullscreen", null] },
             "hyprland_argument": { "type": ["string", "null"], "maxLength": 32 }
         },
-        "required": ["pea_id", "network", "action", "query", "package", "package_version", "repository", "message", "theme_color", "theme_mode", "ssid", "device", "event_title", "event_start", "duration_minutes", "hyprland_setting", "hyprland_value", "hyprland_dispatch", "hyprland_argument", "setup"]
+        "required": ["resource_query", "resource_change", "pea_id", "network", "action", "query", "package", "package_version", "repository", "message", "theme_color", "theme_mode", "ssid", "device", "event_title", "event_start", "duration_minutes", "hyprland_setting", "hyprland_value", "hyprland_dispatch", "hyprland_argument", "setup"]
     })
 }

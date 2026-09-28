@@ -370,3 +370,10 @@ Downloaded descriptions can only select an enabled pea, and deferred network
 activation requires both system and session permissions. These checks constrain
 effects; they cannot establish that publisher instructions or a schema-valid plan
 are appropriate for the user's goal. See [pea packages](pea-packages.md).
+
+## Resource domains
+
+Host API 4 adds domain-bound read/write permissions and independently captured
+resource snapshots. See the [resource protocol](resources.md) for destructive
+effects, protected resources, helper confinement, ownership and recovery limits.
+Inspections exclude raw logs, command lines, credential files and arbitrary paths.

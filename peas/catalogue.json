@@ -4,12 +4,12 @@
     {
       "package": {
         "id": "appearance",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "appearance"
         ],
-        "hash": "4ba529fd50afa91bee222128fbd9cc0b68507eddd91f8aa658545e75c65313de"
+        "hash": "aa7cfa0a8de67418a71b0bccbbc5032b1778a533619bfc0b1e31d2e2f1e1b54d"
       },
       "capabilities": [
         "Inspect and configure supported desktop colours and light or dark appearance"
@@ -18,12 +18,12 @@
     {
       "package": {
         "id": "appimages",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "packages"
         ],
-        "hash": "5fed1baaaa841f6c1cbdedb011ee0a9ed849b7ad30e83a9b632af5440e710015"
+        "hash": "919237acc891a8531cb136f94a20d0aaaf2c3bee344a2c35024a85064b40368b"
       },
       "capabilities": [
         "Discover and install pinned upstream AppImage releases"
@@ -31,13 +31,28 @@
     },
     {
       "package": {
+        "id": "audio",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "audio.read",
+          "audio.write"
+        ],
+        "hash": "c27666be09d086122fa3b1c028e8dca7a078ba8f5798526e63835ff7748aca90"
+      },
+      "capabilities": [
+        "Audio: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
         "id": "bluetooth",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "bluetooth"
         ],
-        "hash": "d592b6ad355aad87e3102aa2db62acd40cfd4a2526576ae83c56cb92a65e1209"
+        "hash": "2aede617709fb07daefc3b1b0d8a9415636427b143ed72111b340dba1ad7c590"
       },
       "capabilities": [
         "Discover and connect or pair Bluetooth devices"
@@ -46,12 +61,12 @@
     {
       "package": {
         "id": "calendar",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "calendar"
         ],
-        "hash": "26548f5f48230944e1a8a5a060d7907296c452d5adfa1afdd5787b6fb60ef446"
+        "hash": "3bd5f61829132afd6ae96210099f3bac5def8783f2dceb0499addbf979eb272c"
       },
       "capabilities": [
         "Prepare local calendar events for import"
@@ -59,13 +74,57 @@
     },
     {
       "package": {
+        "id": "diagnostics",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "diagnostics.read"
+        ],
+        "hash": "6d21da36814a76cf983b5ed0910aeecd0bf75301fe930b834f9a976d0eb33ac1"
+      },
+      "capabilities": [
+        "System diagnostics: bounded inspection"
+      ]
+    },
+    {
+      "package": {
+        "id": "displays",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "displays.read",
+          "displays.write"
+        ],
+        "hash": "8bef7d96d2490cb0b8f00fcc34fa3c5df4a85adb6c98af923f322780b9c81565"
+      },
+      "capabilities": [
+        "Displays: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
+        "id": "firewall",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "firewall.read",
+          "firewall.write"
+        ],
+        "hash": "bc1d0ce3a1c5023d951cff53d9e992b01bca33fd00f2cc0903f7d1ae3898b14a"
+      },
+      "capabilities": [
+        "Firewall: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
         "id": "hyprland",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "hyprland"
         ],
-        "hash": "2ae637de19c759234f1af66bb5a79176c2aa294fb606870e922cb31dceaf0a24"
+        "hash": "b09ae474f8f2b267550c3f74145f81834bde21922fe72849adeafa7c61903931"
       },
       "capabilities": [
         "Inspect and control supported live Hyprland settings and window actions"
@@ -74,14 +133,14 @@
     {
       "package": {
         "id": "networking",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "network.read",
           "network.session",
           "network.system"
         ],
-        "hash": "fee7b4e3eb8201562ea1974a1294608aa45748a19f78867bb6ef505415953cc4"
+        "hash": "4a32d29e39d25c35584c3947966029b0985153122b6bb448cc390cff4c55a16b"
       },
       "capabilities": [
         "Inspect interfaces, connection profiles, IPv4 addressing and routes",
@@ -90,13 +149,28 @@
     },
     {
       "package": {
+        "id": "nix_maintenance",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "nix_maintenance.read",
+          "nix_maintenance.write"
+        ],
+        "hash": "153ba3194993e8f776c355c64d73d0225001c5f717a6d7c04dbf930384d70fb7"
+      },
+      "capabilities": [
+        "Nix maintenance: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
         "id": "packages",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "packages"
         ],
-        "hash": "5a083da8a7dfb2e02cfc6405823dd5bbb45143493cb8b4a7a51a425cfdb7939b"
+        "hash": "ac23268b4db557834608d760d6629dd9da27e36bfe638755c3abcce568a51a1e"
       },
       "capabilities": [
         "Find, install and remove Nixpkgs applications and their reviewed system integration"
@@ -104,13 +178,73 @@
     },
     {
       "package": {
+        "id": "power",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "power.read",
+          "power.write"
+        ],
+        "hash": "ae1534cbb3f13649516d6a0926f83fb977e5aab09ba2bfb2a4a967bbf060537b"
+      },
+      "capabilities": [
+        "Power: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
+        "id": "printing",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "printing.read",
+          "printing.write"
+        ],
+        "hash": "cf6cd8fd836f633587ffcdfa483096032a82ea88e2e05c31c8e6193dbb2268fe"
+      },
+      "capabilities": [
+        "Printing: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
+        "id": "services",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "services.read",
+          "services.write"
+        ],
+        "hash": "862776968fda690c49a81da5e9c2a224b81dfcc240a8c1ff25ac0fb254845813"
+      },
+      "capabilities": [
+        "Services: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
+        "id": "storage",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "storage.read",
+          "storage.write"
+        ],
+        "hash": "4f35b970a84163e6dab97b7794a4564d7ade0a61e9657ac88f5fbc86c74cc600"
+      },
+      "capabilities": [
+        "Storage: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
         "id": "system_configuration",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "packages"
         ],
-        "hash": "22b44027f8d4f0b5521f0167f8194570ad1c7e4cb85ccc42cf60a4b4e3d3b2d8"
+        "hash": "4902fedda09b2dca75011234715ae9e26a5288494dbcf3a8eda27a20f259a7a1"
       },
       "capabilities": [
         "Configure application dependencies, reviewed NixOS enable options and caller-bound groups"
@@ -118,13 +252,28 @@
     },
     {
       "package": {
+        "id": "users",
+        "version": "1.3.0",
+        "host_api": 4,
+        "permissions": [
+          "users.read",
+          "users.write"
+        ],
+        "hash": "8d1e28e00d3c6e1fe255b21ad48b5e68a618f67c64673beec5ef24dd62debc96"
+      },
+      "capabilities": [
+        "Users: bounded inspection and reviewed resource management"
+      ]
+    },
+    {
+      "package": {
         "id": "wifi",
-        "version": "1.2.0",
-        "host_api": 3,
+        "version": "1.3.0",
+        "host_api": 4,
         "permissions": [
           "wifi"
         ],
-        "hash": "86249f92251119f8b0d5a9fb7b69c7ec04d6e5c78b8f5da29f19232532a41f65"
+        "hash": "f044c0a0803d8fb7dfe6a5842c7b146faccc879d063896b2fc2473d48290b759"
       },
       "capabilities": [
         "Discover nearby Wi-Fi networks and connect to an exact SSID"

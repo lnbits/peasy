@@ -76,6 +76,25 @@ in
     peas.allowedPermissions = lib.mkOption {
       type = lib.types.listOf (
         lib.types.enum [
+          "diagnostics.read"
+          "services.read"
+          "services.write"
+          "storage.read"
+          "storage.write"
+          "nix_maintenance.read"
+          "nix_maintenance.write"
+          "users.read"
+          "users.write"
+          "firewall.read"
+          "firewall.write"
+          "printing.read"
+          "printing.write"
+          "displays.read"
+          "displays.write"
+          "audio.read"
+          "audio.write"
+          "power.read"
+          "power.write"
           "network.read"
           "network.session"
           "network.system"
@@ -88,6 +107,25 @@ in
         ]
       );
       default = [
+        "diagnostics.read"
+        "services.read"
+        "services.write"
+        "storage.read"
+        "storage.write"
+        "nix_maintenance.read"
+        "nix_maintenance.write"
+        "users.read"
+        "users.write"
+        "firewall.read"
+        "firewall.write"
+        "printing.read"
+        "printing.write"
+        "displays.read"
+        "displays.write"
+        "audio.read"
+        "audio.write"
+        "power.read"
+        "power.write"
         "network.read"
         "network.session"
         "network.system"
@@ -607,6 +645,12 @@ in
 
     systemd.services.peasy-system = {
       description = "Peasy typed NixOS configuration service";
+      environment = {
+        PEASY_LSBLK = "${pkgs.util-linux}/bin/lsblk";
+        PEASY_DF = "${pkgs.coreutils}/bin/df";
+        PEASY_IP = "${pkgs.iproute2}/bin/ip";
+        PEASY_NIX_ENV = "${pkgs.nix}/bin/nix-env";
+      };
       wantedBy = [ "multi-user.target" ];
       after = [ "nix-daemon.socket" ];
       requires = [ "nix-daemon.socket" ];
@@ -690,6 +734,46 @@ in
           "AF_NETLINK"
         ];
         IPAddressDeny = "any";
+      };
+    };
+
+    systemd.services.peasy-resource-helper = {
+      description = "Peasy bounded storage inspection and generation maintenance";
+      # Discovery, review and apply each recheck resources. The daemon already
+      # serializes this helper; successful short requests must not exhaust the
+      # service manager's default burst limit.
+      startLimitIntervalSec = 0;
+      environment = {
+        HOME = "/var/empty";
+        XDG_CACHE_HOME = "/run/peasy/resource-helper/nix-cache";
+        PEASY_LSBLK = "${pkgs.util-linux}/bin/lsblk";
+        PEASY_NIX_ENV = "${pkgs.nix}/bin/nix-env";
+        PEASY_DF = "${pkgs.coreutils}/bin/df";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${package}/libexec/peasy-system --resource-helper --runtime-dir /run/peasy";
+        TimeoutStartSec = 150;
+        UMask = "0077";
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [
+          "/run/peasy/resource-helper"
+          "/nix/var/nix/profiles"
+        ];
+        CapabilityBoundingSet = "";
+        NoNewPrivileges = true;
+        PrivateTmp = true;
+        RestrictAddressFamilies = [
+          "AF_UNIX"
+          "AF_NETLINK"
+        ];
+        IPAddressDeny = "any";
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
       };
     };
 

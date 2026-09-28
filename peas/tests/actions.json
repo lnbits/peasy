@@ -2112,5 +2112,64 @@
         }
       }
     }
+  },
+  {
+    "name": "inspect_resources",
+    "envelope": {
+      "action": "inspect_resources",
+      "resource_query": {
+        "domain": "diagnostics",
+        "target": null
+      }
+    },
+    "input": {
+      "action": {
+        "action": "inspect_resources",
+        "query": {
+          "domain": "diagnostics",
+          "target": null
+        }
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "inspect_resources",
+      "value": {
+        "domain": "diagnostics",
+        "target": null
+      }
+    }
+  },
+  {
+    "name": "change_resources",
+    "envelope": {
+      "action": "change_resources",
+      "resource_change": {
+        "operation": "service",
+        "unit": "caddy.service",
+        "action": "restart"
+      }
+    },
+    "input": {
+      "action": {
+        "action": "change_resources",
+        "change": {
+          "operation": "service",
+          "unit": "caddy.service",
+          "action": "restart"
+        }
+      },
+      "candidates": [],
+      "installed": []
+    },
+    "decision": {
+      "decision": "change_resources",
+      "value": {
+        "operation": "service",
+        "unit": "caddy.service",
+        "action": "restart"
+      }
+    }
   }
 ]

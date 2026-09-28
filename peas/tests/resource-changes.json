@@ -1,0 +1,134 @@
+[
+  {
+    "operation": "service",
+    "unit": "caddy.service",
+    "action": "restart"
+  },
+  {
+    "operation": "service_enabled",
+    "service": "printing",
+    "enabled": true
+  },
+  {
+    "operation": "disk",
+    "device": "/dev/sdb1",
+    "action": "mount",
+    "filesystem": null
+  },
+  {
+    "operation": "disk",
+    "device": "/dev/sdb1",
+    "action": "unmount",
+    "filesystem": null
+  },
+  {
+    "operation": "disk",
+    "device": "/dev/sdb1",
+    "action": "format",
+    "filesystem": "ext4"
+  },
+  {
+    "operation": "persistent_mount",
+    "uuid": "abcd-1234",
+    "name": "usb",
+    "filesystem": "ext4",
+    "present": true
+  },
+  {
+    "operation": "firewall",
+    "tcp": [
+      8080
+    ],
+    "udp": [],
+    "trusted_interfaces": []
+  },
+  {
+    "operation": "user_create",
+    "name": "guestuser"
+  },
+  {
+    "operation": "user_disabled",
+    "name": "guestuser",
+    "disabled": true
+  },
+  {
+    "operation": "user_groups",
+    "groups": [
+      "video",
+      "audio"
+    ]
+  },
+  {
+    "operation": "nix_optimise"
+  },
+  {
+    "operation": "nix_garbage_collect"
+  },
+  {
+    "operation": "nix_delete_generations",
+    "generations": [
+      1,
+      2
+    ]
+  },
+  {
+    "operation": "audio",
+    "id": 42,
+    "action": "default",
+    "volume": null
+  },
+  {
+    "operation": "audio",
+    "id": 42,
+    "action": "volume",
+    "volume": 50
+  },
+  {
+    "operation": "audio",
+    "id": 42,
+    "action": "mute",
+    "volume": null
+  },
+  {
+    "operation": "audio",
+    "id": 42,
+    "action": "unmute",
+    "volume": null
+  },
+  {
+    "operation": "power_profile",
+    "profile": "balanced"
+  },
+  {
+    "operation": "power_settings",
+    "lid": "suspend",
+    "idle_minutes": 30
+  },
+  {
+    "operation": "printer",
+    "name": "office",
+    "action": "add",
+    "uri": "ipp://printer.local/ipp/print"
+  },
+  {
+    "operation": "printer",
+    "name": "office",
+    "action": "default",
+    "uri": null
+  },
+  {
+    "operation": "printer",
+    "name": "office",
+    "action": "test",
+    "uri": null
+  },
+  {
+    "operation": "display",
+    "connector": "DP-1",
+    "mode": "1920x1080@60",
+    "scale_percent": 100,
+    "x": 0,
+    "y": 0,
+    "primary": false
+  }
+]

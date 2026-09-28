@@ -1,3 +1,7 @@
+#[cfg(not(target_arch = "wasm32"))]
+pub mod resource_native;
+pub mod resources;
+pub use resources::{ResourceChange, ResourceDomain, ResourceQuery, ResourceState};
 mod release;
 pub use release::{PeasyRelease, PeasyUpdateStatus, UPDATE_ASSET, UPDATE_FORMAT};
 mod backup;
@@ -47,6 +51,9 @@ use thiserror::Error;
 #[cfg(test)]
 #[path = "../../../peas/tests/contracts.rs"]
 mod pea_contracts;
+#[cfg(test)]
+#[path = "../../../peas/tests/resources.rs"]
+mod resource_contracts;
 
 #[path = "../../../peas/appearance/desktop.rs"]
 mod desktop;
@@ -117,6 +124,12 @@ fn normalize_model_message(value: String) -> Result<String, ValidationError> {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ModelAction {
+    InspectResources {
+        query: ResourceQuery,
+    },
+    ChangeResources {
+        change: ResourceChange,
+    },
     DiscoverPeas,
     DisablePea {
         id: String,
@@ -182,6 +195,10 @@ pub enum ModelAction {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelEnvelope {
+    #[serde(default)]
+    pub resource_query: Option<ResourceQuery>,
+    #[serde(default)]
+    pub resource_change: Option<ResourceChange>,
     pub action: String,
     #[serde(default)]
     pub network: Option<NetworkPlan>,
@@ -242,7 +259,28 @@ impl TryFrom<ModelEnvelope> for ModelAction {
                 "setup requires install_package".into(),
             ));
         }
+        if value.resource_query.is_some() && value.action != "inspect_resources"
+            || value.resource_change.is_some() && value.action != "change_resources"
+        {
+            return Err(ValidationError::InvalidRequest(
+                "resource fields require their matching action".into(),
+            ));
+        }
         match value.action.as_str() {
+            "inspect_resources" => {
+                let query = value.resource_query.ok_or_else(|| {
+                    ValidationError::InvalidRequest("resource query required".into())
+                })?;
+                query.validate()?;
+                Ok(Self::InspectResources { query })
+            }
+            "change_resources" => {
+                let change = value.resource_change.ok_or_else(|| {
+                    ValidationError::InvalidRequest("resource change required".into())
+                })?;
+                change.validate()?;
+                Ok(Self::ChangeResources { change })
+            }
             "search_package" | "search_appimage" | "check_package" => {
                 let repository = if value.action == "search_appimage" {
                     value
@@ -449,6 +487,8 @@ pub struct EngineInput {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "decision", content = "value", rename_all = "snake_case")]
 pub enum EngineDecision {
+    InspectResources(ResourceQuery),
+    ChangeResources(ResourceChange),
     DiscoverPeas,
     DisablePea(String),
     UsePea(String),
@@ -498,6 +538,12 @@ pub const IPC_RESTARTING_MESSAGE: &str = "Peasy is updating. Retry the request s
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "request", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcRequest {
+    InspectResources {
+        query: ResourceQuery,
+    },
+    ProposeResources {
+        change: ResourceChange,
+    },
     CheckPeasyUpdate {
         #[serde(default)]
         force: bool,
@@ -565,6 +611,11 @@ pub struct Proposal {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "change", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ProposalChange {
+    Resources {
+        plan: ResourceChange,
+        caller: Option<resources::CallerGroups>,
+        snapshot: String,
+    },
     PeasyUpdate {
         release: PeasyRelease,
     },
@@ -625,6 +676,7 @@ pub struct ApplyResult {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "response", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IpcResponse {
+    Resources { data: String },
     PeasyUpdate { status: PeasyUpdateStatus },
     SearchResults { candidates: Vec<PackageCandidate> },
     Packages { packages: Vec<String> },
@@ -694,6 +746,8 @@ pub struct ServiceStatus {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageState {
+    #[serde(default, skip_serializing_if = "ResourceState::is_empty")]
+    pub resources: ResourceState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peasy_release: Option<PeasyRelease>,
     pub packages: Vec<String>,
@@ -711,6 +765,7 @@ pub struct PackageState {
 
 impl PackageState {
     pub fn normalize(&mut self) -> Result<(), ValidationError> {
+        self.resources.validate()?;
         if let Some(release) = &self.peasy_release {
             release.validate()?;
         }
@@ -801,6 +856,7 @@ impl PackageState {
             networks: self.networks.clone(),
             peas: self.peas.clone(),
             peasy_release: self.peasy_release.clone(),
+            resources: self.resources.clone(),
         })
     }
 
@@ -823,6 +879,7 @@ impl PackageState {
             networks: self.networks.clone(),
             peas: self.peas.clone(),
             peasy_release: self.peasy_release.clone(),
+            resources: self.resources.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -843,6 +900,7 @@ impl PackageState {
             networks: self.networks.clone(),
             peas: self.peas.clone(),
             peasy_release: self.peasy_release.clone(),
+            resources: self.resources.clone(),
         };
         state.normalize()?;
         Ok(state)
@@ -862,6 +920,7 @@ impl PackageState {
             networks: self.networks.clone(),
             peas: self.peas.clone(),
             peasy_release: self.peasy_release.clone(),
+            resources: self.resources.clone(),
         })
     }
 }
@@ -948,8 +1007,19 @@ fn render_packages_module_version(
     } else {
         "{ config, lib, pkgs, ... }"
     };
+    let body = format!(
+        "{{\n  environment.systemPackages = (map\n    (attribute: lib.getAttrFromPath (lib.splitString \".\" attribute) pkgs)\n    [\n{package_lines}\n    ]) ++ peasyExternalAppImages;\n{appearance}}}"
+    );
+    let body = if state.resources.is_empty() {
+        body
+    } else {
+        format!(
+            "let peasyBase = {body}; in peasyBase // {{\n  imports = (peasyBase.imports or []) ++ [ ({{ config, lib, pkgs, ... }}: {{\n{resources}  }}) ];\n}}",
+            resources = state.resources.render()?
+        )
+    };
     Ok(format!(
-        "# Generated by Peasy. Do not edit.\n{MANAGED_STATE_PREFIX}{state_json}\n{arguments}:\nlet\n  peasyExternalAppImages = [\n{appimages}  ];\nin\n{{\n  environment.systemPackages = (map\n    (attribute: lib.getAttrFromPath (lib.splitString \".\" attribute) pkgs)\n    [\n{package_lines}\n    ]) ++ peasyExternalAppImages;\n{appearance}}}\n"
+        "# Generated by Peasy. Do not edit.\n{MANAGED_STATE_PREFIX}{state_json}\n{arguments}:\nlet\n  peasyExternalAppImages = [\n{appimages}  ];\nin\n{body}\n"
     ))
 }
 
@@ -1308,6 +1378,7 @@ mod tests {
             networks: Vec::new(),
             peas: Vec::new(),
             peasy_release: None,
+            resources: ResourceState::default(),
             appimages: Vec::new(),
             theme: ThemeSettings::default(),
         };
@@ -1334,6 +1405,7 @@ mod tests {
                 networks: Vec::new(),
                 peas: Vec::new(),
                 peasy_release: None,
+                resources: ResourceState::default(),
                 appimages: vec![],
                 theme,
             };

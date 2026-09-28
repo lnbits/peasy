@@ -13,6 +13,10 @@ Wasm policy. Existing crates compile the appropriate layer; provider access,
 closed dispatch, authorization and system transactions remain shared. The
 [peas guide](../peas/README.md) maps the files and explains how to add an ability.
 
+The [resource protocol](resources.md) extends this flow to ten management domains.
+Shared native adapters perform bounded discovery; persistent changes use the same
+NixOS transaction, and privileged live changes use authenticated proposals.
+
 Peasy exposes a deliberately closed set of typed NixOS and desktop
 capabilities.
 It is not a shell, an agent framework, or an arbitrary NixOS configuration

@@ -4,6 +4,8 @@
     "action": {
       "description": "Choose the capability that best fulfills the user's actual request.",
       "enum": [
+        "inspect_resources",
+        "change_resources",
         "discover_peas",
         "use_pea",
         "disable_pea",
@@ -282,6 +284,535 @@
         "null"
       ]
     },
+    "resource_change": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "start",
+                "stop",
+                "restart"
+              ],
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "service"
+              ],
+              "type": "string"
+            },
+            "unit": {
+              "maxLength": 160,
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "unit",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "operation": {
+              "enum": [
+                "service_enabled"
+              ],
+              "type": "string"
+            },
+            "service": {
+              "enum": [
+                "ssh",
+                "caddy",
+                "tailscale",
+                "printing",
+                "bluetooth",
+                "docker",
+                "podman",
+                "libvirtd"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "service",
+            "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "mount",
+                "unmount",
+                "format"
+              ],
+              "type": "string"
+            },
+            "device": {
+              "maxLength": 69,
+              "type": "string"
+            },
+            "filesystem": {
+              "enum": [
+                "ext4",
+                "vfat",
+                "exfat",
+                null
+              ],
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "operation": {
+              "enum": [
+                "disk"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "device",
+            "action",
+            "filesystem"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "filesystem": {
+              "enum": [
+                "ext4",
+                "vfat",
+                "exfat"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 48,
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "persistent_mount"
+              ],
+              "type": "string"
+            },
+            "present": {
+              "type": "boolean"
+            },
+            "uuid": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "uuid",
+            "name",
+            "filesystem",
+            "present"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "enum": [
+                "firewall"
+              ],
+              "type": "string"
+            },
+            "tcp": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "trusted_interfaces": {
+              "items": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "udp": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "maxItems": 64,
+              "type": "array"
+            }
+          },
+          "required": [
+            "operation",
+            "tcp",
+            "udp",
+            "trusted_interfaces"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "maxLength": 32,
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "user_create"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "disabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "maxLength": 32,
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "user_disabled"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "name",
+            "disabled"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "groups": {
+              "items": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "operation": {
+              "enum": [
+                "user_groups"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "groups"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "enum": [
+                "nix_optimise"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "enum": [
+                "nix_garbage_collect"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "generations": {
+              "items": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            "operation": {
+              "enum": [
+                "nix_delete_generations"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "generations"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "default",
+                "volume",
+                "mute",
+                "unmute"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "operation": {
+              "enum": [
+                "audio"
+              ],
+              "type": "string"
+            },
+            "volume": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "operation",
+            "id",
+            "action",
+            "volume"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "operation": {
+              "enum": [
+                "power_profile"
+              ],
+              "type": "string"
+            },
+            "profile": {
+              "enum": [
+                "balanced",
+                "power_saver",
+                "performance"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "profile"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "idle_minutes": {
+              "maximum": 1440,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "lid": {
+              "enum": [
+                "ignore",
+                "suspend",
+                "hibernate"
+              ],
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "power_settings"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "lid",
+            "idle_minutes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "add",
+                "default",
+                "test"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "printer"
+              ],
+              "type": "string"
+            },
+            "uri": {
+              "maxLength": 512,
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "operation",
+            "name",
+            "action",
+            "uri"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "connector": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "mode": {
+              "maxLength": 48,
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "display"
+              ],
+              "type": "string"
+            },
+            "primary": {
+              "type": "boolean"
+            },
+            "scale_percent": {
+              "maximum": 300,
+              "minimum": 50,
+              "type": "integer"
+            },
+            "x": {
+              "maximum": 16384,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "y": {
+              "maximum": 16384,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "operation",
+            "connector",
+            "mode",
+            "scale_percent",
+            "x",
+            "y",
+            "primary"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "resource_query": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "enum": [
+            "diagnostics",
+            "services",
+            "storage",
+            "nix_maintenance",
+            "users",
+            "firewall",
+            "printing",
+            "displays",
+            "audio",
+            "power"
+          ],
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 160,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "domain",
+        "target"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
     "setup": {
       "additionalProperties": false,
       "properties": {
@@ -428,6 +959,8 @@
     }
   },
   "required": [
+    "resource_query",
+    "resource_change",
     "pea_id",
     "network",
     "action",

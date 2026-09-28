@@ -392,6 +392,9 @@ fn finish_panel(
                             anyhow::bail!("invalid Wi-Fi password");
                         }
                         let progress = match &proposal.action {
+                            LocalAction::Resources { .. } => {
+                                "Applying the reviewed resource change…"
+                            }
                             LocalAction::Network { .. } => "Changing network connections…",
                             LocalAction::Wifi { .. } => "Connecting to Wi-Fi…",
                             LocalAction::Bluetooth { .. } => "Connecting Bluetooth device…",
@@ -600,6 +603,7 @@ fn confirm_and_apply_local(client: &PeasyClient, proposal: LocalProposal) -> Res
         _ => None,
     };
     let progress = match &proposal.action {
+        LocalAction::Resources { .. } => "Applying the reviewed resource change…",
         LocalAction::Network { .. } => "Changing network connections…",
         LocalAction::Wifi { .. } => "Connecting to Wi-Fi...",
         LocalAction::Bluetooth { .. } => "Connecting Bluetooth device...",

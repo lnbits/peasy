@@ -1,7 +1,7 @@
 {
   "id": "bluetooth",
-  "version": "1.2.0",
-  "host_api": 3,
+  "version": "1.3.0",
+  "host_api": 4,
   "capabilities": [
     "Discover and connect or pair Bluetooth devices"
   ],
@@ -275,6 +275,12 @@
           "null"
         ]
       },
+      "resource_change": {
+        "type": "null"
+      },
+      "resource_query": {
+        "type": "null"
+      },
       "setup": {
         "additionalProperties": false,
         "properties": {
@@ -421,6 +427,8 @@
       }
     },
     "required": [
+      "resource_query",
+      "resource_change",
       "pea_id",
       "network",
       "action",

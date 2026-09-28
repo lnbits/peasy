@@ -94,6 +94,10 @@ Downloaded peas are versioned data packages; new native operations require a hos
 update. The LLM chooses combinations, while the host enforces the current schema
 and permissions. Arbitrary NixOS options are not currently supported.
 
+[Resource peas](docs/resources.md) add diagnostics, services, removable storage,
+Nix maintenance, users, firewall, printing, displays, audio and power. Their
+contracts distinguish live effects from persistent NixOS configuration.
+
 GNOME and Plasma have appearance adapters. Hyprland has bounded live controls.
 Other desktops can use core features but have no appearance adapter. The tray
 requires a StatusNotifier host; the application menu remains available without one.

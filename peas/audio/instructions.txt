@@ -1,0 +1,1 @@
+Inspect PipeWire audio sinks/sources. Use a discovered object ID and native serial revalidation to set default speakers or microphone, volume from zero to 100 percent, mute or unmute. WirePlumber controls persistence. No recording, arbitrary node properties or per-application routing.

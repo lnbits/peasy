@@ -49,9 +49,13 @@ compatible schema and current permission policy are still required. Unpublished
 branch/PR commits are rejected. This check runs during restore review and again
 after authorization; ordinary discovery continues to require current main.
 
-Manifest release 1.2.0 uses host API 3 for the expanded setup catalogue and longer
+Manifest release 1.3.0 uses host API 4 for the [resource domains](resources.md).
+Each domain has separate read/write permissions; diagnostics is read-only.
+API 1–3 retain their exact schemas and cannot request the new operations.
+
+Manifest release 1.2.0 used host API 3 for the expanded setup catalogue and longer
 manual instructions. Older hosts will not offer incompatible new manifests.
-The new host still accepts exact API 1 and API 2 schemas and immutable pins,
+The new host still accepts exact API 1, API 2 and API 3 schemas and immutable pins,
 including disabling and restoring those pins. API 2 added PostgreSQL; API 3 adds
 setup options and device groups. Arbitrary schema edits and permission expansion
 remain rejected.

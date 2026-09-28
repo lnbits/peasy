@@ -10,6 +10,8 @@ mod networking;
 mod packages;
 #[path = "pea.rs"]
 mod pea;
+#[path = "resources.rs"]
+mod resources;
 #[path = "../../../peas/system_configuration/system.rs"]
 mod system_configuration;
 #[path = "update.rs"]
@@ -70,6 +72,7 @@ impl CommandRunner for ProcessRunner {
         command.env_clear();
         command.env("PATH", "/run/current-system/sw/bin");
         command.env("HOME", "/var/empty");
+        command.env("LC_ALL", "C");
         command.env("XDG_CACHE_HOME", "/run/peasy/nix-cache");
         command.env(
             "NIX_CONFIG",
@@ -91,6 +94,7 @@ pub struct NixBackend {
     apply_lock: Mutex<()>,
     evaluation_lock: Mutex<()>,
     pea_fetch_lock: Mutex<()>,
+    resource_helper_lock: Mutex<()>,
     update_cache: Mutex<Option<(std::time::Instant, peasy_core::PeasyUpdateStatus)>>,
 }
 
@@ -141,6 +145,7 @@ impl NixBackend {
             apply_lock: Mutex::new(()),
             evaluation_lock: Mutex::new(()),
             pea_fetch_lock: Mutex::new(()),
+            resource_helper_lock: Mutex::new(()),
             update_cache: Mutex::new(None),
         })
     }
@@ -191,6 +196,13 @@ impl NixBackend {
         if recovery::load(&self.config.managed_module)?.is_some() {
             bail!("An interrupted change needs recovery before another system change");
         }
+        if let ProposalChange::Resources { plan, snapshot, .. } = change {
+            plan.validate()?;
+            if !plan.persistent() {
+                return self.apply_live_resource(plan, snapshot);
+            }
+            self.check_resource_snapshot(plan, snapshot)?;
+        }
         let previous_generation = recovery::generation(&self.config.active_system);
         let mut expected_attributes = match change {
             ProposalChange::Restore { backup, .. } => backup.packages.clone(),
@@ -217,6 +229,10 @@ impl NixBackend {
             bail!("Package review is incomplete; review the change again");
         }
         let (proposed, message) = match change {
+            ProposalChange::Resources { plan, caller, .. } => (
+                self.resource_state(&previous, plan, caller.as_ref())?,
+                format!("Resource configuration applied. {}", plan.note()),
+            ),
             ProposalChange::PeasyUpdate { release } => {
                 self.verify_peasy_update(release)?;
                 (
@@ -1901,6 +1917,7 @@ mod tests {
                 networks: Vec::new(),
                 peas: Vec::new(),
                 peasy_release: None,
+                resources: peasy_core::ResourceState::default(),
                 appimages: Vec::new(),
                 theme: ThemeSettings::default(),
             },
