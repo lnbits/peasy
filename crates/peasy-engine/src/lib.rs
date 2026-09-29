@@ -1,10 +1,10 @@
 use peasy_core::{EngineDecision, EngineInput, ModelAction};
 
-#[path = "../../../peas/packages/policy.rs"]
+#[path = "../../../peapod/packages/policy.rs"]
 mod packages;
 
 #[cfg(test)]
-#[path = "../../../peas/tests/policy.rs"]
+#[path = "../../../peapod/tests/policy.rs"]
 mod pea_contracts;
 
 #[unsafe(no_mangle)]

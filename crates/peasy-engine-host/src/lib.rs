@@ -4,7 +4,7 @@ use std::path::Path;
 use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 #[cfg(test)]
-#[path = "../../../peas/tests/wasm.rs"]
+#[path = "../../../peapod/tests/wasm.rs"]
 mod pea_contracts;
 
 struct HostState {

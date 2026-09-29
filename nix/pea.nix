@@ -4,7 +4,7 @@
   id,
 }:
 let
-  source = ../peas + "/${id}/pea.json";
+  source = ../peapod + "/${id}/pea.json";
   manifest = builtins.fromJSON (builtins.readFile source);
 in
 assert

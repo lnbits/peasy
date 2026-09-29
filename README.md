@@ -89,7 +89,7 @@ peasy "connect to my headphones"
 peasy "set a meeting for 10am tomorrow"
 ```
 
-[Peas](peas/README.md) describe domains and compose the host's supported operations.
+[Peas](peapod/README.md) describe domains and compose the host's supported operations.
 Downloaded peas are versioned data packages; new native operations require a host
 update. The LLM chooses combinations, while the host enforces the current schema
 and permissions. Arbitrary NixOS options are not currently supported.
@@ -121,7 +121,7 @@ nix build
 nix develop --command bash scripts/check-rust.sh
 ```
 
-Follow the [pea contract](peas/README.md) when extending capabilities. Before a
+Follow the [pea contract](peapod/README.md) when extending capabilities. Before a
 release, run `bash scripts/check-release.sh` on Linux with KVM; see
 [release validation](docs/release-validation.md).
 

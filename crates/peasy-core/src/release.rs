@@ -148,7 +148,7 @@ mod tests {
             })
             .unwrap();
         let setup: crate::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))
         .unwrap();
         let state = state.with_setup(setup).unwrap();

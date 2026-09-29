@@ -1,18 +1,18 @@
-#[path = "../../../peas/appearance/system.rs"]
+#[path = "../../../peapod/appearance/system.rs"]
 mod appearance;
-#[path = "../../../peas/appimages/system.rs"]
+#[path = "../../../peapod/appimages/system.rs"]
 mod appimages;
 #[path = "backup.rs"]
 mod backup;
-#[path = "../../../peas/networking/system.rs"]
+#[path = "../../../peapod/networking/system.rs"]
 mod networking;
-#[path = "../../../peas/packages/system.rs"]
+#[path = "../../../peapod/packages/system.rs"]
 mod packages;
 #[path = "pea.rs"]
 mod pea;
 #[path = "resources.rs"]
 mod resources;
-#[path = "../../../peas/system_configuration/system.rs"]
+#[path = "../../../peapod/system_configuration/system.rs"]
 mod system_configuration;
 #[path = "update.rs"]
 mod update;
@@ -1487,7 +1487,7 @@ mod tests {
         });
         let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
         let plan: peasy_core::NetworkPlan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json")).unwrap();
         let preview = backend.preview_network(plan.clone()).unwrap();
         let result = backend
             .apply(&preview.change, &preview.before, &"a".repeat(48), &[])
@@ -1611,7 +1611,7 @@ mod tests {
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))
         .unwrap();
         let mut other = setup.clone();
@@ -1660,7 +1660,7 @@ mod tests {
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
         let mut setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/postgresql-example.json"
+            "../../../peapod/system_configuration/postgresql-example.json"
         ))
         .unwrap();
         setup.settings.postgresql.as_mut().unwrap().caller_database = false;
@@ -1705,7 +1705,7 @@ mod tests {
             );
         }
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))
         .unwrap();
         assert!(
@@ -1731,7 +1731,7 @@ mod tests {
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))
         .unwrap();
         let before = PackageState::default().with_setup(setup).unwrap();
@@ -1765,11 +1765,11 @@ mod tests {
         });
         let backend = NixBackend::new(config(temp.path().join("state")), runner.clone()).unwrap();
         let setup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))
         .unwrap();
         let plan: peasy_core::NetworkPlan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json")).unwrap();
         let mut before = PackageState {
             packages: vec!["git".into()],
             setups: vec![setup],
@@ -1980,6 +1980,101 @@ mod tests {
     }
 
     #[test]
+    fn exact_lookup_is_read_only_and_review_rechecks_the_package() {
+        let temporary = tempfile::tempdir().unwrap();
+        let runner = Arc::new(MockRunner {
+            outputs: Mutex::new(VecDeque::from([
+                identity_output(&["hello"]),
+                identity_output(&[]), // Removed or unavailable since discovery.
+                output(1, "", "host configuration failed"),
+            ])),
+            calls: Mutex::new(vec![]),
+        });
+        let backend =
+            NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
+        assert!(backend.lookup_package("hello; whoami").is_err());
+        let candidates = backend.lookup_package("hello").unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].attribute, "hello");
+        assert!(
+            backend
+                .preview_package(PackageOperation::Install, "hello")
+                .is_err()
+        );
+        assert!(
+            backend
+                .lookup_package("hello")
+                .unwrap_err()
+                .to_string()
+                .contains("host configuration failed")
+        );
+        assert_eq!(backend.current_state().unwrap(), PackageState::default());
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|args| args[0] == "eval"));
+        let expression = calls[0].last().unwrap().to_string_lossy();
+        assert!(expression.contains("lib.meta.availableOn"));
+        assert!(expression.contains("p.meta.broken"));
+    }
+
+    #[test]
+    fn discovery_cache_refreshes_when_requested_or_host_sources_change() {
+        for flake in [false, true] {
+            let temporary = tempfile::tempdir().unwrap();
+            let runner = Arc::new(MockRunner {
+                outputs: Mutex::new(VecDeque::new()),
+                calls: Mutex::new(vec![]),
+            });
+            let mut configuration = config(temporary.path().join("state"));
+            let source = temporary.path().join(if flake {
+                "flake.nix"
+            } else {
+                "configuration.nix"
+            });
+            configuration.rebuild_target = if flake {
+                RebuildTarget::Flake {
+                    reference: format!("{}#fixture", temporary.path().display()),
+                }
+            } else {
+                RebuildTarget::Configuration {
+                    path: source.clone(),
+                }
+            };
+            fs::write(&source, "initial fixture").unwrap();
+            let backend = NixBackend::new(configuration, runner.clone()).unwrap();
+            let search = |refresh, expected_calls| {
+                if runner.outputs.lock().unwrap().is_empty() {
+                    runner.outputs.lock().unwrap().extend([
+                        output(0, r#"{"hello":{"pname":"hello","version":"1.0"}}"#, ""),
+                        identity_output(&["hello"]),
+                    ]);
+                }
+                assert_eq!(
+                    backend.search("hello", refresh).unwrap()[0].attribute,
+                    "hello"
+                );
+                assert_eq!(runner.calls.lock().unwrap().len(), expected_calls);
+            };
+            search(false, 2);
+            search(false, 2);
+            search(true, 4);
+            fs::write(&source, "changed host configuration").unwrap();
+            search(false, 6);
+            state::write_managed_atomic(&backend.config.managed_module, &PackageState::default())
+                .unwrap();
+            search(false, 8);
+            let generation = temporary.path().join("generation");
+            fs::create_dir(&generation).unwrap();
+            std::os::unix::fs::symlink(&generation, &backend.config.active_system).unwrap();
+            search(false, 10);
+            if flake {
+                fs::write(temporary.path().join("flake.lock"), "new lock").unwrap();
+                search(false, 12);
+            }
+        }
+    }
+
+    #[test]
     fn search_text_cannot_become_a_nix_option() {
         let temporary = tempfile::tempdir().unwrap();
         let runner = Arc::new(MockRunner {
@@ -1988,7 +2083,7 @@ mod tests {
         });
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
-        assert!(backend.search("--option").unwrap().is_empty());
+        assert!(backend.search("--option", false).unwrap().is_empty());
         let calls = runner.calls.lock().unwrap();
         assert_eq!(calls[0].last().unwrap(), ".*--option.*");
         assert_eq!(calls[0][calls[0].len() - 2], "");
@@ -2037,7 +2132,7 @@ mod tests {
         let backend =
             NixBackend::new(config(temporary.path().join("state")), runner.clone()).unwrap();
 
-        let first = backend.search("whatsapp").unwrap();
+        let first = backend.search("whatsapp", false).unwrap();
         assert_eq!(first[0].attribute, "whatsapp-electron");
         assert!(
             !first
@@ -2055,7 +2150,7 @@ mod tests {
                     .unwrap()
         );
 
-        let second = backend.search("WHATSAPP").unwrap();
+        let second = backend.search("WHATSAPP", false).unwrap();
         assert_eq!(first, second);
         let preview = backend
             .preview_package(PackageOperation::Install, "whatsapp-electron")

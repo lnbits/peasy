@@ -35,6 +35,8 @@ let
         {
           networking.hostName = "peasy-installed";
           networking.networkmanager.enable = true;
+          # Match installer-target.nix so Plasma's BlueDevil is cached offline.
+          hardware.bluetooth.enable = true;
           services.peasy.enable = true;
           services.peasy.package = lib.mkForce package;
           system.extraDependencies = buildTools;

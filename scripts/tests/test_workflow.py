@@ -52,8 +52,9 @@ class ReleaseWorkflow(unittest.TestCase):
         config_step = next(step for step in self.jobs['release-tests']['steps']
                            if 'r2_isos.configuration()' in step.get('run', ''))
         self.assertIn("github.ref_type == 'tag'", config_step['if'])
-        self.assertEqual(set(config_step['env']), {'R2_BUCKET', 'R2_ENDPOINT_URL', 'R2_PUBLIC_URL'})
+        self.assertEqual(set(config_step['env']), {'TAG', 'R2_BUCKET', 'R2_ENDPOINT_URL', 'R2_PUBLIC_URL'})
         publish = self.commands('publish')
+        self.assertIn('scripts/update_metadata.py --tag "$TAG" --check', config_step['run'])
         self.assertIn('nix build .#iso-release-tools', publish)
         self.assertIn('./result-release-tools/bin/python3 -B scripts/release_isos.py', publish)
         sdk_step = next(step for step in self.jobs['publish']['steps'] if 'test_r2_sdk.py' in step.get('run', ''))
@@ -73,7 +74,7 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertEqual(set(self.jobs['publish']['needs']), {'build', 'security'})
         self.assertIn("github.event_name == 'push' && github.ref_type == 'tag'", self.jobs['publish']['if'])
         self.assertEqual(self.workflow['on']['push']['tags'], ['v*'])
-        for check in ['sandbox', 'sandbox-fixture', 'system-configuration', 'core-package', 'postgresql-vm', 'networking-vm', 'pea-fetch-vm']:
+        for check in ['sandbox', 'sandbox-fixture', 'system-configuration', 'core-package', 'postgresql-vm', 'networking-vm', 'pea-fetch-vm', 'resources', 'resources-vm', 'resources-lifecycle-vm', 'resources-session-vm']:
             self.assertIn(f'.#checks.x86_64-linux.{check}', self.commands('security').split())
         self.assertIn('scripts/check-rust.sh', self.commands('security'))
         self.assertIn('cargo audit --file Cargo.lock', self.commands('security'))
@@ -83,9 +84,10 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertIn('".#checks.x86_64-linux.${DESKTOP}-tray"', build)
         self.assertIn('.#checks.x86_64-linux.xfce-tray', build.split())
         self.assertIn('.#checks.x86_64-linux.plasma-tray', build.split())
-        for fixture in ['networking-vm', 'postgresql-vm']:
-            self.assertLess(build.index(f'nix eval --raw .#checks.x86_64-linux.{fixture}.drvPath'),
-                            build.index('nix flake check --no-build'))
+        self.assertIn('nix eval --json .#checks.x86_64-linux --apply builtins.attrNames', build)
+        self.assertIn('done < checks.txt', build)
+        self.assertLess(build.index('nix eval --raw ".#checks.x86_64-linux.$check.drvPath"'),
+                        build.index('nix flake check --no-build'))
         self.assertIn('scripts/iso_vm.py --iso', build)
         self.assertIn('--firmware bios', build)
         self.assertIn('--firmware uefi', build)

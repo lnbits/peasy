@@ -5,7 +5,7 @@ mod pea_fetch;
 mod postgresql_probe;
 mod process;
 mod recovery;
-#[path = "../../../peas/tests/resource_fixture.rs"]
+#[path = "../../../peapod/tests/resource_fixture.rs"]
 mod resource_fixture;
 mod resource_helper;
 mod server;
@@ -132,7 +132,7 @@ fn main() -> Result<()> {
     }
     if args.render_test_update {
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))?;
         let release = peasy_core::PeasyRelease {
             format: 1,
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
     }
     if args.render_test_network {
         let plan: peasy_core::NetworkPlan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json"))?;
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json"))?;
         print!(
             "{}",
             peasy_core::render_packages_module(
@@ -227,7 +227,7 @@ fn main() -> Result<()> {
     }
     if args.render_test_setup {
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))?;
         let state = peasy_core::PackageState::default().with_setup(setup)?;
         print!("{}", peasy_core::render_packages_module(&state)?);
@@ -235,7 +235,7 @@ fn main() -> Result<()> {
     }
     if args.render_test_postgresql {
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/postgresql-example.json"
+            "../../../peapod/system_configuration/postgresql-example.json"
         ))?;
         let state = peasy_core::PackageState::default().with_setup(setup)?;
         print!("{}", peasy_core::render_packages_module(&state)?);

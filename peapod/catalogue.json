@@ -170,7 +170,7 @@
         "permissions": [
           "packages"
         ],
-        "hash": "94b65c87a789d6bb829ea19f43b7a0a09e3a16e5de3a77ad0e7252fd5b89c534"
+        "hash": "5af5ecddde8df5b3c056be5e53ccbb2bd0b02b0ad22c7a328da3d5360731fec9"
       },
       "capabilities": [
         "Find, install and remove Nixpkgs applications and their reviewed system integration"

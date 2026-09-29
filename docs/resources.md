@@ -97,7 +97,7 @@ restored; model responses cannot supply this confirmation.
 
 No generic files, terminal, shell or commands pea is added. Native adapters live in
 each domain's `native.rs`; shared types, dispatch and proposal handling remain in
-the host. Follow the [pea contract](../peas/README.md).
+the host. Follow the [pea contract](../peapod/README.md).
 
 ## Regression checks
 

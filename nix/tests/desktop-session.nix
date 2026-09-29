@@ -138,8 +138,8 @@ pkgs.testers.runNixOSTest {
             assert machine.succeed(user(read_scheme)).strip() == original_scheme
             if ${if plasma then "True" else "False"}:
                 assert machine.succeed(user(read_background)).strip() == original_background
-    machine.succeed("test -f /run/current-system/sw/share/peasy/source/peas/packages/types.rs")
-    machine.succeed("test -f /run/current-system/sw/share/peasy/source/peas/README.md")
+    machine.succeed("test -f /run/current-system/sw/share/peasy/source/peapod/packages/types.rs")
+    machine.succeed("test -f /run/current-system/sw/share/peasy/source/peapod/README.md")
     machine.succeed("test -f /run/current-system/sw/share/icons/hicolor/scalable/apps/io.github.peasy.Peasy.svg")
     ${
       if gnome then

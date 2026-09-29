@@ -73,7 +73,7 @@ rustPlatform.buildRustPackage {
         ../Cargo.lock
         ../Cargo.toml
         ../crates
-        ../peas
+        ../peapod
         ../scripts
         ../flake.lock
         ../flake.nix
@@ -183,7 +183,7 @@ rustPlatform.buildRustPackage {
       install -Dm644 assets/gnome-shell-extension/extension.js "$extension/extension.js"
       install -Dm644 assets/gnome-shell-extension/stylesheet.css "$extension/stylesheet.css"
       mkdir -p "$out/share/peasy/source"
-      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peas nix wit assets scripts docs \
+      cp -R Cargo.lock Cargo.toml flake.lock flake.nix crates peapod nix wit assets scripts docs \
         "$out/share/peasy/source/"
     ''}
     ${

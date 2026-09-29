@@ -265,6 +265,34 @@ Actions and Nix are pinned. Only the publication job receives a repository-write
 token; no AI provider credentials or signing keys are required. Commit the
 workflow, scripts and configuration together before pushing your release tag.
 
+### Preparing a release tag
+
+Use a new stable `vMAJOR.MINOR.PATCH` tag. Its version must match
+`workspace.package.version` in `Cargo.toml`; regenerate the workspace entries in
+`Cargo.lock` with `cargo update --workspace`. Pea manifest versions and
+`flake.lock` do not need a release-number edit.
+
+Before committing, check the intended tag locally (replace this example):
+
+```console
+python3 scripts/update_metadata.py --tag v0.1.8 --check
+```
+
+Commit all intended changes, including renames and both Cargo files. Push the
+commit, then create and push the tag on that same commit:
+
+```console
+git push origin main
+git tag -a v0.1.8 -m "Peasy v0.1.8"
+git push origin v0.1.8
+```
+
+The tag triggers the release workflow; it is not configured elsewhere. CI checks
+its format and Cargo version before the expensive builds and rechecks the
+published source before upload. Use a fresh tag if a previous tag already points
+to an older commit. A tag does not include uncommitted work. Manual workflow
+dispatch can validate a pushed commit without publishing a release.
+
 ### R2 configuration
 
 Create a Standard R2 bucket and connect `downloads.askpeasy.com` under its custom
@@ -312,7 +340,8 @@ This is the same gate used before CI builds the ISO. Python, Boto3/botocore,
 Node and actionlint come from `flake.lock`, not the runner's preinstalled SDK.
 It runs the publication/retention tests, actual SDK multipart stubs, website
 checks and workflow wiring/lint checks in a network-isolated build sandbox.
-Tag runs also validate the non-secret R2 bucket/URL variables before ISO builds.
+Tag runs also validate the tag/Cargo version and non-secret R2 bucket/URL
+variables before ISO builds.
 Successful mocked uploads/deletions are buffered to avoid looking like real
 publication; failures still show their output. The SDK check cannot silently skip.
 

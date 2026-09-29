@@ -12,8 +12,8 @@ update. The same boundary applies to built-in and downloaded domain instructions
 
 ## Official catalogue and request flow
 
-`peas/catalogue.json` lists package ids, versions, capabilities, host API versions,
-permissions and SHA-256 hashes. Each `peas/<id>/pea.json` is independently packaged;
+`peapod/catalogue.json` lists package ids, versions, capabilities, host API versions,
+permissions and SHA-256 hashes. Each `peapod/<id>/pea.json` is independently packaged;
 `nix build .#pea-networking` builds only that data package. Other outputs use the
 same `pea-<id>` convention. An installed application cannot load new Rust by finding
 a folder in the repository.
@@ -118,7 +118,7 @@ cryptographic proof of authorship. System-level package authorization still appl
 
 ## Authoring and compatibility
 
-Start with the [domain design contract](../peas/README.md#design-a-domain-not-a-recipe).
+Start with the [domain design contract](../peapod/README.md#design-a-domain-not-a-recipe).
 Write instructions describing resources, constraints and supported intent, not
 request-specific scripts. Existing native peas supply the reusable host operations.
 
@@ -130,7 +130,9 @@ session permission from persistent system permission even though both use the
 other packs. Unknown host APIs, schema changes and unsupported permissions fail
 closed with a host-update requirement. Version the host API when changing this
 contract; do not silently change schema semantics under the same API version.
-Both providers receive the originating pea's response schema. Native checks enforce
+Both providers receive a compact transport schema derived from the originating
+pea's response schema. It retains declared field constraints but requires only
+the chosen action's fields, inside `result`. Native checks enforce
 its API-specific option, group, PostgreSQL and message limits even if the model
 ignores that schema. Package searches and selection follow-ups retain the same
 pea contract; they cannot silently switch to the current host's broader schema.

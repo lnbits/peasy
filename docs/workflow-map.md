@@ -57,7 +57,7 @@ Peasy's request boundary, not a guarantee about a provider's internal handling.
 
 This path handles package/AppImage install or removal, generic application setup
 and uninstall, and saved desktop appearance. The [system-configuration
-pea](../peas/system_configuration/README.md) exposes reviewed enable options and
+pea](../peapod/system_configuration/README.md) exposes reviewed enable options and
 groups, not arbitrary Nix or an account-editing interface.
 Trusted adapters apply only closed colour/mode values to GNOME or Plasma;
 capabilities vary by desktop. ISO wallpaper defaults are separate build-time

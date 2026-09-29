@@ -4,7 +4,7 @@
   module,
 }:
 let
-  manifest = ../../peas/networking/pea.json;
+  manifest = ../../peapod/networking/pea.json;
   value = builtins.fromJSON (builtins.readFile manifest);
   pin = {
     inherit (value)
@@ -54,9 +54,9 @@ let
             mode = Path('/run/fixture-mode').read_text().strip()
             if self.path == '/repos/lnbits/peasy/git/ref/heads/main':
                 body = json.dumps({'object': {'type': 'commit', 'sha': '${pin.revision}'}}).encode()
-            elif self.path == '/lnbits/peasy/${pin.revision}/peas/catalogue.json':
+            elif self.path == '/lnbits/peasy/${pin.revision}/peapod/catalogue.json':
                 body = Path('${catalogue}').read_bytes() if mode != 'unlisted' else b'{"format":1,"peas":[]}'
-            elif self.path == '/lnbits/peasy/${pin.revision}/peas/networking/pea.json':
+            elif self.path == '/lnbits/peasy/${pin.revision}/peapod/networking/pea.json':
                 body = Path('${manifest}').read_bytes()
                 if mode == 'tampered': body += b' '
                 if mode == 'oversized': body = b'x' * 65537

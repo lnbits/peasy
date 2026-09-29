@@ -37,7 +37,7 @@ neither the AI nor IPC can supply a target account. Group prerequisites and
 normal-account/UID checks apply, and the review warns about powerful libvirt
 access. No arbitrary service bodies, listeners, firewall/polkit/sudo settings,
 `mkForce`, scripts or account creation are exposed. See the exact
-[catalogue and ownership rules](../peas/system_configuration/README.md).
+[catalogue and ownership rules](../peapod/system_configuration/README.md).
 
 The model cannot initiate an arbitrary HTTP request: trusted client code alone
 constructs fixed `api.github.com` repository/release requests after a package

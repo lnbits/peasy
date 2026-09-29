@@ -3,6 +3,8 @@ import base64
 import json
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -43,6 +45,25 @@ class UpdateMetadata(unittest.TestCase):
             with self.subTest(tag=tag, commit=commit):
                 with self.assertRaises(ValueError):
                     update_metadata.prepare(tag, commit, run=lambda *_args, **_kw: self.fail('unexpected fetch'))
+
+    def test_local_tag_preflight_needs_no_network_or_output_file(self):
+        script = Path(update_metadata.__file__).resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / 'Cargo.toml').write_text('[workspace.package]\nversion = "1.2.3"\n')
+            for tag, valid in [('v1.2.3', True), ('v1.2.4', False), ('v1.2.3-rc.1', False)]:
+                with self.subTest(tag=tag):
+                    result = subprocess.run([sys.executable, str(script), '--tag', tag, '--check'],
+                                            cwd=source, text=True, capture_output=True)
+                    self.assertEqual(result.returncode == 0, valid, result.stderr)
+            self.assertEqual([path.name for path in source.iterdir()], ['Cargo.toml'])
+
+    def test_generation_still_requires_commit_and_output(self):
+        script = Path(update_metadata.__file__).resolve()
+        result = subprocess.run([sys.executable, str(script), '--tag', TAG],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--commit and --output are required', result.stderr)
 
     def test_altered_metadata_is_not_publishable(self):
         valid = self.prepare()

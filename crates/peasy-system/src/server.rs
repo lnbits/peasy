@@ -316,8 +316,11 @@ fn dispatch(
         IpcRequest::ProposeResources { change } => {
             store_proposal(proposals, uid, backend.preview_resources(change, uid)?)
         }
-        IpcRequest::SearchPackages { query } => Ok(IpcResponse::SearchResults {
-            candidates: backend.search(&query)?,
+        IpcRequest::SearchPackages { query, refresh } => Ok(IpcResponse::SearchResults {
+            candidates: backend.search(&query, refresh)?,
+        }),
+        IpcRequest::LookupPackage { attribute } => Ok(IpcResponse::SearchResults {
+            candidates: backend.lookup_package(&attribute)?,
         }),
         IpcRequest::GetPackages => Ok(IpcResponse::Packages {
             packages: backend.packages()?,
@@ -672,7 +675,7 @@ mod tests {
         setup_preview.change = ProposalChange::Setup {
             operation: PackageOperation::Install,
             setup: serde_json::from_str(include_str!(
-                "../../../peas/system_configuration/example.json"
+                "../../../peapod/system_configuration/example.json"
             ))
             .unwrap(),
         };

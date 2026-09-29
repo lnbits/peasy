@@ -88,6 +88,46 @@ pub(super) fn package_choices(candidates: Vec<PackageCandidate>, request: &str) 
 }
 
 impl PeasyClient {
+    /// A suggested attribute is not a candidate until the host verifies it.
+    pub(super) fn lookup_package_hint(&self, attribute: &str) -> Result<Option<PackageCandidate>> {
+        peasy_core::validate_attribute(attribute)?;
+        let candidates = match self.ipc.request(&IpcRequest::LookupPackage {
+            attribute: attribute.to_owned(),
+        }) {
+            Ok(IpcResponse::SearchResults { candidates }) => candidates,
+            // Keep discovery working with an older, still-running service.
+            Err(e) if e.to_string().contains("invalid typed IPC request") => return Ok(None),
+            Err(e) => return Err(e),
+            _ => bail!("unexpected response to LookupPackage"),
+        };
+        if candidates.len() > 1 || candidates.iter().any(|p| p.attribute != attribute) {
+            bail!("host returned a different package for an exact lookup");
+        }
+        Ok(candidates.into_iter().next())
+    }
+
+    fn search_packages(&self, query: &str, refresh: bool) -> Result<Vec<PackageCandidate>> {
+        let query = validate_query(query)?.to_owned();
+        let mut response = self.ipc.request(&IpcRequest::SearchPackages {
+            query: query.clone(),
+            refresh,
+        });
+        if refresh
+            && response
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("invalid typed IPC request"))
+        {
+            response = self.ipc.request(&IpcRequest::SearchPackages {
+                query,
+                refresh: false,
+            });
+        }
+        match response? {
+            IpcResponse::SearchResults { candidates } => Ok(candidates),
+            _ => bail!("unexpected response to SearchPackages"),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)] // Explicit, bounded agent-loop context.
     pub(super) fn resolve_package_agent<F>(
         &self,
@@ -105,12 +145,7 @@ impl PeasyClient {
     {
         for _ in 0..3 {
             progress(ResolveStage::SearchingPackages);
-            let mut candidates = match self.ipc.request(&IpcRequest::SearchPackages {
-                query: query.clone(),
-            })? {
-                IpcResponse::SearchResults { candidates } => candidates,
-                _ => bail!("unexpected response to SearchPackages"),
-            };
+            let mut candidates = self.search_packages(&query, version.is_some())?;
             if let Some(RequestedVersion::Exact(requested)) = &version {
                 candidates.retain(|candidate| {
                     !candidate.version.is_empty()
@@ -235,12 +270,7 @@ impl PeasyClient {
     }
 
     pub(super) fn check_package(&self, query: &str) -> Result<Resolution> {
-        let candidates = match self.ipc.request(&IpcRequest::SearchPackages {
-            query: validate_query(query)?.to_owned(),
-        })? {
-            IpcResponse::SearchResults { candidates } => candidates,
-            _ => bail!("unexpected response to SearchPackages"),
-        };
+        let candidates = self.search_packages(query, true)?;
         let Some(best) = candidates.first().cloned() else {
             return Ok(Resolution::Explain(format!(
                 "I couldn't find a Nixpkgs package matching `{query}`."
@@ -287,6 +317,296 @@ mod tests {
         }
     }
 
+    fn scripted_ipc(
+        socket: &std::path::Path,
+        exchanges: Vec<(IpcRequest, IpcResponse)>,
+    ) -> std::thread::JoinHandle<()> {
+        let listener = UnixListener::bind(socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        std::thread::spawn(move || {
+            for (expected, response) in exchanges {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(connection) => break connection,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "missing {expected:?}");
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("{e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                assert_eq!(serde_json::from_str::<IpcRequest>(&line).unwrap(), expected);
+                serde_json::to_writer(&mut stream, &response).unwrap();
+                stream.write_all(b"\n").unwrap();
+            }
+        })
+    }
+
+    fn fixture_client(socket: std::path::PathBuf, url: String) -> PeasyClient {
+        PeasyClient::with_provider(
+            socket,
+            std::path::Path::new(&std::env::var_os("PEASY_TEST_ENGINE").unwrap()),
+            crate::ModelProvider::Ollama {
+                base_url: url,
+                model: "fixture".into(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
+    fn exact_install_skips_search_and_retains_setup_and_guidance() {
+        use peasy_core::{PackageOperation, PackageState, Proposal, ProposalChange};
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("ipc.sock");
+        let setup: peasy_core::ManagedSetup =
+            serde_json::from_str(include_str!("../system_configuration/example.json")).unwrap();
+        let note = "Review the virtualisation service and group access.";
+        let exchanges = vec![
+            (
+                IpcRequest::GetPackages,
+                IpcResponse::Packages { packages: vec![] },
+            ),
+            (
+                IpcRequest::GetTheme,
+                IpcResponse::Theme {
+                    theme: ThemeSettings::default(),
+                },
+            ),
+            (
+                IpcRequest::GetManagedModule,
+                IpcResponse::ManagedModule {
+                    module: peasy_core::render_packages_module(&PackageState::default()).unwrap(),
+                },
+            ),
+            (
+                IpcRequest::LookupPackage {
+                    attribute: "virt-manager".into(),
+                },
+                IpcResponse::SearchResults {
+                    candidates: vec![PackageCandidate {
+                        attribute: "virt-manager".into(),
+                        name: "Virtual Machine Manager".into(),
+                        version: "1.0".into(),
+                        description: String::new(),
+                    }],
+                },
+            ),
+            (
+                IpcRequest::ProposeSetup {
+                    package: "virt-manager".into(),
+                    setup: setup.settings.clone(),
+                },
+                IpcResponse::Proposal {
+                    proposal: Box::new(Proposal {
+                        id: "a".repeat(48),
+                        title: "Set up virt-manager".into(),
+                        packages: vec![],
+                        diff: vec![],
+                        change: ProposalChange::Setup {
+                            operation: PackageOperation::Install,
+                            setup: setup.clone(),
+                        },
+                    }),
+                },
+            ),
+        ];
+        let server = scripted_ipc(&socket, exchanges);
+        let (url, requests) = crate::tests::serve_json_once(
+            serde_json::json!({"message":{"content":serde_json::json!({"result":{"action":"install_package", "package":"virt-manager", "setup":setup.settings, "message":note}}).to_string()}}),
+        );
+        let client = fixture_client(socket, url);
+        let Resolution::Proposal(proposal) =
+            client.resolve("install Virtual Machine Manager").unwrap()
+        else {
+            panic!("expected review");
+        };
+        assert!(proposal.diff.iter().any(|line| line.text.contains(note)));
+        assert_eq!(
+            client
+                .recent_package
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .attribute,
+            "virt-manager"
+        );
+        requests
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(requests.try_recv().is_err(), "one model request suffices");
+        server.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
+    fn unavailable_hint_falls_back_with_the_full_request() {
+        use peasy_core::PackageState;
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("ipc.sock");
+        let server = scripted_ipc(
+            &socket,
+            vec![
+                (
+                    IpcRequest::GetPackages,
+                    IpcResponse::Packages { packages: vec![] },
+                ),
+                (
+                    IpcRequest::GetTheme,
+                    IpcResponse::Theme {
+                        theme: ThemeSettings::default(),
+                    },
+                ),
+                (
+                    IpcRequest::GetManagedModule,
+                    IpcResponse::ManagedModule {
+                        module: peasy_core::render_packages_module(&PackageState::default())
+                            .unwrap(),
+                    },
+                ),
+                (
+                    IpcRequest::LookupPackage {
+                        attribute: "postgresql".into(),
+                    },
+                    IpcResponse::SearchResults { candidates: vec![] },
+                ),
+                (
+                    IpcRequest::SearchPackages {
+                        query: "postgresql".into(),
+                        refresh: false,
+                    },
+                    IpcResponse::SearchResults {
+                        candidates: vec![candidate()],
+                    },
+                ),
+            ],
+        );
+        let actions = [
+            serde_json::json!({"result":{"action":"install_package","package":"postgresql","message":null,"setup":null}}),
+            serde_json::json!({"result":{"action":"explain","message":"These are the requested client tools."}}),
+        ];
+        let (url, requests) = crate::tests::serve_json_responses(
+            actions
+                .into_iter()
+                .map(|action| serde_json::json!({"message":{"content":action.to_string()}}))
+                .collect(),
+        );
+        let client = fixture_client(socket, url);
+        assert!(matches!(
+            client
+                .resolve("install PostgreSQL client tools only")
+                .unwrap(),
+            Resolution::Explain(_)
+        ));
+        requests
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let (_, second) = requests
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let boundary: serde_json::Value =
+            serde_json::from_str(second["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert!(
+            boundary
+                .to_string()
+                .contains("install PostgreSQL client tools only")
+        );
+        assert_eq!(
+            boundary["package_candidates"][0]["attribute"],
+            "postgresql_17"
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
+    fn old_daemon_fallback_and_exact_lookup_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("ipc.sock");
+        let unsupported = || IpcResponse::Error {
+            message: "invalid typed IPC request".into(),
+        };
+        let server = scripted_ipc(
+            &socket,
+            vec![
+                (
+                    IpcRequest::LookupPackage {
+                        attribute: "hello".into(),
+                    },
+                    unsupported(),
+                ),
+                (
+                    IpcRequest::SearchPackages {
+                        query: "hello".into(),
+                        refresh: true,
+                    },
+                    unsupported(),
+                ),
+                (
+                    IpcRequest::SearchPackages {
+                        query: "hello".into(),
+                        refresh: false,
+                    },
+                    IpcResponse::SearchResults { candidates: vec![] },
+                ),
+                (
+                    IpcRequest::LookupPackage {
+                        attribute: "hello".into(),
+                    },
+                    IpcResponse::SearchResults {
+                        candidates: vec![candidate()],
+                    },
+                ),
+                (
+                    IpcRequest::LookupPackage {
+                        attribute: "hello".into(),
+                    },
+                    IpcResponse::Error {
+                        message: "host evaluation failed".into(),
+                    },
+                ),
+            ],
+        );
+        let client = fixture_client(socket, "http://127.0.0.1:11434".into());
+        assert!(client.lookup_package_hint("hello").unwrap().is_none());
+        assert!(client.search_packages("hello", true).unwrap().is_empty());
+        assert!(
+            client
+                .lookup_package_hint("hello")
+                .unwrap_err()
+                .to_string()
+                .contains("different package")
+        );
+        assert!(
+            client
+                .lookup_package_hint("hello")
+                .unwrap_err()
+                .to_string()
+                .contains("host evaluation failed")
+        );
+        let wire = serde_json::to_value(IpcRequest::SearchPackages {
+            query: "hello".into(),
+            refresh: false,
+        })
+        .unwrap();
+        assert!(wire.get("refresh").is_none());
+        assert!(matches!(
+            serde_json::from_value::<IpcRequest>(wire).unwrap(),
+            IpcRequest::SearchPackages { refresh: false, .. }
+        ));
+        server.join().unwrap();
+    }
+
     #[test]
     fn fallback_choice_keeps_tools_only_intent() {
         let Resolution::Choose(choice) =
@@ -317,7 +637,10 @@ mod tests {
                     .read_line(&mut line)
                     .unwrap();
                 let request: IpcRequest = serde_json::from_str(&line).unwrap();
-                assert!(matches!(request, IpcRequest::SearchPackages { .. }));
+                assert!(matches!(
+                    request,
+                    IpcRequest::SearchPackages { refresh: true, .. }
+                ));
                 serde_json::to_writer(
                     &mut stream,
                     &IpcResponse::SearchResults {
@@ -345,7 +668,7 @@ mod tests {
                 .resolve_package_agent(
                     "install PostgreSQL",
                     "postgresql".into(),
-                    None,
+                    Some(RequestedVersion::Latest),
                     &[],
                     &ThemeSettings::default(),
                     "",

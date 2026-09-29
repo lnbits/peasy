@@ -42,7 +42,9 @@ services.peasy.updates.enable = false;
 
 Set `workspace.package.version` in `Cargo.toml` and the corresponding workspace
 package versions in `Cargo.lock` to the release version, then use a stable
-`vMAJOR.MINOR.PATCH` tag. Run the release checks described in the README.
+`vMAJOR.MINOR.PATCH` tag. `cargo update --workspace` refreshes the lockfile's
+workspace versions. Run `python3 scripts/update_metadata.py --tag vX.Y.Z --check`
+with your intended tag and the release checks described in the README.
 The release workflow generates `peasy-update.json` from the exact tagged GitHub
 source before loading upload credentials. It verifies the source's version and
 updater module, records the commit and unpacked NAR SHA-256, and publishes the

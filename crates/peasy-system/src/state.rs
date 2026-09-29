@@ -135,11 +135,11 @@ mod tests {
         let active = temporary.path().join("active.json");
         let managed = temporary.path().join("managed.nix");
         let setup: peasy_core::ManagedSetup = serde_json::from_str(include_str!(
-            "../../../peas/system_configuration/example.json"
+            "../../../peapod/system_configuration/example.json"
         ))
         .unwrap();
         let network: peasy_core::NetworkPlan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json")).unwrap();
         let pin = peasy_core::pea::PeaPin {
             id: "networking".into(),
             version: "1.0.0".into(),

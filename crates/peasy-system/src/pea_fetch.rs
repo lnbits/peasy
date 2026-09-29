@@ -85,7 +85,7 @@ fn verify_source(
         }
     }
     let url = format!(
-        "https://raw.githubusercontent.com/lnbits/peasy/{}/peas/catalogue.json",
+        "https://raw.githubusercontent.com/lnbits/peasy/{}/peapod/catalogue.json",
         pin.revision
     );
     let catalogue: PeaCatalogue = serde_json::from_slice(&fetch(&url, MAX_CATALOGUE_BYTES)?)?;
@@ -163,7 +163,7 @@ mod tests {
     use std::{net::TcpListener, thread, time::Instant};
 
     fn fixture() -> (PeaPin, Value, Vec<u8>) {
-        let bytes = include_bytes!("../../../peas/networking/pea.json").to_vec();
+        let bytes = include_bytes!("../../../peapod/networking/pea.json").to_vec();
         let m: PeaManifest = serde_json::from_slice(&bytes).unwrap();
         let pin = PeaPin {
             id: m.id,
@@ -251,7 +251,7 @@ mod tests {
                     )?);
                 }
                 assert!(
-                    url.ends_with("/peas/catalogue.json"),
+                    url.ends_with("/peapod/catalogue.json"),
                     "unapproved artifact must not be requested"
                 );
                 Ok(serde_json::to_vec(&catalogue)?)

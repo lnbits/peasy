@@ -1,4 +1,6 @@
-# Pea contract
+# Peapod: pea contract
+
+`peapod/` contains Peasy's pea packages, native adapters and shared contract tests.
 
 A **pea** describes a domain in which the LLM can propose changes through Peasy's
 host API. The LLM chooses the configuration; the user approves its application.

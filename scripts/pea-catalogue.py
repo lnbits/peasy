@@ -7,7 +7,7 @@ import sys
 
 root = Path(__file__).resolve().parent.parent
 entries = []
-for path in sorted((root / "peas").glob("*/pea.json")):
+for path in sorted((root / "peapod").glob("*/pea.json")):
     raw = path.read_bytes()
     manifest = json.loads(raw)
     entries.append({
@@ -16,7 +16,7 @@ for path in sorted((root / "peas").glob("*/pea.json")):
         "capabilities": manifest["capabilities"],
     })
 text = json.dumps({"format": 1, "peas": entries}, indent=2) + "\n"
-path = root / "peas/catalogue.json"
+path = root / "peapod/catalogue.json"
 if "--check" in sys.argv:
     if path.read_text() != text:
         raise SystemExit("pea catalogue is stale; regenerate manifests and catalogue")

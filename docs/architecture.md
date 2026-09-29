@@ -7,11 +7,11 @@ Domain instructions can also be loaded from compatible, revision-and-hash-pinned
 [data-only pea packages](pea-packages.md). Packages compose the installed host
 API; they do not dynamically extend native execution authority.
 
-Ability-specific implementations live in [`peas/`](../peas/README.md). Each pea
+Ability-specific implementations live in [`peapod/`](../peapod/README.md). Each pea
 groups its types, client handlers and (where needed) system proposals or pure
 Wasm policy. Existing crates compile the appropriate layer; provider access,
 closed dispatch, authorization and system transactions remain shared. The
-[peas guide](../peas/README.md) maps the files and explains how to add an ability.
+[peas guide](../peapod/README.md) maps the files and explains how to add an ability.
 
 The [resource protocol](resources.md) extends this flow to ten management domains.
 Shared native adapters perform bounded discovery; persistent changes use the same
@@ -97,8 +97,18 @@ bounded list of package names evaluated into the active generation. Package
 search is a bounded agent loop: each search returns only candidate attributes,
 display names, versions, and descriptions to the model so it can select a real
 match, search for a better alternative, or request AppImage discovery.
+A known package attribute may instead be verified directly by the host, avoiding
+broad search and a second model turn. Only the host-verified candidate reaches
+the Wasm membership check. Missing attributes return to the bounded search loop
+with the original request and pea permissions. Review still resolves packages
+afresh; see [package search](install.md#package-search) for cache rules.
 Administrator-authored Nix source and arbitrary option values never cross the
 model boundary.
+
+Providers receive a compact schema derived from the active pea's declared
+schema: `result` contains one action and only its relevant fields. Declared field
+constraints and version-specific permissions remain enforced. The host also
+accepts the legacy flat envelope through native validation.
 
 Responses deserialize into a closed Rust enum. Unknown actions or fields are
 rejected before they reach the Wasm engine or IPC. The known actions cover
@@ -120,7 +130,7 @@ closed enums; arbitrary Lua or hyprctl commands never cross this boundary.
 
 Wasm contains pure policy execution; it supplements native validation and
 daemon authorization. Keep action routing consistent without duplicating resource
-discovery or transaction handling inside the guest. The [pea contract](../peas/README.md)
+discovery or transaction handling inside the guest. The [pea contract](../peapod/README.md)
 defines how packages and native adapters extend the host.
 
 `peasy-engine.wasm` is built for `wasm32-unknown-unknown`. It exports a small
@@ -139,9 +149,10 @@ encoding.
 IPC is newline-delimited JSON on a mode-`0660`, `wheel`-owned Unix socket. The
 request enum contains only:
 
-- `SearchPackages`
+- `SearchPackages` (optional `refresh` bypasses discovery cache)
+- `LookupPackage` (read-only exact host attribute verification)
 - `GetPackages`
-- `ProposeSetup` (generic supporting packages, reviewed enable options and caller-bound groups; see the [system-configuration pea](../peas/system_configuration/README.md))
+- `ProposeSetup` (generic supporting packages, reviewed enable options and caller-bound groups; see the [system-configuration pea](../peapod/system_configuration/README.md))
 - `GetTheme`
 - `ProposeInstall`
 - `ProposeAppImageInstall`
@@ -338,7 +349,7 @@ destination's service setups, network profiles and AppImages. See
 
 ## Generic networking resources
 
-The [networking pea](../peas/networking/README.md) adds bounded, nonsecret
+The [networking pea](../peapod/networking/README.md) adds bounded, nonsecret
 NetworkManager device, connection and IPv4 route discovery. The AI uses a second
 turn to reason over these resources and return a closed network plan. Native code
 validates capabilities and identity and renders every effect for review. Persistent

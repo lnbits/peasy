@@ -132,7 +132,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         fixture(temp.path());
         let plan: peasy_core::NetworkPlan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json")).unwrap();
         let state = PackageState {
             networks: plan.profiles,
             ..PackageState::default()

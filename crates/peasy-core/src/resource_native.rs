@@ -4,28 +4,28 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::{io::Read, path::PathBuf, process::Command, time::Duration};
 #[cfg(test)]
-#[path = "../../../peas/tests/resource-native.rs"]
+#[path = "../../../peapod/tests/resource-native.rs"]
 mod tests;
 
-#[path = "../../../peas/audio/native.rs"]
+#[path = "../../../peapod/audio/native.rs"]
 mod audio;
-#[path = "../../../peas/diagnostics/native.rs"]
+#[path = "../../../peapod/diagnostics/native.rs"]
 mod diagnostics;
-#[path = "../../../peas/displays/native.rs"]
+#[path = "../../../peapod/displays/native.rs"]
 mod displays;
-#[path = "../../../peas/firewall/native.rs"]
+#[path = "../../../peapod/firewall/native.rs"]
 mod firewall;
-#[path = "../../../peas/nix_maintenance/native.rs"]
+#[path = "../../../peapod/nix_maintenance/native.rs"]
 mod nix_maintenance;
-#[path = "../../../peas/power/native.rs"]
+#[path = "../../../peapod/power/native.rs"]
 mod power;
-#[path = "../../../peas/printing/native.rs"]
+#[path = "../../../peapod/printing/native.rs"]
 mod printing;
-#[path = "../../../peas/services/native.rs"]
+#[path = "../../../peapod/services/native.rs"]
 mod services;
-#[path = "../../../peas/storage/native.rs"]
+#[path = "../../../peapod/storage/native.rs"]
 mod storage;
-#[path = "../../../peas/users/native.rs"]
+#[path = "../../../peapod/users/native.rs"]
 mod users;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

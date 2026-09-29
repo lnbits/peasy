@@ -1,6 +1,7 @@
 //! Packages pea: Nixpkgs lookup, caches, verification and proposals.
 const SEARCH_CACHE_CAPACITY: usize = 64;
-const SEARCH_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(4 * 60 * 60);
+const EMPTY_SEARCH_CACHE_TTL: Duration = Duration::from_secs(60);
 const PLATFORM_FILTER_LIMIT: usize = MAX_CANDIDATES * 4;
 const DISPLAY_CANDIDATE_LIMIT: usize = 6;
 
@@ -13,14 +14,17 @@ use peasy_core::{
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 impl NixBackend {
-    pub fn search(&self, query: &str) -> Result<Vec<PackageCandidate>> {
+    pub fn search(&self, query: &str, refresh: bool) -> Result<Vec<PackageCandidate>> {
         let query = validate_query(query)?;
         let cache_key = query.to_ascii_lowercase();
-        if let Some(cached) = self.cached_search(&cache_key) {
+        let scope = self.search_cache_scope();
+        if !refresh && let Some(cached) = self.cached_search(&cache_key, scope.as_ref()) {
             return Ok(cached);
         }
         let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
@@ -119,25 +123,74 @@ impl NixBackend {
         }
         candidates.sort_by_key(|candidate| candidate_rank(candidate, &query_lower));
         candidates.truncate(DISPLAY_CANDIDATE_LIMIT);
-        self.store_cached_search(cache_key, candidates.clone());
+        // Never label results with a configuration observed only after evaluation.
+        if let Some(scope) = scope
+            && Some(&scope) == self.search_cache_scope().as_ref()
+        {
+            self.store_cached_search(cache_key, candidates.clone(), scope);
+        }
         Ok(candidates)
     }
 
-    pub(super) fn cached_search(&self, key: &str) -> Option<Vec<PackageCandidate>> {
+    pub fn lookup_package(&self, attribute: &str) -> Result<Vec<PackageCandidate>> {
+        validate_attribute(attribute)?;
+        let _evaluation = self.evaluation_lock.try_lock().map_err(|_| {
+            anyhow::anyhow!("A Nix operation is already running; try again shortly")
+        })?;
+        Ok(self
+            .identities_unlocked(&[attribute.to_owned()], false)?
+            .into_iter()
+            .map(|p| PackageCandidate {
+                attribute: p.attribute,
+                name: p.name,
+                version: p.version,
+                description: String::new(),
+            })
+            .collect())
+    }
+
+    fn search_cache_scope(&self) -> Option<SearchCacheScope> {
+        let mut paths = vec![self.config.managed_module.clone()];
+        match &self.config.rebuild_target {
+            super::RebuildTarget::Configuration { path } => paths.push(path.clone()),
+            super::RebuildTarget::Flake { reference } => {
+                let directory = Path::new(reference.split('#').next()?);
+                paths.extend([directory.join("flake.nix"), directory.join("flake.lock")]);
+            }
+        }
+        Some(SearchCacheScope {
+            generation: std::fs::canonicalize(&self.config.active_system).ok(),
+            files: paths
+                .iter()
+                .map(|path| FileStamp::read(path))
+                .collect::<Option<_>>()?,
+        })
+    }
+
+    fn cached_search(
+        &self,
+        key: &str,
+        scope: Option<&SearchCacheScope>,
+    ) -> Option<Vec<PackageCandidate>> {
         let mut cache = self
             .search_cache
             .lock()
             .expect("search cache mutex poisoned");
-        cache.retain(|_, entry| entry.created.elapsed() < SEARCH_CACHE_TTL);
+        cache.retain(|_, entry| Some(&entry.scope) == scope && entry.fresh());
         cache.get(key).map(|entry| entry.candidates.clone())
     }
 
-    pub(super) fn store_cached_search(&self, key: String, candidates: Vec<PackageCandidate>) {
+    fn store_cached_search(
+        &self,
+        key: String,
+        candidates: Vec<PackageCandidate>,
+        scope: SearchCacheScope,
+    ) {
         let mut cache = self
             .search_cache
             .lock()
             .expect("search cache mutex poisoned");
-        cache.retain(|_, entry| entry.created.elapsed() < SEARCH_CACHE_TTL);
+        cache.retain(|_, entry| entry.scope == scope && entry.fresh());
         if cache.len() >= SEARCH_CACHE_CAPACITY
             && let Some(oldest) = cache
                 .iter()
@@ -151,6 +204,7 @@ impl NixBackend {
             CachedSearch {
                 created: Instant::now(),
                 candidates,
+                scope,
             },
         );
     }
@@ -418,12 +472,83 @@ fn candidate_rank(candidate: &PackageCandidate, query: &str) -> (u8, u8, u8, u8,
 pub(super) struct CachedSearch {
     created: Instant,
     candidates: Vec<PackageCandidate>,
+    scope: SearchCacheScope,
+}
+
+impl CachedSearch {
+    fn fresh(&self) -> bool {
+        self.created.elapsed()
+            < if self.candidates.is_empty() {
+                EMPTY_SEARCH_CACHE_TTL
+            } else {
+                SEARCH_CACHE_TTL
+            }
+    }
+}
+
+// Discovery is advisory: arbitrary imported overlays can change independently.
+// Review always evaluates the selected derivation afresh; version-specific and
+// explicit availability queries bypass the cache. No recursive filesystem scan.
+#[derive(Eq, PartialEq)]
+struct SearchCacheScope {
+    generation: Option<PathBuf>,
+    files: Vec<Option<FileStamp>>,
+}
+
+#[derive(Eq, PartialEq)]
+struct FileStamp {
+    device: u64,
+    inode: u64,
+    length: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> Option<Option<Self>> {
+        match std::fs::metadata(path) {
+            Ok(m) => Some(Some(Self {
+                device: m.dev(),
+                inode: m.ino(),
+                length: m.len(),
+                modified: (m.mtime(), m.mtime_nsec()),
+                changed: (m.ctime(), m.ctime_nsec()),
+            })),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
+            Err(_) => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod search_tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn discovery_lives_for_hours_but_misses_expire_quickly() {
+        let mut entry = CachedSearch {
+            created: Instant::now() - Duration::from_secs(3 * 60 * 60),
+            candidates: vec![PackageCandidate {
+                attribute: "hello".into(),
+                name: "Hello".into(),
+                version: "1.0".into(),
+                description: String::new(),
+            }],
+            scope: SearchCacheScope {
+                generation: None,
+                files: vec![],
+            },
+        };
+        assert!(entry.fresh());
+        entry.created = Instant::now() - Duration::from_secs(4 * 60 * 60);
+        assert!(!entry.fresh());
+        entry.candidates.clear();
+        entry.created = Instant::now() - Duration::from_secs(30);
+        assert!(entry.fresh());
+        entry.created = Instant::now() - Duration::from_secs(61);
+        assert!(!entry.fresh());
+    }
 
     #[test]
     #[ignore = "requires PEASY_TEST_NIX_CLI; package builds run this"]

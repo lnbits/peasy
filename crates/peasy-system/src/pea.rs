@@ -152,9 +152,9 @@ mod tests {
     #[test]
     fn bundled_catalogue_is_closed_and_every_manifest_matches_its_metadata() {
         let catalogue: PeaCatalogue =
-            serde_json::from_str(include_str!("../../../peas/catalogue.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/catalogue.json")).unwrap();
         catalogue.validate(&"a".repeat(40)).unwrap();
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../peas");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../peapod");
         for entry in catalogue.peas {
             let m = entry.package;
             let manifest: PeaManifest =

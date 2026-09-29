@@ -166,6 +166,7 @@ fn restart_grace_does_not_limit_a_healthy_package_search() {
     let listener = UnixListener::bind(&path).unwrap();
     let request = IpcRequest::SearchPackages {
         query: "hello".into(),
+        refresh: false,
     };
     let expected = request.clone();
     let worker = thread::spawn(move || {

@@ -18,27 +18,27 @@ pub mod process;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod progress;
 
-#[path = "../../../peas/packages/types.rs"]
+#[path = "../../../peapod/packages/types.rs"]
 mod packages;
 pub use packages::{
     MAX_ATTRIBUTE_BYTES, MAX_CANDIDATES, PackageCandidate, PackageOperation, RequestedVersion,
     regex_escape, validate_attribute,
 };
-#[path = "../../../peas/appimages/types.rs"]
+#[path = "../../../peapod/appimages/types.rs"]
 mod appimages;
 pub use appimages::{
     APPIMAGE_POLICY_PATH, AppImageArchitecture, AppImagePackage, AppImagePolicy, MAX_APPIMAGE_BYTES,
 };
-#[path = "../../../peas/appearance/types.rs"]
+#[path = "../../../peapod/appearance/types.rs"]
 mod appearance;
 pub use appearance::{AccentColor, ColorScheme, ThemeSettings};
-#[path = "../../../peas/hyprland/types.rs"]
+#[path = "../../../peapod/hyprland/types.rs"]
 mod hyprland;
 pub use hyprland::{HyprlandDispatch, HyprlandSetting, HyprlandSettingChange};
-#[path = "../../../peas/wifi/types.rs"]
+#[path = "../../../peapod/wifi/types.rs"]
 mod wifi;
 pub use wifi::{MAX_SSID_BYTES, validate_ssid};
-#[path = "../../../peas/calendar/types.rs"]
+#[path = "../../../peapod/calendar/types.rs"]
 mod calendar;
 use appimages::{render_appimage_bindings, validate_github_repository};
 pub use calendar::{
@@ -51,17 +51,17 @@ use std::path::Path;
 use thiserror::Error;
 
 #[cfg(test)]
-#[path = "../../../peas/tests/contracts.rs"]
+#[path = "../../../peapod/tests/contracts.rs"]
 mod pea_contracts;
 #[cfg(test)]
-#[path = "../../../peas/tests/resources.rs"]
+#[path = "../../../peapod/tests/resources.rs"]
 mod resource_contracts;
 
-#[path = "../../../peas/appearance/desktop.rs"]
+#[path = "../../../peapod/appearance/desktop.rs"]
 mod desktop;
 pub use desktop::{AppearanceCapabilities, DesktopEnvironment};
 
-#[path = "../../../peas/networking/types.rs"]
+#[path = "../../../peapod/networking/types.rs"]
 mod networking;
 pub use networking::{
     Ipv4Method, NetworkKind, NetworkPlan, NetworkProfile, NetworkScope, WifiMode, network_schema,
@@ -70,7 +70,7 @@ pub use networking::{
 
 pub const MAX_QUERY_BYTES: usize = 160;
 
-#[path = "../../../peas/system_configuration/types.rs"]
+#[path = "../../../peapod/system_configuration/types.rs"]
 mod system_configuration;
 pub use system_configuration::{
     ManagedSetup, POSTGRESQL_PACKAGES, PostgresqlSetup, SYSTEM_ENABLE_OPTIONS, SYSTEM_GROUPS,
@@ -555,6 +555,11 @@ pub enum IpcRequest {
     },
     SearchPackages {
         query: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        refresh: bool,
+    },
+    LookupPackage {
+        attribute: String,
     },
     GetPackages,
     GetTheme,

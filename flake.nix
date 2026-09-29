@@ -31,7 +31,7 @@
           map (entry: {
             name = "pea-${entry.package.id}";
             value = pkgs.callPackage ./nix/pea.nix { id = entry.package.id; };
-          }) (builtins.fromJSON (builtins.readFile ./peas/catalogue.json)).peas
+          }) (builtins.fromJSON (builtins.readFile ./peapod/catalogue.json)).peas
         )
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           iso-gnome = self.nixosConfigurations.peasy-iso-gnome.config.system.build.isoImage;

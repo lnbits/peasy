@@ -71,7 +71,7 @@ impl PeasyClient {
         theme: &ThemeSettings,
     ) -> Result<ModelAction> {
         manifest.validate()?;
-        let mut context = json!({"instruction":"Use this pea's domain instructions and return an action matching its response_schema. The host independently enforces its permissions."});
+        let mut context = json!({"instruction":"Use this pea's domain instructions and declared action/field constraints through the host's compact transport schema. The host independently enforces its permissions."});
         for _ in 0..2 {
             let action = self.model.interpret_with_feedback(
                 request,
@@ -121,7 +121,7 @@ impl PeasyClient {
         }
         let value = read_json(
             &format!(
-                "https://raw.githubusercontent.com/lnbits/peasy/{revision}/peas/catalogue.json"
+                "https://raw.githubusercontent.com/lnbits/peasy/{revision}/peapod/catalogue.json"
             ),
             128 * 1024,
         )?;
@@ -268,7 +268,7 @@ impl PeasyClient {
 mod tests {
     use super::*;
     fn legacy_packages() -> PeaManifest {
-        serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap()
+        serde_json::from_str(include_str!("../../../peapod/tests/api2-packages.json")).unwrap()
     }
 
     fn docker_action() -> Value {
@@ -284,7 +284,7 @@ mod tests {
         std::sync::mpsc::Receiver<(String, Value)>,
     ) {
         let (base_url, request) = crate::tests::serve_json_once(
-            json!({"message":{"role":"assistant","content":action.to_string()},"done":true}),
+            json!({"message":{"role":"assistant","content":json!({"result":action}).to_string()},"done":true}),
         );
         let model = crate::ModelBackend::new(crate::ModelProvider::Ollama {
             base_url,
@@ -364,7 +364,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut client = client(temp.path().join("unused.sock"));
         let mut current: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/packages/pea.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/packages/pea.json")).unwrap();
         current.instructions = "A domain instruction retained across model turns.".into();
         for (manifest, action, allowed) in [
             (legacy_packages(), docker_action(), false),
@@ -395,7 +395,10 @@ mod tests {
                 );
             }
             let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert_eq!(body["format"], manifest.response_schema);
+            assert_eq!(
+                body["format"],
+                crate::model_wire::schema(&manifest.response_schema)
+            );
         }
     }
 
@@ -426,7 +429,10 @@ mod tests {
                 &mut |_| {},
             );
             let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert_eq!(body["format"], manifest.response_schema);
+            assert_eq!(
+                body["format"],
+                crate::model_wire::schema(&manifest.response_schema)
+            );
             let result = if fallback {
                 let Resolution::Choose(choice) = first.unwrap() else {
                     panic!("expected fallback choice")
@@ -436,7 +442,10 @@ mod tests {
                 client.model = model;
                 let result = client.select(choice, 0);
                 let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
-                assert_eq!(body["format"], manifest.response_schema);
+                assert_eq!(
+                    body["format"],
+                    crate::model_wire::schema(&manifest.response_schema)
+                );
                 result
             } else {
                 first
@@ -461,7 +470,7 @@ mod tests {
         let mut client = client(socket.clone());
         let server = read_only_ipc(&socket, 3);
         let mut manifest: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/services/pea.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/services/pea.json")).unwrap();
         manifest.permissions = vec!["services.read".into()];
         manifest.response_schema = peasy_core::pea::schema_for_permissions(&manifest.permissions);
         for (action, allowed) in [
@@ -502,7 +511,10 @@ mod tests {
                 );
             }
             let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert_eq!(body["format"], manifest.response_schema);
+            assert_eq!(
+                body["format"],
+                crate::model_wire::schema(&manifest.response_schema)
+            );
         }
         server.join().unwrap();
     }
@@ -572,7 +584,7 @@ mod tests {
     #[test]
     fn downloaded_descriptions_can_only_select_an_enabled_pea() {
         let m: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/networking/pea.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/pea.json")).unwrap();
         let enabled = [m];
         assert_eq!(
             selected_enabled_id(
@@ -594,14 +606,14 @@ mod tests {
         );
         assert!(selected_enabled_id(ModelAction::DiscoverPeas, &enabled).is_none());
         let plan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json")).unwrap();
         assert!(selected_enabled_id(ModelAction::ConfigureNetwork { plan }, &enabled).is_none());
     }
     #[test]
     #[ignore = "requires PEASY_TEST_ENGINE; packaged checks run this"]
     fn a_new_data_pea_runs_without_registration_but_cannot_expand_its_permissions() {
         let mut manifest: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/networking/pea.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/pea.json")).unwrap();
         manifest.id = "new-domain-pack".into();
         manifest.permissions = vec!["network.read".into()];
         manifest.response_schema = peasy_core::pea::schema_for_permissions(&manifest.permissions);
@@ -614,7 +626,7 @@ mod tests {
             (json!({"action":"use_pea","pea_id":"appearance"}), false),
         ] {
             let (base_url, request) = crate::tests::serve_json_once(
-                json!({"message":{"role":"assistant","content":action.to_string()},"done":true}),
+                json!({"message":{"role":"assistant","content":json!({"result":action}).to_string()},"done":true}),
             );
             let temp = tempfile::tempdir().unwrap();
             let engine = std::env::var_os("PEASY_TEST_ENGINE").expect("compiled guest");

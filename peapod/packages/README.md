@@ -1,10 +1,12 @@
 # Packages pea
 
-Search pinned host Nixpkgs, select a returned package and propose install/remove.
+Verify an exact attribute or search host Nixpkgs, then propose install/remove.
 
-- **Inputs:** package query, optional exact version, or managed package attribute.
+- **Inputs:** known package attribute, search query with optional version, or
+  managed package attribute for removal.
 - **Checks:** install must select a validated candidate; removal must name a
   Peasy-managed package. The daemon verifies package identity against host Nixpkgs.
+  Missing exact attributes fall back to search; requested versions search first.
 - **Effects:** reviewed NixOS change with administrator authentication. Optional
   [system setup](../system_configuration/README.md) adds dependencies and integration.
 - **Removal:** withdraw the owned contribution; retain shared dependencies.

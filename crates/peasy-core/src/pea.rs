@@ -218,14 +218,14 @@ fn schema_for_api(permissions: &[String], api: u32) -> Value {
     let mut schema = schema_for_permissions(permissions);
     if api == 4 {
         schema = schema_with_permissions(
-            serde_json::from_str(include_str!("../../../peas/tests/api4-model-schema.json"))
+            serde_json::from_str(include_str!("../../../peapod/tests/api4-model-schema.json"))
                 .expect("frozen API 4 schema"),
             permissions,
         );
     }
     if api < 4 {
         let actions = schema["properties"]["action"]["enum"].clone();
-        schema = serde_json::from_str(include_str!("../../../peas/tests/api3-model-schema.json"))
+        schema = serde_json::from_str(include_str!("../../../peapod/tests/api3-model-schema.json"))
             .expect("frozen API 3 schema");
         schema["properties"]["action"]["enum"] = actions;
     }
@@ -394,7 +394,7 @@ impl PeaPin {
     }
     pub fn url(&self) -> String {
         format!(
-            "https://raw.githubusercontent.com/lnbits/peasy/{}/peas/{}/pea.json",
+            "https://raw.githubusercontent.com/lnbits/peasy/{}/peapod/{}/pea.json",
             self.revision, self.id
         )
     }
@@ -501,7 +501,7 @@ mod tests {
     }
     fn manifest_for_api(api: u32) -> PeaManifest {
         let mut manifest: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/tests/api2-packages.json")).unwrap();
         manifest.host_api = api;
         manifest.response_schema = schema_for_api(&manifest.permissions, api);
         manifest.validate().unwrap();
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn original_api_one_pins_remain_compatible_without_widening_permissions() {
         let mut manifest: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/tests/api2-packages.json")).unwrap();
         manifest.validate().unwrap();
         manifest.host_api = 1;
         manifest.response_schema["properties"]["setup"]["properties"]
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn expanded_catalogue_requires_api_three() {
         let mut old: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/tests/api2-packages.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/tests/api2-packages.json")).unwrap();
         old.validate().unwrap();
         old.response_schema["properties"]["setup"]["properties"]["enable"]["items"]["enum"]
             .as_array_mut()
@@ -620,7 +620,7 @@ mod tests {
             .push(serde_json::json!("virtualisation.docker.enable"));
         assert!(old.validate().is_err());
         let mut current: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/packages/pea.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/packages/pea.json")).unwrap();
         current.validate().unwrap();
         current.host_api = 2;
         assert!(current.validate().is_err());
@@ -629,9 +629,9 @@ mod tests {
     #[test]
     fn persistent_activation_requires_both_network_permissions() {
         let mut manifest: PeaManifest =
-            serde_json::from_str(include_str!("../../../peas/networking/pea.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/pea.json")).unwrap();
         let mut plan: crate::NetworkPlan =
-            serde_json::from_str(include_str!("../../../peas/networking/example.json")).unwrap();
+            serde_json::from_str(include_str!("../../../peapod/networking/example.json")).unwrap();
         manifest.permissions = vec!["network.system".into()];
         manifest.response_schema = schema_for_api(&manifest.permissions, manifest.host_api);
         assert!(!manifest.permits(&ModelAction::ConfigureNetwork { plan: plan.clone() }));

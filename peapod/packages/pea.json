@@ -8,7 +8,7 @@
   "permissions": [
     "packages"
   ],
-  "instructions": "Reason about the application the user needs. Search real candidates, select only exact returned attributes, and compose required supporting packages and reviewed system setup. Removal affects only Peasy-owned state.",
+  "instructions": "Reason about the application the user needs. For a named application with a known exact Nixpkgs attribute, propose that attribute for host verification. Search first for uncertain names, alternatives or requested versions. When search candidates are supplied, select only an exact returned attribute. Compose required supporting packages and reviewed system setup. Removal affects only Peasy-owned state.",
   "response_schema": {
     "additionalProperties": false,
     "properties": {

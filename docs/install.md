@@ -271,10 +271,18 @@ select a known-good generation in the boot menu and inspect the configuration.
 
 ## Package search
 
-Search scans the effective host package set, including overlays. Recent query
-results are cached for 15 minutes. Creating a proposal always resolves its
-packages again and records exact derivation paths; apply rejects a changed
-definition before activation and asks for another review.
+For a named application, the model may suggest an exact Nixpkgs attribute.
+Peasy verifies it against the effective host package set, including overlays,
+before creating a proposal. A missing or unavailable attribute falls back to
+search. Uncertain names, alternatives and requested versions use search first.
+
+Search results are cached in memory for four hours; empty results expire after
+one minute. Active-generation, managed-module, host entry-file and flake-lock
+changes invalidate the cache. Edits to other imported files may remain unseen
+until expiry. Explicit availability checks and version-specific searches bypass
+the cache. Creating a proposal always resolves its packages again and records
+exact derivation paths; apply rejects a changed definition before activation
+and asks for another review.
 
 ## Configuration backup and restore
 
