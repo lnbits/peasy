@@ -77,6 +77,9 @@
         {
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
+            # inputsFrom inherits dependencies, not the package's environment.
+            # CI runs on non-NixOS hosts without /run/current-system/sw/bin/date.
+            PEASY_DATE = "${pkgs.coreutils}/bin/date";
             PEASY_TEST_NIX = "${pkgs.nix}/bin/nix-instantiate";
             PEASY_TEST_NIX_CLI = "${pkgs.nix}/bin/nix";
             PEASY_TEST_NIXPKGS = "${pkgs.path}";
