@@ -155,8 +155,10 @@ pkgs.testers.runNixOSTest {
           # inert generation to replace its otherwise read-only toplevel.
           disabledModules = [ "system/activation/top-level.nix" ];
           imports = [
-            (args@{ config, lib, pkgs, ... }:
-              let original = import ${pkgs.path}/nixos/modules/system/activation/top-level.nix args;
+            (args@{ config, lib, pkgs, modulesPath, ... }:
+              # Use the evaluator's module tree. A build-time store path can
+              # name a different copy and duplicate transitive option imports.
+              let original = import (modulesPath + "/system/activation/top-level.nix") args;
               in original // {
                 options = lib.recursiveUpdate original.options {
                   system.build.toplevel.readOnly = false;

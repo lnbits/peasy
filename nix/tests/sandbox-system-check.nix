@@ -9,6 +9,17 @@ let
   configuration =
     pkgs.writeText "peasy-sandbox-host-configuration.nix"
       sandboxTest.config.nodes.machine.environment.etc."nixos/configuration.nix".text;
+  # Match the daemon's source exactly. Interpolating pkgs.path here can copy it
+  # under a different name and hide mixed-source imports in the host fixture.
+  identity = builtins.fromJSON (
+    builtins.unsafeDiscardStringContext
+      sandboxTest.config.nodes.machine.environment.etc."peasy/daemon-identity.json".source.text
+  );
+  nixpkgsSource = builtins.appendContext identity.nixpkgs {
+    ${identity.nixpkgs} = {
+      path = true;
+    };
+  };
   states =
     map
       (accent_color: {
@@ -27,8 +38,9 @@ let
   expression = pkgs.writeText "peasy-sandbox-fixture-check.nix" ''
     let
       system = "${pkgs.stdenv.hostPlatform.system}";
-      pkgs = import ${pkgs.path} { inherit system; };
-      evaluated = import ${pkgs.path}/nixos/lib/eval-config.nix {
+      nixpkgs = builtins.toPath "${nixpkgsSource}";
+      pkgs = import nixpkgs { inherit system; };
+      evaluated = import (nixpkgs + "/nixos/lib/eval-config.nix") {
         inherit system;
         modules = [ (builtins.toPath (builtins.getEnv "PEASY_TEST_CONFIGURATION")) ];
       };
