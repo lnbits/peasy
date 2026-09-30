@@ -6,6 +6,27 @@
 
 let
   fakeSystem = import ./sandbox-system.nix { inherit pkgs; };
+  # Keep each reviewed restore result available in the offline VM store.
+  restoredSystems =
+    map
+      (
+        accent_color:
+        import ./sandbox-system.nix {
+          inherit pkgs;
+          state = {
+            packages = [ "hello" ];
+            appimages = [ ];
+            theme = {
+              inherit accent_color;
+              color_scheme = null;
+            };
+          };
+        }
+      )
+      [
+        "blue"
+        "green"
+      ];
   legacyHostConfiguration = pkgs.writeText "peasy-test-host-configuration.nix" ''
     { ... }:
     {
@@ -123,13 +144,13 @@ pkgs.testers.runNixOSTest {
       ];
       # The shared store makes the output readable, but Nix also needs it
       # registered as valid to build/activate it without trying substitutes.
-      system.extraDependencies = [ fakeSystem ];
+      system.extraDependencies = [ fakeSystem ] ++ restoredSystems;
       nix.settings.experimental-features = [
         "nix-command"
         "flakes"
       ];
       environment.etc."nixos/configuration.nix".text = ''
-        { lib, pkgs, ... }: {
+        { config, lib, pkgs, ... }: {
           # Test-only shim: retain NixOS's supporting options, but permit the
           # inert generation to replace its otherwise read-only toplevel.
           disabledModules = [ "system/activation/top-level.nix" ];
@@ -141,11 +162,16 @@ pkgs.testers.runNixOSTest {
                   system.build.toplevel.readOnly = false;
                 };
               })
-          ];
+          ] ++ lib.optional
+            (builtins.pathExists ./.peasy/peasy-managed.nix)
+            ./.peasy/peasy-managed.nix;
           system.stateVersion = "26.05";
           boot.loader.grub.devices = [ "nodev" ];
           fileSystems."/" = { device = "none"; fsType = "tmpfs"; };
-          system.build.toplevel = lib.mkForce (import ${./sandbox-system.nix} { inherit pkgs; });
+          system.build.toplevel = lib.mkForce (import ${./sandbox-system.nix} {
+            inherit pkgs;
+            state = builtins.fromJSON (config.environment.etc."peasy/state.json".text or "{}");
+          });
         }
       '';
       environment.etc."peasy-ipc-test.py".text = ''
@@ -224,7 +250,7 @@ pkgs.testers.runNixOSTest {
             source.unlink()
             def host(version):
                 overlay = 'nixpkgs.overlays = [ (final: prev: { hello = prev.hello.overrideAttrs (_: { version = "' + version + '"; }); }) ];'
-                return original.replace('{ lib, pkgs, ... }: {', '{ lib, pkgs, ... }: { ' + overlay, 1)
+                return original.replace('{ config, lib, pkgs, ... }: {', '{ config, lib, pkgs, ... }: { ' + overlay, 1)
             try:
                 source.write_text(host('review-fixture-1'))
                 proposal = request({'request': 'propose_install', 'package': 'hello'})['proposal']

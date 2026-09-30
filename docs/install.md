@@ -206,11 +206,17 @@ Enter Wi-Fi passwords only in the separate local confirmation field, never in
 the natural-language request. Credential-looking requests are refused before
 contacting the model, but arbitrary pasted secrets cannot be reliably detected.
 
-The first launch opens provider setup with **Ollama (local)** selected by default.
+On a manual installation, the first launch opens provider setup with **Ollama
+(local)** selected by default.
 An existing provider choice (including older OpenAI key-only setups) is preserved.
 This does not automatically install Ollama or download a model; use the local
 setup below, or select OpenAI instead. OpenAI requires an API key. The key is
 stored for the current user in `~/.config/peasy/openai-key` with mode `0600`.
+
+The [Peasy ISO](iso.md) bundles Ollama and Qwen3 0.6B and supplies
+`PEASY_DEFAULT_OLLAMA_MODEL=qwen3:0.6b` in the live and installed desktop sessions.
+This fallback does not create or overwrite per-user provider settings and does
+not override a legacy OpenAI key. The manual Peasy module adds no such default.
 
 For a local provider, enable Ollama:
 
@@ -232,6 +238,28 @@ Provider setup is also available in the terminal:
 ```console
 peasy --setup-provider
 ```
+
+Ollama must be version 0.30.6 or newer. Peasy checks the server version, requests
+an 8,192-token context, and retries an explicit context-overflow error once with
+16,384 tokens. Larger contexts use more memory. Prompt truncation and context
+shifting are disabled; an oversized request or incomplete response stops without
+producing an action. Peasy requests thinking off where the model supports it.
+
+To diagnose a local model, stop the existing Peasy UI process and launch it from
+a terminal. Closing its window only hides it:
+
+```console
+pkill -x peasy-ui
+PEASY_OLLAMA_DIAGNOSTICS=1 peasy-ui
+```
+
+The terminal reports the selected capability scope, instruction/schema byte
+sizes, model, requested context, token counts and timings in nanoseconds,
+without printing requests, configuration or responses.
+Use `ollama ps` while a request runs to check the loaded model and actual context.
+An Ollama log warning `truncating input prompt` means input was discarded; it
+must not occur for Peasy requests with these controls. The runtime controls do
+not establish model accuracy: compare the resulting proposals before applying.
 
 ## Upgrade
 

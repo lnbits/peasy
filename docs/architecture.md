@@ -87,6 +87,22 @@ schema as the `format` value. Peasy discovers installed models through
 Ollama origin is restricted to localhost or a loopback IP and defaults to
 `http://127.0.0.1:11434`.
 
+ISO sessions set `PEASY_DEFAULT_OLLAMA_MODEL=qwen3:0.6b` for the bundled local
+service. This is a fallback only: a saved provider or legacy OpenAI key wins.
+Reading the fallback does not create or overwrite provider settings. Manual
+installations do not set it. Model files and runtime seeding are defined in
+`nix/iso-ollama.nix`; the live ISO and installed target share that module.
+
+Ollama requests require server version 0.30.6 or newer, checked through
+`GET /api/version` before inference. Requests set `truncate: false`, `shift:
+false`, `think: false` and `options.num_ctx: 8192`. An explicit context-overflow
+error permits one retry at 16384 with identical messages and schema. Other
+errors, incomplete responses and `done_reason: length` stop before action
+decoding. Peasy never enables truncation to recover from an overflow. Optional
+`PEASY_OLLAMA_DIAGNOSTICS=1` logs model identity, token counts, timings, selected
+scope, scope-change count and instruction/schema byte sizes. It never logs
+requests, configuration, snapshots or model output.
+
 The constructed boundary includes the credential-guarded request, current
 local time, Peasy's canonical generated managed module, at most one recent
 validated package, and a locally generated system profile. The profile contains
@@ -109,6 +125,41 @@ Providers receive a compact schema derived from the active pea's declared
 schema: `result` contains one action and only its relevant fields. Declared field
 constraints and version-specific permissions remain enforced. The host also
 accepts the legacy flat envelope through native validation.
+
+Both providers use task scopes. Fresh requests start with a compact, neutral
+capability selector; only the selected task receives machine context and its
+action schema. The selector cannot search, propose changes or give a final
+answer; explanations and limitations belong to the selected task. This adds one
+short model call. Known package-search follow-ups, a single-domain pea or a host
+inspection result start in their known domain.
+Each resource domain has its own schema and guidance. The model can return
+`request_capability` to obtain setup or another domain's schema and instructions.
+After two scope selections, it must return an action or ask for
+clarification within the selected scope; Peasy never falls back to loading all
+domains. A pea spanning multiple domains starts with a compact scope selector.
+All supported task actions remain reachable. Cancellation is a user-interface
+control: model prompts omit `cancel`, and a model returning it receives the
+bounded validation retry rather than cancelling the request. The native
+protocol and UI cancellation controls remain unchanged.
+Host catalogue selections and inspection follow-ups stay in their known domain;
+they do not offer scope switches that the receiving stage cannot execute.
+Scope changes retain the original request, candidates, machine context and
+pea instructions. They cannot expand a pea's declared permissions.
+
+`request_capability` is internal to the client and never reaches IPC or changes
+the system. Scope selection reduces prompt size; native validation, package
+verification, pea permission checks and user review remain mandatory.
+Uninstall uses the managed installed-package list and `remove_package`; it does
+not require package discovery or a setup schema. The host handles withdrawal of
+the application's Peasy-owned setup contributions.
+
+`request_clarification` is a client-only reply signal for a missing detail that
+materially changes the correct action. It uses the same validated message and
+pea permission checks as `explain`; it adds no host operation. Only this signal
+shows an inline reply field in the GUI. Ordinary explanations, errors and
+completion messages do not. A reply retains bounded request and question
+context and uses the normal request, validation and review path. Clear requests
+should proceed without questions; approval remains a separate host step.
 
 Responses deserialize into a closed Rust enum. Unknown actions or fields are
 rejected before they reach the Wasm engine or IPC. The known actions cover

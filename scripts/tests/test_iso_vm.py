@@ -66,6 +66,10 @@ class VMTests(unittest.TestCase):
         self.assertIn('test ! -e /home/peasytest/.config/peasy/openai-key;', commands)
         self.assertIn('test ! -e /home/peasytest/.config/peasy/provider.json', commands)
         self.assertNotIn('openai-api-key', commands)
+        self.assertIn('systemctl is-active ollama.service;', commands)
+        self.assertIn('ollama list | grep -F "qwen3:0.6b"', commands)
+        self.assertIn('ollama show qwen3:0.6b', commands)
+        self.assertIn('PEASY_DEFAULT_OLLAMA_MODEL', commands)
 
     def test_every_relevant_input_invalidates_base(self):
         identity = dict(iso_sha256='a', firmware='bios', desktop='gnome', memory_mib=8192,

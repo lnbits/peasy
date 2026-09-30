@@ -39,12 +39,12 @@ impl PeasyClient {
             IpcResponse::Theme { theme } => theme,
             _ => bail!("unexpected response to GetTheme"),
         };
-        let action = self.model.interpret(
+        let answer = self.model.interpret(
             &format!("Original request: {request}\nSelected package: `{}`. Prepare the installation consistent with the original request, including supported service setup when requested. Preserve tools-only intent. Give concrete numbered manual steps for unsupported requirements or ask whether a local server or tools only are wanted when ambiguous. Do not substitute another package.", candidate.attribute),
             &module, Some(std::slice::from_ref(&candidate)), Some(&installed), &theme, None, pea,
         )?;
         let decision = self.engine.resolve(&peasy_core::EngineInput {
-            action,
+            action: answer.action,
             candidates: vec![candidate.clone()],
             installed,
         })?;
@@ -59,7 +59,9 @@ impl PeasyClient {
                     message.as_deref(),
                 ))
             }
-            peasy_core::EngineDecision::Explain(message) => Ok(Resolution::Explain(message)),
+            peasy_core::EngineDecision::Explain(message) => {
+                Ok(Resolution::explanation(message, answer.needs_reply))
+            }
             peasy_core::EngineDecision::Cancel => Ok(Resolution::Cancel),
             _ => bail!("could not prepare the selected package safely; no change was made"),
         }
@@ -127,8 +129,8 @@ mod tests {
             }
         });
         let engine = std::env::var_os("PEASY_TEST_ENGINE").unwrap();
-        let response = serde_json::json!({"message":{"role":"assistant","content":serde_json::json!({"action":"explain","message":"Local server or tools only?"}).to_string()},"done":true});
-        let (url, first) = crate::tests::serve_json_once(response.clone());
+        let response = serde_json::json!({"message":{"role":"assistant","content":serde_json::json!({"result":{"action":"request_clarification","message":"Local server or tools only?"}}).to_string()},"done":true});
+        let (url, first) = crate::tests::serve_ollama_once(response.clone());
         let mut client = PeasyClient::with_provider(
             socket,
             std::path::Path::new(&engine),
@@ -140,12 +142,12 @@ mod tests {
         .unwrap();
         assert!(matches!(
             client.resolve("install PostgreSQL").unwrap(),
-            Resolution::Explain(_)
+            Resolution::Clarify(_)
         ));
         first
             .recv_timeout(std::time::Duration::from_secs(2))
             .unwrap();
-        let (url, second) = crate::tests::serve_json_once(response);
+        let (url, second) = crate::tests::serve_ollama_once(response);
         client.model = crate::ModelBackend::new(crate::ModelProvider::Ollama {
             base_url: url,
             model: "test".into(),
@@ -162,6 +164,7 @@ mod tests {
             )
         );
         assert!(body.contains("Current user request: local server"));
+        assert!(body.contains("Peasy asked: Local server or tools only?"));
         server.join().unwrap();
     }
 

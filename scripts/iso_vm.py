@@ -269,6 +269,10 @@ class VM:
 
 def installed_checks(vm, desktop):
     vm.run('systemctl is-active peasy-system.service; test -x /run/current-system/sw/bin/peasy-ui')
+    vm.run('systemctl is-active ollama.service; '
+           'for i in $(seq 1 30); do ollama list | grep -F "qwen3:0.6b" && exit 0; sleep 1; done; exit 1')
+    vm.run('ollama show qwen3:0.6b > /dev/null')
+    vm.run("su - peasytest -c 'test \"$PEASY_DEFAULT_OLLAMA_MODEL\" = qwen3:0.6b'")
     vm.run('for i in $(seq 1 90); do pgrep -u peasytest -x peasy-tray && exit 0; sleep 1; done; exit 1')
     vm.run('pkaction --action-id io.github.peasy.apply --verbose | grep auth_admin')
     vm.run("if su - peasytest -c 'pkcheck --action-id io.github.peasy.apply --process $$'; then exit 1; fi")

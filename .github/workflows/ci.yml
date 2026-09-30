@@ -61,8 +61,21 @@ jobs:
           nix eval --json .#checks.x86_64-linux --apply builtins.attrNames > checks.json
           jq -r '.[]' checks.json > checks.txt
           check_status=0
+          failed_checks=()
           while IFS= read -r check; do
-            nix build --no-link -L --max-jobs 1 ".#checks.x86_64-linux.$check" || check_status=1
+            echo "::group::Flake check: $check"
+            if ! nix build --no-link -L --max-jobs 1 ".#checks.x86_64-linux.$check"; then
+              check_status=1
+              failed_checks+=("$check")
+              echo "::error::Flake check failed: $check"
+            fi
+            echo "::endgroup::"
           done < checks.txt
-          nix flake check --no-build || check_status=1
+          if ! nix flake check --no-build; then
+            check_status=1
+            failed_checks+=("flake-evaluation")
+          fi
+          if (( check_status != 0 )); then
+            echo "::error::Failed checks: ${failed_checks[*]}"
+          fi
           exit "$check_status"

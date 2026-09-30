@@ -8,6 +8,22 @@
 let
   cfg = config.services.peasy;
   package = cfg.package;
+  # Interpolating a path reconstructed by a traditional rebuild copies it into
+  # the store again, prefixing another hash on every generation. Keep existing
+  # store roots as references (including their GC dependency). appendContext
+  # also works in pure flake evaluation, unlike builtins.storePath.
+  nixpkgsSource =
+    let
+      source = toString pkgs.path;
+    in
+    if lib.isStorePath source then
+      builtins.appendContext source {
+        ${source} = {
+          path = true;
+        };
+      }
+    else
+      "${pkgs.path}";
   gnomeEnabled = config.services.desktopManager.gnome.enable or false;
   appindicatorUuid = pkgs.gnomeExtensions.appindicator.extensionUuid;
   hostConfigurationDirectory = builtins.dirOf cfg.hostConfiguration;
@@ -46,7 +62,7 @@ let
     builtins.toJSON {
       protocol = 2;
       executable = "${package}/libexec/peasy-system";
-      nixpkgs = toString pkgs.path;
+      nixpkgs = nixpkgsSource;
       inherit (cfg)
         hostConfiguration
         hostFlake
@@ -669,7 +685,7 @@ in
             "--nix ${pkgs.nix}/bin/nix"
             "--systemctl ${pkgs.systemd}/bin/systemctl"
             "--pkcheck ${pkgs.polkit}/bin/pkcheck"
-            "--nixpkgs ${pkgs.path}"
+            "--nixpkgs ${nixpkgsSource}"
             "--system ${pkgs.stdenv.hostPlatform.system}"
             "--identity ${daemonIdentity}"
           ]

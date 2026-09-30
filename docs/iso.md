@@ -49,8 +49,22 @@ choices remain upstream's; the desktop chooser is narrowed to GNOME (default)
 and XFCE, retaining their upstream configuration recipes. After installation, remove the
 installation media and boot the installed disk. Peasy is configured through an
 ordinary local Nix module; no follow-up Peasy installation command is intended.
-Configure your own OpenAI credentials or reachable Ollama provider in Peasy.
-No provider account, API key or local model is bundled.
+Local Ollama and **Qwen3 0.6B** are bundled and selected by default in the live
+session and installed system. No account, API key or first-boot model download
+is required. Change the provider or model in Peasy settings at any time; saved
+choices and older OpenAI key-only setups take precedence over the ISO default.
+
+The ISO uses CPU inference and a loopback-only Ollama service. Cloud inference
+is disabled. The model loads on the first request and is unloaded after two
+idle minutes; only one model and one request run at a time. The approximately
+523 MB model is pinned by SHA-256, including its template, parameters and license.
+Its immutable blobs stay in the Nix store rather than being copied into the live
+session's RAM-backed overlay. Ollama and its dependencies add further ISO space.
+The writable model catalogue allows users to pull other models or update the
+bundled tag explicitly; restarting the service preserves those changes.
+
+This is a small local default, not a guarantee of accurate interpretation for
+every task. Peasy's validation, review and authorization still apply.
 
 `assets/peasy_bg.png` is the default wallpaper in the live and installed GNOME
 systems. GNOME gets light/dark wallpaper defaults and a green accent. XFCE keeps
@@ -140,6 +154,8 @@ boots the installed disk without the ISO, and tests Peasy's tray, authorization,
 already cached by the normal configuration builders, but it is not initially a
 global command. This exercises package management without injecting test
 packages or promising that arbitrary new applications are available offline.
+It also checks that local Ollama can list and inspect the bundled model without
+network access and that the installed user's session selects the ISO default.
 Wizard selections are supplied
 by the harness; disk formatting and all installer operations execute in the VM.
 BIOS uses the image's existing serial-console boot entry; UEFI boots normally
@@ -275,7 +291,7 @@ Use a new stable `vMAJOR.MINOR.PATCH` tag. Its version must match
 Before committing, check the intended tag locally (replace this example):
 
 ```console
-python3 scripts/update_metadata.py --tag v0.1.8 --check
+python3 scripts/update_metadata.py --tag v0.1.9 --check
 ```
 
 Commit all intended changes, including renames and both Cargo files. Push the
@@ -283,8 +299,8 @@ commit, then create and push the tag on that same commit:
 
 ```console
 git push origin main
-git tag -a v0.1.8 -m "Peasy v0.1.8"
-git push origin v0.1.8
+git tag -a v0.1.9 -m "Peasy v0.1.9"
+git push origin v0.1.9
 ```
 
 The tag triggers the release workflow; it is not configured elsewhere. CI checks

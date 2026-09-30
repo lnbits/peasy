@@ -436,7 +436,7 @@ fn finish_panel(
                     _ => anyhow::bail!("the panel worker expected continue or cancel"),
                 }
             }
-            Resolution::Explain(message) => {
+            Resolution::Explain(message) | Resolution::Clarify(message) => {
                 send_panel_event(&json!({ "event": "done", "message": message }))?;
                 return Ok(());
             }
@@ -510,7 +510,7 @@ fn finish(client: &PeasyClient, resolution: Resolution) -> Result<()> {
             let index = choose(&choice)?;
             finish(client, client.select(choice, index)?)
         }
-        Resolution::Explain(message) => {
+        Resolution::Explain(message) | Resolution::Clarify(message) => {
             println!("{message}");
             Ok(())
         }

@@ -299,9 +299,10 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let endpoint = gtk::Label::new(Some("Local Ollama · http://127.0.0.1:11434"));
     endpoint.set_halign(gtk::Align::Start);
     ollama_box.append(&endpoint);
-    let ollama_model = gtk::Entry::builder()
-        .placeholder_text("Detecting installed models…")
-        .build();
+    let ollama_model = gtk::DropDown::from_strings(&[]);
+    ollama_model.set_enable_search(true);
+    ollama_model.set_sensitive(false);
+    ollama_model.set_tooltip_text(Some("Choose an installed Ollama model"));
     ollama_box.append(&ollama_model);
     let ollama_status = gtk::Label::new(Some("Checking Ollama…"));
     ollama_status.set_wrap(true);
@@ -320,7 +321,8 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         match settings {
             ProviderSettings::OpenAi { model } => openai_model.set_text(&model),
             ProviderSettings::Ollama { model, .. } => {
-                ollama_model.set_text(&model);
+                ollama_model.set_model(Some(&gtk::StringList::new(&[&model])));
+                ollama_model.set_selected(0);
             }
         }
     }
@@ -445,17 +447,19 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         ollama_status.clone(),
         ollama_model.clone(),
         detected_models.clone(),
+        refresh.clone(),
     );
     let detected_clone = detected_models.clone();
     let ollama_status_clone = ollama_status.clone();
     let ollama_model_clone = ollama_model.clone();
     let refresh_state = state.clone();
-    refresh.connect_clicked(move |_| {
+    refresh.connect_clicked(move |button| {
         refresh_ollama_models(
             &refresh_state,
             ollama_status_clone.clone(),
             ollama_model_clone.clone(),
             detected_clone.clone(),
+            button.clone(),
         );
     });
 
@@ -481,7 +485,8 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     save.connect_clicked(move |_| {
         let result = (|| -> Result<()> {
             let settings = if provider.selected() == OLLAMA_PROVIDER_INDEX {
-                let model = ollama_model.text().trim().to_owned();
+                let model = selected_ollama_model(&ollama_model)
+                    .context("Choose an installed Ollama model, then save the provider.")?;
                 if !detected_models.borrow().iter().any(|found| found == &model) {
                     anyhow::bail!(
                         "Choose an installed Ollama model. Press Refresh after pulling a model."
@@ -529,12 +534,25 @@ fn engine_path(args: &Args) -> PathBuf {
 mod export;
 use export::{configuration_export, write_configuration_export};
 
+fn selected_ollama_model(dropdown: &gtk::DropDown) -> Option<String> {
+    dropdown
+        .selected_item()?
+        .downcast::<gtk::StringObject>()
+        .ok()
+        .map(|item| item.string().to_string())
+}
+
 fn refresh_ollama_models(
     state: &AppState,
     status: gtk::Label,
-    model_entry: gtk::Entry,
+    model_dropdown: gtk::DropDown,
     detected: Rc<RefCell<Vec<String>>>,
+    refresh: gtk::Button,
 ) {
+    let previous = selected_ollama_model(&model_dropdown);
+    model_dropdown.set_sensitive(false);
+    refresh.set_sensitive(false);
+    detected.borrow_mut().clear();
     status.set_text("Checking local Ollama…");
     let task = state.tasks.borrow_mut().start();
     let (tx, rx) = mpsc::channel();
@@ -551,23 +569,31 @@ fn refresh_ollama_models(
         let result = rx.try_recv();
         if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
             task.view.cancel();
+            refresh.set_sensitive(true);
         }
         match result {
             Ok(Ok(models)) => {
+                let selection = match previous.as_ref() {
+                    Some(previous) => models.iter().position(|model| model == previous),
+                    None => None,
+                };
+                let names: Vec<&str> = models.iter().map(String::as_str).collect();
+                model_dropdown.set_model(Some(&gtk::StringList::new(&names)));
+                model_dropdown.set_selected(
+                    selection.map_or(gtk::INVALID_LIST_POSITION, |index| index as u32),
+                );
+                model_dropdown.set_sensitive(!models.is_empty());
                 *detected.borrow_mut() = models.clone();
                 if models.is_empty() {
                     status.set_text(
                     "Ollama is running but has no models. Run `ollama pull MODEL`, then press Refresh.",
                 );
                 } else {
-                    if model_entry.text().trim().is_empty()
-                        || !models
-                            .iter()
-                            .any(|model| model == model_entry.text().as_str())
-                    {
-                        model_entry.set_text(&models[0]);
-                    }
-                    status.set_text(&format!("Installed: {}", models.join(", ")));
+                    status.set_text(if previous.is_some() && selection.is_none() {
+                        "The previous model is no longer installed. Choose a model, then Save provider."
+                    } else {
+                        "Choose a model, then Save provider to use it."
+                    });
                 }
                 glib::ControlFlow::Break
             }
@@ -648,6 +674,22 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
     send.add_css_class("suggested-action");
     send.set_halign(gtk::Align::End);
     body.append(&send);
+    connect_request_submit(window, &state, &entry, &send, &status);
+    show_content(window, &root, 440, -1);
+    if let Some(request) = request {
+        entry.set_text(&request);
+        send.emit_clicked();
+    }
+}
+
+// Main requests and inline replies use the same worker, progress and cancellation path.
+fn connect_request_submit(
+    window: &adw::ApplicationWindow,
+    state: &AppState,
+    entry: &gtk::Entry,
+    send: &gtk::Button,
+    status: &gtk::Label,
+) {
     let window_clone = window.clone();
     let state_clone = state.clone();
     let entry_clone = entry.clone();
@@ -734,11 +776,6 @@ fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
     });
     let send_clone = send.clone();
     entry.connect_activate(move |_| send_clone.emit_clicked());
-    show_content(window, &root, 440, -1);
-    if let Some(request) = request {
-        entry.set_text(&request);
-        send.emit_clicked();
-    }
 }
 
 fn show_resolution(window: &adw::ApplicationWindow, state: AppState, resolution: Resolution) {
@@ -747,6 +784,12 @@ fn show_resolution(window: &adw::ApplicationWindow, state: AppState, resolution:
         Resolution::LocalProposal(proposal) => show_local_proposal(window, state, proposal),
         Resolution::Choose(choice) => show_choices(window, state, choice),
         Resolution::Explain(message) => show_message(window, state, &message),
+        Resolution::Clarify(message) => {
+            clear_panel_status();
+            state.reviewed_change.borrow_mut().take();
+            state.request.borrow_mut().clear();
+            render_message(window, state, &message, MessageKind::Reply);
+        }
         Resolution::Cancel => show_message(window, state, "Cancelled."),
     }
 }
@@ -1356,15 +1399,26 @@ fn show_message(window: &adw::ApplicationWindow, state: AppState, message: &str)
     clear_panel_status();
     state.reviewed_change.borrow_mut().take();
     state.request.borrow_mut().clear();
-    render_message(window, state, message, false);
+    render_message(window, state, message, MessageKind::Notice);
 }
 
 fn show_error_message(window: &adw::ApplicationWindow, state: AppState, message: &str) {
     write_panel_status("Peasy needs attention");
-    render_message(window, state, message, true);
+    render_message(window, state, message, MessageKind::Error);
 }
 
-fn render_message(window: &adw::ApplicationWindow, state: AppState, message: &str, error: bool) {
+enum MessageKind {
+    Notice,
+    Reply,
+    Error,
+}
+
+fn render_message(
+    window: &adw::ApplicationWindow,
+    state: AppState,
+    message: &str,
+    kind: MessageKind,
+) {
     let (root, body) = page("Peasy");
     let label = gtk::Label::new(Some(message));
     label.set_wrap(true);
@@ -1379,7 +1433,7 @@ fn render_message(window: &adw::ApplicationWindow, state: AppState, message: &st
         .child(&label)
         .build();
     body.append(&scroll);
-    if error {
+    if matches!(kind, MessageKind::Error) {
         let copy = gtk::Button::with_label("Copy diagnostics");
         let diagnostics = message.to_owned();
         let display = gtk::prelude::WidgetExt::display(window);
@@ -1396,12 +1450,38 @@ fn render_message(window: &adw::ApplicationWindow, state: AppState, message: &st
         body.append(&retry);
         add_system_status_button(&body, window, &state);
     }
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    controls.set_halign(gtk::Align::End);
+    let reply_entry = if matches!(kind, MessageKind::Reply) {
+        let reply_label = gtk::Label::new(Some("Reply"));
+        reply_label.set_halign(gtk::Align::Start);
+        body.append(&reply_label);
+        let entry = gtk::Entry::builder()
+            .placeholder_text("Type your reply…")
+            .hexpand(true)
+            .build();
+        body.append(&entry);
+        let status = gtk::Label::new(None);
+        status.set_halign(gtk::Align::Start);
+        status.set_wrap(true);
+        body.append(&status);
+        let send = gtk::Button::with_label("Send reply");
+        send.add_css_class("suggested-action");
+        connect_request_submit(window, &state, &entry, &send, &status);
+        controls.append(&send);
+        Some(entry)
+    } else {
+        None
+    };
     let done = gtk::Button::with_label("Done");
-    done.set_halign(gtk::Align::End);
     let window_clone = window.clone();
     done.connect_clicked(move |_| show_prompt(&window_clone, state.clone()));
-    body.append(&done);
+    controls.prepend(&done);
+    body.append(&controls);
     show_content(window, &root, 440, -1);
+    if let Some(entry) = reply_entry {
+        entry.grab_focus();
+    }
 }
 
 fn add_system_status_button(body: &gtk::Box, window: &adw::ApplicationWindow, state: &AppState) {

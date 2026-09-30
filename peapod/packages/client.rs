@@ -154,7 +154,7 @@ impl PeasyClient {
             }
 
             progress(ResolveStage::EvaluatingResults);
-            let action = self.model.interpret(
+            let answer = self.model.interpret(
                 request,
                 managed_configuration,
                 Some(&candidates),
@@ -164,7 +164,7 @@ impl PeasyClient {
                 pea,
             )?;
             match self.engine.resolve(&EngineInput {
-                action,
+                action: answer.action,
                 candidates: candidates.clone(),
                 installed: installed.to_vec(),
             })? {
@@ -227,7 +227,7 @@ impl PeasyClient {
                             .lock()
                             .expect("recent package mutex poisoned") = Some(candidate.clone());
                     }
-                    return Ok(Resolution::Explain(message));
+                    return Ok(Resolution::explanation(message, answer.needs_reply));
                 }
                 EngineDecision::Cancel => return Ok(Resolution::Cancel),
                 EngineDecision::Reject(message) => {
@@ -421,9 +421,10 @@ mod tests {
             ),
         ];
         let server = scripted_ipc(&socket, exchanges);
-        let (url, requests) = crate::tests::serve_json_once(
-            serde_json::json!({"message":{"content":serde_json::json!({"result":{"action":"install_package", "package":"virt-manager", "setup":setup.settings, "message":note}}).to_string()}}),
-        );
+        let (url, requests) = crate::tests::serve_ollama_responses(vec![
+            serde_json::json!({"done":true,"message":{"content":serde_json::json!({"result":{"action":"request_capability","capability":"setup"}}).to_string()}}),
+            serde_json::json!({"done":true,"message":{"content":serde_json::json!({"result":{"action":"install_package", "package":"virt-manager", "setup":setup.settings, "message":note}}).to_string()}}),
+        ]);
         let client = fixture_client(socket, url);
         let Resolution::Proposal(proposal) =
             client.resolve("install Virtual Machine Manager").unwrap()
@@ -444,7 +445,13 @@ mod tests {
         requests
             .recv_timeout(std::time::Duration::from_secs(2))
             .unwrap();
-        assert!(requests.try_recv().is_err(), "one model request suffices");
+        requests
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(
+            requests.try_recv().is_err(),
+            "selection and installation suffice"
+        );
         server.join().unwrap();
     }
 
@@ -492,13 +499,14 @@ mod tests {
             ],
         );
         let actions = [
+            serde_json::json!({"result":{"action":"request_capability","capability":"packages"}}),
             serde_json::json!({"result":{"action":"install_package","package":"postgresql","message":null,"setup":null}}),
             serde_json::json!({"result":{"action":"explain","message":"These are the requested client tools."}}),
         ];
-        let (url, requests) = crate::tests::serve_json_responses(
+        let (url, requests) = crate::tests::serve_ollama_responses(
             actions
                 .into_iter()
-                .map(|action| serde_json::json!({"message":{"content":action.to_string()}}))
+                .map(|action| serde_json::json!({"done":true,"message":{"content":action.to_string()}}))
                 .collect(),
         );
         let client = fixture_client(socket, url);
@@ -511,11 +519,14 @@ mod tests {
         requests
             .recv_timeout(std::time::Duration::from_secs(2))
             .unwrap();
-        let (_, second) = requests
+        requests
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let (_, selection) = requests
             .recv_timeout(std::time::Duration::from_secs(2))
             .unwrap();
         let boundary: serde_json::Value =
-            serde_json::from_str(second["messages"][1]["content"].as_str().unwrap()).unwrap();
+            serde_json::from_str(selection["messages"][1]["content"].as_str().unwrap()).unwrap();
         assert!(
             boundary
                 .to_string()
@@ -651,7 +662,7 @@ mod tests {
                 stream.write_all(b"\n").unwrap();
             });
             let action = serde_json::json!({"action":"explain", "message":explanation});
-            let (url, request) = crate::tests::serve_json_once(
+            let (url, request) = crate::tests::serve_ollama_once(
                 serde_json::json!({"message":{"role":"assistant", "content":action.to_string()},"done":true}),
             );
             let engine = std::env::var_os("PEASY_TEST_ENGINE").unwrap();

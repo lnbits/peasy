@@ -1,5 +1,9 @@
 """Keep the release gates and credential boundaries wired into GitHub Actions."""
 from pathlib import Path
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 import yaml
 
@@ -26,12 +30,45 @@ class PullRequestWorkflow(unittest.TestCase):
         nix_checks = '\n'.join(commands)
         self.assertIn('nix flake check --no-build', nix_checks)
         self.assertIn('nix eval --json .#checks.x86_64-linux --apply builtins.attrNames', nix_checks)
-        self.assertIn('".#checks.x86_64-linux.$check" || check_status=1', nix_checks)
+        self.assertIn('if ! nix build --no-link -L --max-jobs 1 ".#checks.x86_64-linux.$check"', nix_checks)
         self.assertIn('exit "$check_status"', nix_checks)
         checks = (ROOT / 'scripts/check-rust.sh').read_text()
         for command in ['cargo test --locked --workspace', 'cargo clippy --locked --workspace --all-targets',
                         '--include-ignored', 'pea_catalogue -- --check', 'scripts/pea-catalogue.py --check']:
             self.assertIn(command, checks)
+
+    def test_failed_build_is_reported_even_when_final_evaluation_passes(self):
+        workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+        command = next(step['run'] for step in workflow['jobs']['nix']['steps']
+                       if 'check_status=0' in step.get('run', ''))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = {
+                'nix': '''import json, sys
+if sys.argv[1] == 'eval':
+    print(json.dumps(['sandbox', 'updates']))
+elif sys.argv[1] == 'build':
+    print('built ' + sys.argv[-1])
+    sys.exit(1 if sys.argv[-1].endswith('.sandbox') else 0)
+else:
+    print('all checks passed!')
+''',
+                'jq': '''import json, sys
+with open(sys.argv[-1]) as source:
+    print('\\n'.join(json.load(source)))
+''',
+            }
+            for name, body in scripts.items():
+                path = root / name
+                path.write_text(f'#!{sys.executable}\n{body}')
+                path.chmod(0o755)
+            result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', command],
+                                    cwd=root, env=os.environ | {'PATH': f'{root}:{os.environ["PATH"]}'},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('built .#checks.x86_64-linux.updates', result.stdout)
+            self.assertIn('all checks passed!', result.stdout)
+            self.assertTrue(result.stdout.rstrip().endswith('::error::Failed checks: sandbox'), result.stdout)
 
 
 class ReleaseWorkflow(unittest.TestCase):

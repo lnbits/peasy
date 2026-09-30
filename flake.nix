@@ -122,6 +122,11 @@
             inherit pkgs;
             package = corePackage;
           };
+          nixpkgs-reference = import ./nix/tests/nixpkgs-reference.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+            package = corePackage;
+          };
           core-package =
             pkgs.runCommand "peasy-core-package-check" { nativeBuildInputs = [ pkgs.gnugrep ]; }
               ''
@@ -157,6 +162,8 @@
                   ${./nix/package-core.nix} \
                   ${./nix/iso-common.nix} \
                   ${./nix/iso-appearance.nix} \
+                  ${./nix/iso-ollama.nix} \
+                  ${./nix/ollama-model.nix} \
                   ${./nix/iso-boot-branding.nix} \
                   ${./nix/iso-branding/default.nix} \
                   ${./nix/iso-gnome.nix} \
@@ -165,6 +172,7 @@
                   ${./nix/installer-target.nix} \
                   ${./nix/installer-offline.nix} \
                   ${./nix/tests/desktop-config.nix} \
+                  ${./nix/tests/nixpkgs-reference.nix} \
                   ${./nix/tests/export.nix} \
                   ${./nix/tests/iso-config.nix} \
                   ${./nix/tests/release.nix} \

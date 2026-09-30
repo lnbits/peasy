@@ -8,6 +8,17 @@ let
   plasma = configurations.peasy-iso-plasma.config;
   isoPkgs = configurations.peasy-iso-plasma.pkgs;
   artwork = import ../iso-branding { pkgs = isoPkgs; };
+  validOllama =
+    cfg:
+    cfg.services.ollama.enable
+    && cfg.services.ollama.package == isoPkgs.ollama-cpu
+    && cfg.services.ollama.host == "127.0.0.1"
+    && cfg.services.ollama.port == 11434
+    && !cfg.services.ollama.openFirewall
+    && cfg.services.ollama.loadModels == [ ]
+    && cfg.environment.sessionVariables.PEASY_DEFAULT_OLLAMA_MODEL == "qwen3:0.6b"
+    && cfg.services.ollama.environmentVariables.OLLAMA_NO_CLOUD == "1"
+    && pkgs.lib.hasInfix "/manifests/registry.ollama.ai/library/qwen3/0.6b" cfg.systemd.services.ollama.preStart;
   validOffline =
     desktop: system:
     let
@@ -22,6 +33,7 @@ let
     && !(cached.configuration ? isoImage)
     && cached.configuration.networking.networkmanager.enable
     && cached.configuration.hardware.bluetooth.enable
+    && validOllama cached.configuration
     && cached.configuration.boot.loader.grub.theme == null
     && cached.configuration.system.nixos.version == system.config.system.nixos.version
     && cached.configuration.services.speechd.package == pkgs.speechd
@@ -30,6 +42,7 @@ let
   valid =
     cfg:
     cfg.services.peasy.enable
+    && validOllama cfg
     && cfg.networking.networkmanager.enable
     && cfg.hardware.bluetooth.enable
     && !(builtins.elem "nixpkgs=flake:nixpkgs" cfg.nix.nixPath)

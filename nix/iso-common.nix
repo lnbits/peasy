@@ -8,6 +8,7 @@
   imports = [
     ./module.nix
     ./iso-appearance.nix
+    ./iso-ollama.nix
     ./iso-boot-branding.nix
   ];
   services.peasy.enable = true;
@@ -53,7 +54,9 @@
     Peasy system Apply is disabled in this live session; search and supported
     local desktop actions remain available. Do not put production API keys on
     a shared live session. Live-session settings and keys are not copied into
-    the installed system. Configure your own AI provider after installation.
+    the installed system. Local Ollama with Qwen 0.6B is bundled and selected
+    by default, both here and after installation. No account or model download
+    is needed. You can change provider or model in Peasy settings.
   '';
 
   # The upstream live image grants wheel passwordless Polkit access for its

@@ -69,11 +69,11 @@ impl PeasyClient {
         managed: &str,
         installed: &[String],
         theme: &ThemeSettings,
-    ) -> Result<ModelAction> {
+    ) -> Result<crate::ModelAnswer> {
         manifest.validate()?;
         let mut context = json!({"instruction":"Use this pea's domain instructions and declared action/field constraints through the host's compact transport schema. The host independently enforces its permissions."});
         for _ in 0..2 {
-            let action = self.model.interpret_with_feedback(
+            let answer = self.model.interpret_with_feedback(
                 request,
                 managed,
                 None,
@@ -83,13 +83,13 @@ impl PeasyClient {
                 Some(&context.to_string()),
                 Some(manifest),
             )?;
-            if matches!(action, ModelAction::InspectNetwork) {
+            if matches!(answer.action, ModelAction::InspectNetwork) {
                 context["network_snapshot"] = serde_json::to_value(self.network_snapshot()?)?;
                 context["instruction"] = json!(
                     "Network resources have been discovered. Return a final guarded plan or explanation; do not repeat discovery."
                 );
             } else {
-                return Ok(action);
+                return Ok(answer);
             }
         }
         bail!("pea exceeded the bounded discovery loop")
@@ -150,7 +150,7 @@ impl PeasyClient {
             id.to_owned()
         } else {
             let context = json!({"official_pea_catalogue":compatible,"instruction":"Select use_pea with an exact compatible id only if it supplies the missing capability. Otherwise explain the limitation. Do not repeat discovery."});
-            match self.model.interpret_with_feedback(
+            let answer = self.model.interpret_with_feedback(
                 request,
                 managed,
                 None,
@@ -159,9 +159,12 @@ impl PeasyClient {
                 None,
                 Some(&context.to_string()),
                 None,
-            )? {
+            )?;
+            match answer.action {
                 ModelAction::UsePea { id } => id,
-                ModelAction::Explain { message } => return Ok(Resolution::Explain(message)),
+                ModelAction::Explain { message } => {
+                    return Ok(Resolution::explanation(message, answer.needs_reply));
+                }
                 ModelAction::Cancel => return Ok(Resolution::Cancel),
                 _ => {
                     bail!("catalogue selection must name a returned pea or explain the limitation")
@@ -283,7 +286,7 @@ mod tests {
         crate::ModelBackend,
         std::sync::mpsc::Receiver<(String, Value)>,
     ) {
-        let (base_url, request) = crate::tests::serve_json_once(
+        let (base_url, request) = crate::tests::serve_ollama_once(
             json!({"message":{"role":"assistant","content":json!({"result":action}).to_string()},"done":true}),
         );
         let model = crate::ModelBackend::new(crate::ModelProvider::Ollama {
@@ -397,7 +400,12 @@ mod tests {
             let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
             assert_eq!(
                 body["format"],
-                crate::model_wire::schema(&manifest.response_schema)
+                crate::prompt_plan::Plan::new(
+                    &manifest.response_schema,
+                    crate::prompt_plan::initial(Some(&manifest), None),
+                    true
+                )
+                .schema
             );
         }
     }
@@ -431,7 +439,12 @@ mod tests {
             let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
             assert_eq!(
                 body["format"],
-                crate::model_wire::schema(&manifest.response_schema)
+                crate::prompt_plan::Plan::new(
+                    &manifest.response_schema,
+                    crate::prompt_plan::initial(Some(&manifest), None),
+                    true
+                )
+                .schema
             );
             let result = if fallback {
                 let Resolution::Choose(choice) = first.unwrap() else {
@@ -444,7 +457,12 @@ mod tests {
                 let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
                 assert_eq!(
                     body["format"],
-                    crate::model_wire::schema(&manifest.response_schema)
+                    crate::prompt_plan::Plan::new(
+                        &manifest.response_schema,
+                        crate::prompt_plan::initial(Some(&manifest), None),
+                        true
+                    )
+                    .schema
                 );
                 result
             } else {
@@ -513,7 +531,12 @@ mod tests {
             let (_, body) = request.recv_timeout(Duration::from_secs(5)).unwrap();
             assert_eq!(
                 body["format"],
-                crate::model_wire::schema(&manifest.response_schema)
+                crate::prompt_plan::Plan::new(
+                    &manifest.response_schema,
+                    crate::prompt_plan::initial(Some(&manifest), None),
+                    true
+                )
+                .schema
             );
         }
         server.join().unwrap();
@@ -625,7 +648,7 @@ mod tests {
             (json!({"action":"set_theme","theme_color":"red"}), false),
             (json!({"action":"use_pea","pea_id":"appearance"}), false),
         ] {
-            let (base_url, request) = crate::tests::serve_json_once(
+            let (base_url, request) = crate::tests::serve_ollama_once(
                 json!({"message":{"role":"assistant","content":json!({"result":action}).to_string()},"done":true}),
             );
             let temp = tempfile::tempdir().unwrap();

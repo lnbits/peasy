@@ -4,6 +4,7 @@
   imports = [
     ./peasy/nix/module.nix
     ./peasy/nix/iso-appearance.nix
+    ./peasy/nix/iso-ollama.nix
   ]
   ++ lib.optional (builtins.pathExists ./.peasy/peasy-managed.nix) ./.peasy/peasy-managed.nix;
   services.peasy.enable = true;
