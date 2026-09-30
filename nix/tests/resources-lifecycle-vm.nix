@@ -270,20 +270,24 @@ pkgs.testers.runNixOSTest {
     machine.succeed("setfacl -b /run/peasy/peasy.sock")
     assert request({"request":"propose_resources","change":{"operation":"user_create","name":"administrator"}})["response"] == "error"
     machine.succeed("cp ${key}/key /tmp/test-key; chmod 600 /tmp/test-key")
-    ssh = "ssh -i /tmp/test-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes guest@localhost true"
-    machine.succeed(ssh)
+    # SSH must not read the test driver's shell input: it can consume the
+    # return-code command after the remote session closes and hang the driver.
+    ssh = "ssh -n -T -i /tmp/test-key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 guest@localhost true"
+    machine.succeed(ssh, timeout=30)
     switch("trusted")
     port(4444, True)
     switch("disabled")
     port(2222, True); port(3333, False); port(4444, False)
     assert machine.succeed("id -u guest").strip() == "1001"
     machine.succeed("getent passwd guest | grep /bin/nologin; grep '^DenyUsers guest$' /etc/ssh/sshd_config")
-    machine.fail(ssh)
+    # Require an SSH rejection, rather than accepting a timeout as denial.
+    status, output = machine.execute(ssh, timeout=30)
+    assert status == 255, (status, output)
     machine.succeed("journalctl -u sshd --no-pager | grep 'guest.*DenyUsers'")
     switch("restored")
     assert machine.succeed("id -u guest").strip() == "1001"
     machine.fail("getent passwd guest | grep /bin/nologin")
-    machine.succeed(ssh)
+    machine.succeed(ssh, timeout=30)
     assert "wheel" in machine.succeed("id -nG peasytest").split()
   '';
 }

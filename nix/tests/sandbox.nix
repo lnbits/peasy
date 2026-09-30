@@ -293,6 +293,12 @@ pkgs.testers.runNixOSTest {
     start_all()
     machine.wait_for_unit("peasy-system.service")
     machine.wait_for_file("/run/peasy/peasy.sock")
+    # environment.etc creates a store symlink. Nix resolves relative imports
+    # beside its target, so ./.peasy would incorrectly mean /nix/store/.peasy.
+    # Use a regular host file, matching the writable configuration under test.
+    machine.succeed("cp /etc/nixos/configuration.nix /tmp/peasy-host-configuration.nix")
+    machine.succeed("install -m 0644 /tmp/peasy-host-configuration.nix /etc/nixos/configuration.nix")
+    machine.succeed("test ! -L /etc/nixos/configuration.nix")
     machine.succeed("test -x ${package}/bin/peasy")
     machine.succeed("test -x ${package}/libexec/peasy-system")
     machine.fail("test -e ${package}/bin/peasy-ui")
