@@ -1,7 +1,7 @@
 {
   "id": "system_configuration",
-  "version": "1.4.0",
-  "host_api": 5,
+  "version": "1.5.0",
+  "host_api": 6,
   "capabilities": [
     "Configure application dependencies, reviewed NixOS enable options and caller-bound groups"
   ],

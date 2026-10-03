@@ -1,7 +1,7 @@
 {
   "id": "appearance",
-  "version": "1.4.0",
-  "host_api": 5,
+  "version": "1.5.0",
+  "host_api": 6,
   "capabilities": [
     "Inspect and configure supported desktop colours and light or dark appearance"
   ],

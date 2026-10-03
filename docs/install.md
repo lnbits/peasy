@@ -209,9 +209,9 @@ contacting the model, but arbitrary pasted secrets cannot be reliably detected.
 On a manual installation, the first launch opens provider setup with **Ollama
 (local)** selected by default.
 An existing provider choice (including older OpenAI key-only setups) is preserved.
-This does not automatically install Ollama or download a model; use the local
-setup below, or select OpenAI instead. OpenAI requires an API key. The key is
-stored for the current user in `~/.config/peasy/openai-key` with mode `0600`.
+Opening settings does not install anything. Enable Ollama using the setup below,
+then select a model to download, or select OpenAI instead. OpenAI requires an API
+key, stored for the current user in `~/.config/peasy/openai-key` with mode `0600`.
 
 The [Peasy ISO](iso.md) bundles Ollama and Qwen3 0.6B and supplies
 `PEASY_DEFAULT_OLLAMA_MODEL=qwen3:0.6b` in the live and installed desktop sessions.
@@ -227,11 +227,64 @@ services.peasy = {
 };
 ```
 
-After rebuilding, install a model and select it from Peasy's settings:
+After rebuilding, open **Settings → Ollama (local)**. The model selector shows
+installed models and a short recommendation list. Its initial download choices are:
 
-```console
-ollama pull qwen3:8b
-```
+| Model | Approximate download |
+| --- | --- |
+| Qwen3 0.6B (bundled on the ISO) | 523 MB |
+| Qwen3 1.7B | 1.4 GB |
+| Qwen3 4B | 2.5 GB |
+| Qwen3.5 2B | 2.7 GB |
+| Qwen3.5 4B | 3.4 GB |
+| Qwen3 8B | 5.2 GB |
+
+Sizes are from the [Qwen3](https://ollama.com/library/qwen3) and
+[Qwen3.5](https://ollama.com/library/qwen3.5) registries (October 2026), and may
+change. Running a model also requires memory for inference and context. These
+choices balance size, multilingual coverage and agent support; they have not
+been benchmarked across Peasy’s tasks.
+
+Selecting an uninstalled choice starts its download through the local Ollama
+service. Progress is per file. **Cancel download** or closing settings cancels
+the active request; Ollama manages any cached partial files. Peasy confirms the
+model appears in the installed list before making it selectable for use. Choose
+**Save provider** to activate it. Opening or refreshing settings never downloads
+model weights, and a failed download preserves the saved provider.
+
+Other models already installed in Ollama remain selectable. To add one outside
+the download catalogue, use `ollama pull MODEL`, then **Refresh models**.
+Only Qwen3 0.6B remains bundled in the ISO; the five additional choices are
+optional downloads. Peasy does not start model inference while downloading.
+
+Settings automatically checks Peasy’s published recommendation list on GitHub
+when local Ollama is available. Successful lists are cached for six hours within
+the running app; **Refresh models** checks again immediately. Offline,
+unavailable or invalid lists fall back to the last
+valid list in memory, or the list included with Peasy. Installed models remain
+listed even when recommendations change. Model weights and the saved provider
+are never updated automatically.
+
+To publish new recommendations, edit
+[`ollama-catalogue.json`](../crates/peasy-client/src/ollama-catalogue.json) on
+`lnbits/peasy`’s `main` branch. Keep format version `1`, bundled `qwen3:0.6b`
+first, and exactly five other reviewed choices with approximate download sizes
+in bytes. Use explicit official-library tags; namespaces, remote registries,
+cloud tags and `latest` are rejected. Check suitability for Peasy’s structured
+requests and supported Ollama version before publishing. Clients with this
+feature pick up the new list without a Peasy rebuild; it does not discover or
+recommend new releases without maintainer review.
+
+Select an installed model and choose **Remove model** to uninstall it after
+confirmation. If it is the saved active Ollama model, first select another model
+or provider and **Save provider**. Removal affects all apps using that local
+Ollama service. Peasy confirms removal with a fresh installed-model list; after
+an uncertain result, use **Refresh models** before retrying. Shared model data
+may remain if other models use it.
+
+On ISO-based systems, removing bundled Qwen3 0.6B does not free its immutable
+Nix store files, and NixOS restores it when Ollama restarts. Optional downloads
+are not restored automatically.
 
 Provider setup is also available in the terminal:
 

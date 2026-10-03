@@ -15,6 +15,10 @@ Peasy uses OpenAI or local Ollama to propose package, system and desktop changes
 The model selects structured operations. Peasy validates them, presents a review
 and applies the approved changes.
 
+Peasy also supports follow-up chat, text and image attachments, read-only computer
+diagnosis, and opening installed applications. OpenAI adds web research; unsupported
+requests explain the selected model’s limits. See [conversation and tasks](docs/chat.md).
+
 ## Contract
 
 - System changes require review and administrator authentication. Peasy generates
@@ -72,6 +76,8 @@ sudo systemctl restart peasy-system
 Log out and back in, then open Peasy from the application menu or tray. Choose
 OpenAI or Ollama in Settings. The user must belong to `wheel` for system changes.
 See [installation](docs/install.md) for flakes, headless use and provider setup.
+The desktop follows the OS language, with ten bundled languages and English
+fallback. See [localisation](docs/localisation.md) to add a translation.
 
 Enabling Peasy desktop does not enable NetworkManager or Bluetooth. Configure
 `networking.networkmanager.enable` and `hardware.bluetooth.enable` explicitly
@@ -95,7 +101,7 @@ update. The LLM chooses combinations, while the host enforces the current schema
 and permissions. Arbitrary NixOS options are not currently supported.
 
 [Resource peas](docs/resources.md) add diagnostics, services, removable storage,
-Nix maintenance, users, firewall, printing, displays, audio and power. Their
+Nix maintenance, users, firewall, printing, displays, audio, power and applications. Their
 contracts distinguish live effects from persistent NixOS configuration.
 
 GNOME and Plasma have appearance adapters. Hyprland has bounded live controls.

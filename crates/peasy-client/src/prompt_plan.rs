@@ -17,6 +17,7 @@ pub(super) enum Focus {
     Calendar,
     Hyprland,
     Networking,
+    Applications,
     Diagnostics,
     Services,
     Storage,
@@ -32,6 +33,11 @@ pub(super) enum Focus {
 }
 
 const FOCI: &[(Focus, &str, &str)] = &[
+    (
+        Focus::Applications,
+        "applications",
+        "open or launch an installed desktop application",
+    ),
     (
         Focus::Packages,
         "packages",
@@ -127,7 +133,8 @@ impl Focus {
                 "hyprland_dispatch",
             ],
             Self::Networking => &["inspect_network", "configure_network"],
-            Self::Diagnostics
+            Self::Applications
+            | Self::Diagnostics
             | Self::Services
             | Self::Storage
             | Self::NixMaintenance
@@ -143,6 +150,7 @@ impl Focus {
     }
     fn domain(self) -> Option<ResourceDomain> {
         Some(match self {
+            Self::Applications => ResourceDomain::Applications,
             Self::Diagnostics => ResourceDomain::Diagnostics,
             Self::Services => ResourceDomain::Services,
             Self::Storage => ResourceDomain::Storage,
@@ -400,6 +408,7 @@ impl Plan {
                 instructions.push_str(" Use request_clarification only when missing information materially changes the correct action and cannot be resolved from the request or host facts. Ask one concise question. For clear requests, act without asking for confirmation; the host already reviews changes. Questions needing a user answer use request_clarification, while explain gives a completed answer or limitation. ");
             }
         }
+        instructions.push_str(&peasy_core::i18n::model_language_instruction());
         instructions.push_str(model_wire::INSTRUCTIONS);
         if !allow_routing {
             instructions.push_str(" Scope selection is complete. Return a valid action here, or use request_clarification for a necessary missing detail; do not invent missing fields or silently omit requirements. ");

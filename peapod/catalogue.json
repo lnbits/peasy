@@ -4,12 +4,12 @@
     {
       "package": {
         "id": "appearance",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "appearance"
         ],
-        "hash": "009526cdeab52c15f1733c1fba989fc903ac14588a2655a565a30ffcf835c320"
+        "hash": "c7a5c7ba449812a1cbbba765a58b211c59cbb3114feba7d1f0b014af44391342"
       },
       "capabilities": [
         "Inspect and configure supported desktop colours and light or dark appearance"
@@ -18,12 +18,12 @@
     {
       "package": {
         "id": "appimages",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "packages"
         ],
-        "hash": "21e1f127dab09df187f26366e5b9283cff9d635446c31be019ef7a00f15d502b"
+        "hash": "5b225b34b71f3484d7a767319eccf8de7a5fa290d15dfd4ff900c1eb2312cdac"
       },
       "capabilities": [
         "Discover and install pinned upstream AppImage releases"
@@ -31,14 +31,29 @@
     },
     {
       "package": {
+        "id": "applications",
+        "version": "1.5.0",
+        "host_api": 6,
+        "permissions": [
+          "applications.read",
+          "applications.write"
+        ],
+        "hash": "3750e989998f188a7dda32467fcc6d73415ffbd02a773135e42d855612706c24"
+      },
+      "capabilities": [
+        "Find and open installed desktop applications"
+      ]
+    },
+    {
+      "package": {
         "id": "audio",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "audio.read",
           "audio.write"
         ],
-        "hash": "46471d7d9c38dd24765355822b453bf0c01bb0294dc4acace60a4969cab9a58a"
+        "hash": "e42405a2f5db210c25f959430b6d1fac88a0be2fb25b8b9b0349133f4b6214ab"
       },
       "capabilities": [
         "Audio: bounded inspection and reviewed resource management"
@@ -47,12 +62,12 @@
     {
       "package": {
         "id": "bluetooth",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "bluetooth"
         ],
-        "hash": "297297b2e91a861d5ba9d2abdb738b90d68bd332a0168f75acfd22ee73d7ef3d"
+        "hash": "cf3b2962af94246e730701238adb714511598c557852cd2eba78bdb421290cd7"
       },
       "capabilities": [
         "Discover and connect or pair Bluetooth devices"
@@ -61,12 +76,12 @@
     {
       "package": {
         "id": "calendar",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "calendar"
         ],
-        "hash": "59975a6e8333b68d6d90b7d440f57680c120e4c578ce22b82333fca4f1783dfc"
+        "hash": "7218f14c20872a13ad9bf70ed2d390c8e3b8d09625bf95a128f21830e734ceff"
       },
       "capabilities": [
         "Prepare local calendar events for import"
@@ -75,12 +90,12 @@
     {
       "package": {
         "id": "diagnostics",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "diagnostics.read"
         ],
-        "hash": "940ee324220fb61cbb19e13b198439997c0d657127fde103ea3aa3202b4251e8"
+        "hash": "61088e56a685faed2c8cfd19d3bc5176e77f85108baa3b72170471aa72639f0d"
       },
       "capabilities": [
         "System diagnostics: bounded inspection"
@@ -89,13 +104,13 @@
     {
       "package": {
         "id": "displays",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "displays.read",
           "displays.write"
         ],
-        "hash": "84b4b7b1d0aa26da57da465aadf3160de69d8322ecee157460973d6b1298ecde"
+        "hash": "68cc4cb12c1e4f923586ddcffd38ab1c1b9907bcc530e544e719a914e13c02bd"
       },
       "capabilities": [
         "Displays: bounded inspection and reviewed resource management"
@@ -104,13 +119,13 @@
     {
       "package": {
         "id": "firewall",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "firewall.read",
           "firewall.write"
         ],
-        "hash": "2cb4a07bedc5a8d7721d9e3ce8a4620b4ea983dbf6e07b2dbfa5facab81eb1c2"
+        "hash": "0c77d8427776ee4cb5ee691207a0b82cf8c4196ac26b65e83e170fa2173f7ee0"
       },
       "capabilities": [
         "Firewall: bounded inspection and reviewed resource management"
@@ -119,12 +134,12 @@
     {
       "package": {
         "id": "hyprland",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "hyprland"
         ],
-        "hash": "e151c4e9536a73d92ad8851b32bd7b211011b8e034b984daedda99a7d96ccdc7"
+        "hash": "bd1d7de356f966fe45780f8a5010a54acd678760d5c280259c5993ac228178cd"
       },
       "capabilities": [
         "Inspect and control supported live Hyprland settings and window actions"
@@ -133,14 +148,14 @@
     {
       "package": {
         "id": "networking",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "network.read",
           "network.session",
           "network.system"
         ],
-        "hash": "05b5c72b783e8206313e60bb69af4395f07089cd73353f5d6b127f099ba5f716"
+        "hash": "b688fa3753ff9223c070c246dc13379075e5f784ac08b8c0b800e00c85bf5e65"
       },
       "capabilities": [
         "Inspect interfaces, connection profiles, IPv4 addressing and routes",
@@ -150,13 +165,13 @@
     {
       "package": {
         "id": "nix_maintenance",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "nix_maintenance.read",
           "nix_maintenance.write"
         ],
-        "hash": "3352624bb8e48561f8ee1892f10b13028bd4a2a0e190ea968bc71f83bb86f88e"
+        "hash": "5156bb09dd18fb9d93717d6c49df2fe31d6a97c7c5ea98644aeb6a408c7e4271"
       },
       "capabilities": [
         "Nix maintenance: bounded inspection and reviewed resource management"
@@ -165,12 +180,12 @@
     {
       "package": {
         "id": "packages",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "packages"
         ],
-        "hash": "5af5ecddde8df5b3c056be5e53ccbb2bd0b02b0ad22c7a328da3d5360731fec9"
+        "hash": "7d1c7c25d6fc7948d393593a194a95ff0c24feda683fe42fb4123a97be06d4b4"
       },
       "capabilities": [
         "Find, install and remove Nixpkgs applications and their reviewed system integration"
@@ -179,13 +194,13 @@
     {
       "package": {
         "id": "power",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "power.read",
           "power.write"
         ],
-        "hash": "cd20d83d49a1160a96698dfca9f42acb2d7c00892eeed452a50f7066783f1dcd"
+        "hash": "0e73ca362032e014012709a581f9914beccef747618c26ea10940f1a307a53cd"
       },
       "capabilities": [
         "Power: bounded inspection and reviewed resource management"
@@ -194,13 +209,13 @@
     {
       "package": {
         "id": "printing",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "printing.read",
           "printing.write"
         ],
-        "hash": "65468de0a7a9739b2b64b21dfff0a9f57af7160acc48833610a48bd9708c4d10"
+        "hash": "5adfc7844b4a396723b24c428ad884619b9971eb5722e193ac8f3deb23136669"
       },
       "capabilities": [
         "Printing: bounded inspection and reviewed resource management"
@@ -209,13 +224,13 @@
     {
       "package": {
         "id": "services",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "services.read",
           "services.write"
         ],
-        "hash": "9b467a0b96cfb4cb02a94070cd8d8e401ac1875a7037e136fa4c88dfd2400940"
+        "hash": "b89e5d0d859a2bf9e369afeaa1d57f8fe9b9bd4e47e8344d46de22865f185b27"
       },
       "capabilities": [
         "Services: bounded inspection and reviewed resource management"
@@ -224,13 +239,13 @@
     {
       "package": {
         "id": "storage",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "storage.read",
           "storage.write"
         ],
-        "hash": "f23e51b08a8c89646b1df84d7af40aa602396d6b94cbd9af8075faafd2570069"
+        "hash": "76964e763aad98c869e7a1bcfbf0e01b0c24dd39daa527b1ec31cdcd9162fadb"
       },
       "capabilities": [
         "Storage: bounded inspection and reviewed resource management"
@@ -239,12 +254,12 @@
     {
       "package": {
         "id": "system_configuration",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "packages"
         ],
-        "hash": "b1033a36e80828340e83233a06f4f1a51a8658d17a660bc9e91ee1990bb97ccc"
+        "hash": "a26cbf26792c3270df7428aa223c4cd22b144cbb3c9d031751e40f817f5950ce"
       },
       "capabilities": [
         "Configure application dependencies, reviewed NixOS enable options and caller-bound groups"
@@ -253,13 +268,13 @@
     {
       "package": {
         "id": "users",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "users.read",
           "users.write"
         ],
-        "hash": "2067600c7d8fbd378ef083cf81cd06b92ed7a3e463c549a9a9fa67cf234cd184"
+        "hash": "119d2adccb905730044e5edf2857537d5997c6df56c1e001a832f36ccc96279b"
       },
       "capabilities": [
         "Users: bounded inspection and reviewed resource management"
@@ -268,12 +283,12 @@
     {
       "package": {
         "id": "wifi",
-        "version": "1.4.0",
-        "host_api": 5,
+        "version": "1.5.0",
+        "host_api": 6,
         "permissions": [
           "wifi"
         ],
-        "hash": "46759a8696c101ed718607ac989e5e32ea09c7fa252b8dfdf6871a2cd25e6843"
+        "hash": "af0c4d8c3c10555943b87f5c2d4a473357646ec33bc208e91fa5683c549a4f43"
       },
       "capabilities": [
         "Discover nearby Wi-Fi networks and connect to an exact SSID"

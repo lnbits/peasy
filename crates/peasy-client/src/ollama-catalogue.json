@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "name": "qwen3:0.6b",
+      "size": 523000000
+    },
+    {
+      "name": "qwen3:1.7b",
+      "size": 1400000000
+    },
+    {
+      "name": "qwen3:4b",
+      "size": 2500000000
+    },
+    {
+      "name": "qwen3.5:2b",
+      "size": 2700000000
+    },
+    {
+      "name": "qwen3.5:4b",
+      "size": 3400000000
+    },
+    {
+      "name": "qwen3:8b",
+      "size": 5200000000
+    }
+  ]
+}

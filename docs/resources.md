@@ -1,8 +1,9 @@
 # Resource pea protocol
 
 Host API 4 adds diagnostics, services, storage, Nix maintenance, users, firewall,
-printing, displays, audio and power. These are native host capabilities with
-data-only pea manifests. API 5 adds signed display positions and independently
+printing, displays, audio, power and applications. These are native host capabilities with
+data-only pea manifests. API 6 adds session-only installed application opening.
+API 5 adds signed display positions and independently
 optional power settings. API 1–4 schemas and permissions remain unchanged.
 
 ## Discovery and permission

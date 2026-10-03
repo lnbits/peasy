@@ -1,5 +1,6 @@
 //! Read backup data without evaluating any file as Nix or executing bundled code.
 use anyhow::{Context, Result, bail};
+use peasy_core::i18n::{tr, tr_args};
 use peasy_core::{PackageState, PortableBackup, parse_packages_module};
 use std::{fs::OpenOptions, io::Read, os::unix::fs::OpenOptionsExt, path::Path};
 const MAX_BACKUP_FILE: u64 = 4 * 1024 * 1024;
@@ -64,29 +65,29 @@ pub(super) fn read_backup(path: &Path) -> Result<Backup> {
     }
     let mut deferred = Vec::new();
     deferred.extend(original.setups.iter().map(|s| {
-        format!(
-            "Service setup: {} — review services and user access",
-            s.package
+        tr_args(
+            "Service setup: {name} — review services and user access",
+            &[("name", &s.package)],
         )
     }));
-    deferred.extend(
-        original
-            .networks
-            .iter()
-            .map(|n| format!("Network: {} — select a destination interface", n.id)),
-    );
-    deferred.extend(
-        original
-            .appimages
-            .iter()
-            .map(|a| format!("AppImage: {} — select a compatible release", a.display_name)),
-    );
+    deferred.extend(original.networks.iter().map(|n| {
+        tr_args(
+            "Network: {name} — select a destination interface",
+            &[("name", &n.id)],
+        )
+    }));
+    deferred.extend(original.appimages.iter().map(|a| {
+        tr_args(
+            "AppImage: {name} — select a compatible release",
+            &[("name", &a.display_name)],
+        )
+    }));
     let deferred = if deferred.is_empty() {
-        "No saved service setups, network profiles or AppImages need separate review.".into()
+        tr("No saved service setups, network profiles or AppImages need separate review.")
     } else {
-        format!(
-            "These saved items are not applied by this restore. Recreate them through Peasy on this machine:\n\n{}",
-            deferred.join("\n")
+        tr_args(
+            "These saved items are not applied by this restore. Recreate them through Peasy on this machine:\n\n{items}",
+            &[("items", &deferred.join("\n"))],
         )
     };
     Ok(Backup { portable, deferred })

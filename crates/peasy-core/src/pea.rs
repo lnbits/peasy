@@ -6,10 +6,12 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
-pub const HOST_API: u32 = 5;
+pub const HOST_API: u32 = 6;
 pub const POLICY_PATH: &str = "/etc/peasy/pea-policy.json";
 pub const MAX_PACK_BYTES: usize = 64 * 1024;
 pub const PERMISSIONS: &[&str] = &[
+    "applications.read",
+    "applications.write",
     "diagnostics.read",
     "services.read",
     "services.write",
@@ -193,6 +195,7 @@ fn schema_with_permissions(mut schema: Value, permissions: &[String]) -> Value {
             "display" => "displays",
             "audio" => "audio",
             "firewall" => "firewall",
+            "open_application" => "applications",
             _ => return false,
         };
         permissions.contains(&format!("{domain}.write"))
@@ -216,6 +219,13 @@ const LEGACY_MESSAGE_CHARS: usize = 400;
 // Do not derive legacy enums from the expanding current catalogue.
 fn schema_for_api(permissions: &[String], api: u32) -> Value {
     let mut schema = schema_for_permissions(permissions);
+    if api == 5 {
+        schema = schema_with_permissions(
+            serde_json::from_str(include_str!("../../../peapod/tests/api5-model-schema.json"))
+                .expect("frozen API 5 schema"),
+            permissions,
+        );
+    }
     if api == 4 {
         schema = schema_with_permissions(
             serde_json::from_str(include_str!("../../../peapod/tests/api4-model-schema.json"))
@@ -253,6 +263,14 @@ impl PeaManifest {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_network_id(&self.id)?;
         validate_permissions(&self.permissions)?;
+        if self.host_api < 6
+            && self
+                .permissions
+                .iter()
+                .any(|p| p.starts_with("applications."))
+        {
+            return Err(invalid("application launching requires host API 6"));
+        }
         if self.host_api < 4
             && self
                 .permissions
@@ -261,7 +279,7 @@ impl PeaManifest {
         {
             return Err(invalid("resource permissions require host API 4"));
         }
-        if !matches!(self.host_api, 1 | 2 | 3 | 4 | HOST_API) {
+        if !matches!(self.host_api, 1 | 2 | 3 | 4 | 5 | HOST_API) {
             return Err(invalid("pea requires a different host API; update Peasy"));
         }
         if !bounded(&self.version, 32)
@@ -312,6 +330,9 @@ impl PeaManifest {
             }
         }
         if let ModelAction::InspectResources { query } = action {
+            if self.host_api < 6 && query.domain == crate::ResourceDomain::Applications {
+                return false;
+            }
             return self.host_api >= 4
                 && query.validate().is_ok()
                 && self
@@ -319,6 +340,9 @@ impl PeaManifest {
                     .contains(&format!("{}.read", query.domain.id()));
         }
         if let ModelAction::ChangeResources { change } = action {
+            if self.host_api < 6 && change.domain() == crate::ResourceDomain::Applications {
+                return false;
+            }
             if self.host_api < 5
                 && match change {
                     crate::ResourceChange::Display { x, y, .. } => *x < 0 || *y < 0,
@@ -373,6 +397,14 @@ impl PeaPin {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_network_id(&self.id)?;
         validate_permissions(&self.permissions)?;
+        if self.host_api < 6
+            && self
+                .permissions
+                .iter()
+                .any(|p| p.starts_with("applications."))
+        {
+            return Err(invalid("application launching requires host API 6"));
+        }
         if self.host_api < 4
             && self
                 .permissions
@@ -381,7 +413,7 @@ impl PeaPin {
         {
             return Err(invalid("resource permissions require host API 4"));
         }
-        if !matches!(self.host_api, 1 | 2 | 3 | 4 | HOST_API)
+        if !matches!(self.host_api, 1 | 2 | 3 | 4 | 5 | HOST_API)
             || !bounded(&self.version, 32)
             || self.revision.len() != 40
             || !self.revision.bytes().all(|b| b.is_ascii_hexdigit())
@@ -466,6 +498,24 @@ pub(crate) fn legacy_render(pins: &[PeaPin]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn api5_pins_cannot_acquire_application_launch_authority() {
+        let mut manifest = manifest_for_api(5);
+        let action = ModelAction::ChangeResources {
+            change: crate::ResourceChange::OpenApplication {
+                desktop_id: "org.telegram.desktop.desktop".into(),
+            },
+        };
+        assert!(!manifest.permits(&action));
+        manifest.permissions = vec!["applications.write".into()];
+        manifest.response_schema = schema_for_api(&manifest.permissions, 5);
+        assert!(manifest.validate().is_err());
+        assert!(!manifest.permits(&action));
+        manifest.host_api = HOST_API;
+        manifest.response_schema = schema_for_api(&manifest.permissions, HOST_API);
+        manifest.validate().unwrap();
+        assert!(manifest.permits(&action));
+    }
     #[test]
     fn api4_pins_keep_original_power_and_display_limits() {
         for (id, change) in [

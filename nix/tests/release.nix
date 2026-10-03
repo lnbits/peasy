@@ -13,6 +13,7 @@ pkgs.runCommand "peasy-release-checks"
     mkdir -p assets .github nix/tests
     cp -r ${../../scripts} scripts
     cp ${./installer-package.py} nix/tests/installer-package.py
+    cp ${../gnome-tray-compatibility.sh} nix/gnome-tray-compatibility.sh
     cp -r ${../../.github/workflows} .github/workflows
     cp ${../../assets/downloads.js} assets/downloads.js
     cp ${../../index.html} index.html

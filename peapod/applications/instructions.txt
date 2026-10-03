@@ -1,0 +1,1 @@
+Discover installed desktop applications and open an exact returned desktop_id. Never invent an executable, command line, URL, file argument or desktop file. Ask the user to choose when names are ambiguous. Launching runs the application's installed desktop entry as the current desktop user; it does not install software or change system configuration.

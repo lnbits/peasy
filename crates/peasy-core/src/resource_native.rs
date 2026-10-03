@@ -7,6 +7,8 @@ use std::{io::Read, path::PathBuf, process::Command, time::Duration};
 #[path = "../../../peapod/tests/resource-native.rs"]
 mod tests;
 
+#[path = "../../../peapod/applications/native.rs"]
+pub mod applications;
 #[path = "../../../peapod/audio/native.rs"]
 mod audio;
 #[path = "../../../peapod/diagnostics/native.rs"]
@@ -30,6 +32,7 @@ mod users;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tool {
+    Gio,
     Systemctl,
     Lsblk,
     Udisksctl,
@@ -55,6 +58,7 @@ pub enum Tool {
 impl Tool {
     pub fn name(self) -> &'static str {
         match self {
+            Self::Gio => "gio",
             Self::Systemctl => "systemctl",
             Self::Lsblk => "lsblk",
             Self::Udisksctl => "udisksctl",
@@ -98,6 +102,9 @@ pub trait ResourceRunner {
 pub struct SessionRunner;
 impl ResourceRunner for SessionRunner {
     fn run(&self, tool: Tool, args: &[&str]) -> Result<String> {
+        if tool == Tool::Gio {
+            return applications::run_launcher(&tool.path()?, args);
+        }
         let mut cmd = Command::new(tool.path()?);
         cmd.args(args).env("LC_ALL", "C");
         let output = crate::process::run(&mut cmd, Duration::from_secs(120))?;
@@ -176,6 +183,7 @@ pub fn json_run(r: &dyn ResourceRunner, t: Tool, a: &[&str]) -> Result<Value> {
 pub fn inspect(query: &ResourceQuery, r: &dyn ResourceRunner) -> Result<Value> {
     query.validate()?;
     let value = match query.domain {
+        ResourceDomain::Applications => applications::inspect()?,
         ResourceDomain::Diagnostics => diagnostics::inspect(r)?,
         ResourceDomain::Services => services::inspect(query.target.as_deref(), r)?,
         ResourceDomain::Storage => storage::inspect(r)?,
@@ -197,6 +205,7 @@ pub fn inspect(query: &ResourceQuery, r: &dyn ResourceRunner) -> Result<Value> {
 pub fn snapshot(change: &ResourceChange, r: &dyn ResourceRunner) -> Result<Value> {
     change.validate()?;
     match change {
+        ResourceChange::OpenApplication { desktop_id } => applications::snapshot(desktop_id),
         ResourceChange::Service { unit, .. } => services::snapshot(unit, r),
         ResourceChange::Disk { .. } | ResourceChange::PersistentMount { .. } => {
             storage::snapshot(change, r)
@@ -221,6 +230,7 @@ pub fn apply_live(change: &ResourceChange, snapshot: &Value, r: &dyn ResourceRun
     }
     crate::cancellation::Cancellation::current().protect()?;
     match change {
+        ResourceChange::OpenApplication { desktop_id } => applications::launch(desktop_id, r)?,
         ResourceChange::Service { unit, action } => {
             r.run(Tool::Systemctl, &[action.value(), "--", unit])?;
         }

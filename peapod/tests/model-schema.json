@@ -292,6 +292,26 @@
         {
           "additionalProperties": false,
           "properties": {
+            "desktop_id": {
+              "maxLength": 160,
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "open_application"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "desktop_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
             "action": {
               "enum": [
                 "start",
@@ -790,6 +810,7 @@
       "properties": {
         "domain": {
           "enum": [
+            "applications",
             "diagnostics",
             "services",
             "storage",

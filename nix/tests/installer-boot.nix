@@ -203,6 +203,17 @@ pkgs.testers.runNixOSTest {
     target.wait_for_unit("NetworkManager-wait-online.service")
     target.succeed("LC_ALL=C nmcli -g GENERAL.STATE device show eth1 | grep -q unmanaged")
     target.wait_until_succeeds("pgrep -u peasytest -x peasy-tray", timeout=dt.timedelta(minutes=3))
+    # A running process alone does not prove GNOME's extension hosts the icon.
+    tray_pid = target.succeed("pgrep -u peasytest -x peasy-tray").strip()
+    assert tray_pid.isdigit(), "Exactly one Peasy tray must run after installation"
+    tray_uid = target.succeed("id -u peasytest").strip()
+    target.wait_until_succeeds(
+        "su - peasytest -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + tray_uid + "/bus "
+        "gdbus call --session --dest org.kde.StatusNotifierWatcher "
+        "--object-path /StatusNotifierWatcher --method org.freedesktop.DBus.Properties.Get "
+        "org.kde.StatusNotifierWatcher RegisteredStatusNotifierItems' | grep -F StatusNotifierItem-" + tray_pid + "-",
+        timeout=90,
+    )
     target.succeed("test -x /run/current-system/sw/bin/peasy-ui; test -f /etc/nixos/peasy.nix")
     target.succeed("pkaction --action-id io.github.peasy.apply --verbose | grep auth_admin")
     # Without an authentication agent or prior approval, a normal administrator

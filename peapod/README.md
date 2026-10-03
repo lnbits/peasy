@@ -54,6 +54,8 @@ requires an explicit compatibility decision and updated schemas and tests.
 | Recovery | Report partial failure; preserve unrelated state and use shared recovery handling |
 
 System configuration belongs in `.peasy/peasy-managed.nix` and NixOS generations.
+Explicit app-launch requests with a unique discovered match may launch immediately;
+ambiguous matches require a choice. This exception grants no system-change authority.
 Session operations use their service's persistence and undo semantics; they do not
 claim NixOS rollback. Generations do not undo user files, database writes or pairing.
 Installing a pea does not approve its later actions. Disabling a pea removes its
@@ -109,6 +111,7 @@ The resource peas share the [resource protocol](../docs/resources.md):
 | [Printing](printing/README.md) | Driverless printers, defaults and test page | CUPS |
 | [Displays](displays/README.md) | Discover and configure outputs | Desktop session |
 | [Audio](audio/README.md) | Devices, defaults, volume and mute | WirePlumber |
+| [Applications](applications/README.md) | Discover and open installed desktop entries | Current user session |
 | [Power](power/README.md) | Battery, profiles and lid/idle settings | Session and NixOS |
 
 ## Adding or extending a pea

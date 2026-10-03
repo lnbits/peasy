@@ -8,18 +8,7 @@ pub(crate) fn read(
     request: reqwest::RequestBuilder,
     limit: usize,
 ) -> Result<(reqwest::StatusCode, Vec<u8>)> {
-    static RUNTIME: OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
-        OnceLock::new();
-    let runtime = RUNTIME
-        .get_or_init(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .map_err(|e| e.to_string())
-        })
-        .as_ref()
-        .map_err(|e| anyhow::anyhow!("HTTP runtime unavailable: {e}"))?;
+    let runtime = runtime()?;
     let cancellation = Cancellation::current();
     cancellation.check()?;
     runtime.block_on(async {
@@ -42,6 +31,69 @@ pub(crate) fn read(
             } => result,
         }
     })
+}
+
+fn runtime() -> Result<&'static tokio::runtime::Runtime> {
+    static RUNTIME: OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
+        OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!("HTTP runtime unavailable: {e}"))
+}
+
+/// Consume bounded NDJSON records without retaining a download's progress log.
+/// The callback must explicitly recognise the terminal success record.
+pub(crate) fn read_lines(
+    request: reqwest::RequestBuilder,
+    mut record: impl FnMut(&[u8]) -> Result<bool>,
+) -> Result<()> {
+    let cancellation = Cancellation::current();
+    cancellation.check()?;
+    runtime()?.block_on(async {
+        tokio::select! {
+            biased;
+            _ = async {
+                while !cancellation.is_cancelled() {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            } => Err(Cancelled.into()),
+            result = async {
+                let mut response = request.send().await.context("contacting local Ollama")?;
+                let status = response.status();
+                let mut pending = Vec::new();
+                while let Some(chunk) = response.chunk().await.context("reading Ollama download progress")? {
+                    for byte in chunk {
+                        if pending.len() >= 64 * 1024 { bail!("Ollama progress record is too large"); }
+                        if byte == b'\n' {
+                            if !pending.is_empty() {
+                                if !status.is_success() { return Err(pull_http_error(status, &pending)); }
+                                if record(&pending)? { return Ok(()); }
+                                pending.clear();
+                            }
+                        } else { pending.push(byte); }
+                    }
+                }
+                if !status.is_success() { return Err(pull_http_error(status, &pending)); }
+                if !pending.is_empty() && record(&pending)? { return Ok(()); }
+                bail!("Ollama download ended before confirming success")
+            } => result,
+        }
+    })
+}
+
+fn pull_http_error(status: reqwest::StatusCode, bytes: &[u8]) -> anyhow::Error {
+    let value: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
+    anyhow::anyhow!(
+        "Ollama HTTP {status}: {}",
+        super::safe_provider_error(value["error"].as_str().unwrap_or("model download failed"))
+    )
 }
 
 #[cfg(test)]

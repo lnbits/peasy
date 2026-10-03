@@ -90,10 +90,16 @@ fn main() {
         vec!["power.read".into(), "power.write".into()],
         include_str!("../../../peapod/power/instructions.txt"),
     ));
+    entries.push((
+        "applications",
+        vec!["Find and open installed desktop applications".into()],
+        vec!["applications.read".into(), "applications.write".into()],
+        include_str!("../../../peapod/applications/instructions.txt"),
+    ));
     for (id, capabilities, permissions, instructions) in entries {
         let manifest = PeaManifest {
             id: id.into(),
-            version: "1.4.0".into(),
+            version: "1.5.0".into(),
             host_api: HOST_API,
             capabilities,
             response_schema: schema_for_permissions(&permissions),

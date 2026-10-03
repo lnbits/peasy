@@ -1669,6 +1669,7 @@ name = "peasy-client"
 version = "0.1.9"
 dependencies = [
  "anyhow",
+ "base64",
  "libc",
  "peasy-core",
  "peasy-engine-host",

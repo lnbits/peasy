@@ -1,5 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod display_trial;
+pub mod i18n;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod resource_native;
 pub mod resources;

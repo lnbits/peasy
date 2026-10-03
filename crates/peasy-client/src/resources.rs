@@ -12,6 +12,9 @@ pub(super) fn instructions(domain: peasy_core::ResourceDomain, can_change: bool)
         );
     }
     let detail = match domain {
+        Applications => {
+            "Inspect installed desktop entries, then open only an exact discovered desktop_id. No command lines, arguments, URLs or file paths are accepted."
+        }
         Diagnostics => {
             "Diagnostics are point-in-time facts; no raw journal messages, secrets or arbitrary files are available. Explain findings; this domain has no mutations."
         }

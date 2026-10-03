@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceDomain {
+    Applications,
     Diagnostics,
     Services,
     Storage,
@@ -20,6 +21,7 @@ pub enum ResourceDomain {
 impl ResourceDomain {
     pub fn id(self) -> &'static str {
         match self {
+            Self::Applications => "applications",
             Self::Diagnostics => "diagnostics",
             Self::Services => "services",
             Self::Storage => "storage",
@@ -35,7 +37,12 @@ impl ResourceDomain {
     pub fn session(self) -> bool {
         matches!(
             self,
-            Self::Printing | Self::Displays | Self::Audio | Self::Power | Self::Storage
+            Self::Applications
+                | Self::Printing
+                | Self::Displays
+                | Self::Audio
+                | Self::Power
+                | Self::Storage
         )
     }
 }
@@ -79,6 +86,9 @@ choices!(ManagedService { Ssh => "services.openssh.enable", Caddy => "services.c
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ResourceChange {
+    OpenApplication {
+        desktop_id: String,
+    },
     Service {
         unit: String,
         action: ServiceAction,
@@ -183,6 +193,7 @@ pub fn username(s: &str) -> Result<(), ValidationError> {
 impl ResourceChange {
     pub fn domain(&self) -> ResourceDomain {
         match self {
+            Self::OpenApplication { .. } => ResourceDomain::Applications,
             Self::Service { .. } | Self::ServiceEnabled { .. } => ResourceDomain::Services,
             Self::Disk { .. } | Self::PersistentMount { .. } => ResourceDomain::Storage,
             Self::Firewall { .. } => ResourceDomain::Firewall,
@@ -222,6 +233,12 @@ impl ResourceChange {
     }
     pub fn validate(&self) -> Result<(), ValidationError> {
         match self {
+            Self::OpenApplication { desktop_id } => {
+                identifier(desktop_id, 160)?;
+                if !desktop_id.ends_with(".desktop") {
+                    return Err(invalid("a discovered desktop application is required"));
+                }
+            }
             Self::Service { unit: name, .. } => unit(name)?,
             Self::Disk {
                 device,
@@ -346,6 +363,7 @@ impl ResourceChange {
     }
     pub fn summary(&self) -> String {
         match self {
+            Self::OpenApplication { desktop_id } => format!("Open {desktop_id}"),
             Self::Service { unit, action } => format!("{} {}", action.value(), unit),
             Self::ServiceEnabled { service, enabled } => format!(
                 "{} {}",
@@ -464,6 +482,9 @@ impl ResourceChange {
     }
     pub fn note(&self) -> &'static str {
         match self {
+            Self::OpenApplication { .. } => {
+                "Opens the installed desktop entry as your desktop user. No arguments or system changes."
+            }
             Self::Disk {
                 action: DiskAction::Format,
                 ..
@@ -809,7 +830,7 @@ impl ResourceState {
 }
 
 pub fn query_schema() -> Value {
-    json!({"type":["object","null"],"additionalProperties":false,"properties":{"domain":{"type":"string","enum":["diagnostics","services","storage","nix_maintenance","users","firewall","printing","displays","audio","power"]},"target":{"type":["string","null"],"maxLength":160}},"required":["domain","target"]})
+    json!({"type":["object","null"],"additionalProperties":false,"properties":{"domain":{"type":"string","enum":["applications","diagnostics","services","storage","nix_maintenance","users","firewall","printing","displays","audio","power"]},"target":{"type":["string","null"],"maxLength":160}},"required":["domain","target"]})
 }
 pub fn change_schema() -> Value {
     let string = |max| json!({"type":"string","maxLength":max});
@@ -833,6 +854,7 @@ pub fn change_schema() -> Value {
         }
         variants.push(json!({"type":"object","additionalProperties":false,"properties":props,"required":required}));
     };
+    add("open_application", vec![("desktop_id", string(160))]);
     add(
         "service",
         vec![

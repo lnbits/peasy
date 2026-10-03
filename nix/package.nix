@@ -8,6 +8,7 @@
   lld,
   makeWrapper,
   wrapGAppsHook4,
+  xvfb,
   networkmanager,
   bluez,
   glib,
@@ -32,6 +33,7 @@
 
 let
   resourceTools = {
+    GIO = "${glib}/bin/gio";
     SYSTEMCTL = "${systemd}/bin/systemctl";
     BUSCTL = "${systemd}/bin/busctl";
     LSBLK = "${util-linux}/bin/lsblk";
@@ -101,6 +103,7 @@ rustPlatform.buildRustPackage {
     lld
   ]
   ++ lib.optionals withGui [ wrapGAppsHook4 ];
+  nativeCheckInputs = lib.optionals withGui [ xvfb ];
   # Only the GTK UI needs the graphical runtime environment. Keep the CLI,
   # daemon, and tray wrappers unchanged, and avoid double-wrapping the UI.
   dontWrapGApps = true;
@@ -157,6 +160,30 @@ rustPlatform.buildRustPackage {
     export PEASY_TEST_NIX_CLI="${nix}/bin/nix"
     export PEASY_TEST_SYSTEM="${stdenv.hostPlatform.system}"
     export PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm"
+  ''
+  + lib.optionalString withGui ''
+    export GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none
+    Xvfb -displayfd 3 -screen 0 1024x900x24 -nolisten tcp 3> "$TMPDIR/peasy-display" > "$TMPDIR/peasy-xvfb.log" 2>&1 &
+    peasyDisplayPid=$!
+    peasyStopDisplay() {
+      if test -n "$peasyDisplayPid"; then
+        kill "$peasyDisplayPid" 2>/dev/null || true
+        wait "$peasyDisplayPid" || true
+        peasyDisplayPid=
+      fi
+    }
+    failureHooks+=(peasyStopDisplay)
+    exitHooks+=(peasyStopDisplay)
+    for attempt in $(seq 1 100); do
+      test ! -s "$TMPDIR/peasy-display" || break
+      kill -0 "$peasyDisplayPid" || { cat "$TMPDIR/peasy-xvfb.log"; exit 1; }
+      sleep 0.05
+    done
+    test -s "$TMPDIR/peasy-display"
+    export DISPLAY=":$(cat "$TMPDIR/peasy-display")"
+  '';
+  postCheck = lib.optionalString withGui ''
+    peasyStopDisplay
   '';
 
   postInstall = ''

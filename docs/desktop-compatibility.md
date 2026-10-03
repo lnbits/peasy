@@ -35,7 +35,9 @@ autostart filters, GTK, calendar/ICS and appearance references.
 
 Legacy GNOME extension assets remain packaged for compatibility, but the module
 disables their launcher on GNOME upgrade. The separate GNOME-only autostart file
-enables the standard tray host; it is not a second Peasy tray. GTK/GLib and the
+enables the standard tray host, retrying briefly if GNOME is still starting.
+Each attempt has a timeout; persistent failure is logged. This helper is not a
+second Peasy tray. GTK/GLib and the
 existing optional Hyprland Polkit agent are legitimate dependencies, not GNOME
 tray dependencies imposed on Plasma.
 

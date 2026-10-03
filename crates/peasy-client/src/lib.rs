@@ -1,3 +1,7 @@
+pub mod chat;
+pub mod ollama_models;
+pub use ollama_models::list_ollama_models;
+pub mod connectivity;
 mod model_wire;
 #[path = "../../../peapod/networking/client.rs"]
 mod networking;
@@ -925,47 +929,6 @@ impl ModelBackend {
     }
 }
 
-pub fn list_ollama_models(base_url: &str) -> Result<Vec<String>> {
-    validate_ollama_url(base_url)?;
-    let client = reqwest::Client::builder()
-        .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(15))
-        .user_agent(concat!("Peasy/", env!("CARGO_PKG_VERSION")))
-        .build()?;
-    let (status, bytes) = http::read(
-        client.get(format!("{}/api/tags", base_url.trim_end_matches('/'))),
-        256 * 1024,
-    )
-    .context("connecting to local Ollama at http://127.0.0.1:11434")?;
-    let value: Value = serde_json::from_slice(&bytes).context("Ollama returned invalid JSON")?;
-    if !status.is_success() {
-        let message = value
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or("could not list Ollama models");
-        bail!("Ollama: {}", safe_provider_error(message));
-    }
-    let mut models = value
-        .get("models")
-        .and_then(Value::as_array)
-        .context("Ollama model list did not contain models")?
-        .iter()
-        .filter_map(|item| {
-            item.get("name")
-                .or_else(|| item.get("model"))
-                .and_then(Value::as_str)
-        })
-        .filter(|name| validate_model_name(name).is_ok())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    models.sort();
-    models.dedup();
-    Ok(models)
-}
-
 fn safe_provider_error(message: &str) -> String {
     message
         .chars()
@@ -1265,6 +1228,23 @@ impl PeasyClient {
             clarification_request: Mutex::new(None),
             pea_resume: Mutex::new(std::collections::HashMap::new()),
         })
+    }
+
+    /// Begin a self-contained conversational task without losing package context.
+    pub fn clear_task_clarification(&self) {
+        self.clarification_request
+            .lock()
+            .expect("clarification mutex")
+            .take();
+    }
+
+    pub fn forget_conversation(&self) {
+        self.clarification_request
+            .lock()
+            .expect("clarification mutex")
+            .take();
+        self.recent_package.lock().expect("package mutex").take();
+        self.pea_resume.lock().expect("pea resume mutex").clear();
     }
 
     pub fn resolve(&self, request: &str) -> Result<Resolution> {

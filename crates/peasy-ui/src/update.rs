@@ -2,6 +2,7 @@
 use crate::{AppState, IpcRequest, IpcResponse, run_system_request};
 use gtk::glib;
 use gtk::prelude::*;
+use peasy_core::i18n::{tr, tr_args};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -10,14 +11,14 @@ use std::{
 };
 
 pub(super) fn add_controls(body: &gtk::Box, window: &adw::ApplicationWindow, state: &AppState) {
-    let label = gtk::Label::new(Some("Checking for Peasy updates…"));
+    let label = gtk::Label::new(Some(&tr("Checking for Peasy updates…")));
     label.set_wrap(true);
-    label.set_xalign(0.0);
+    label.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     label.set_selectable(true);
     body.append(&label);
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let check = gtk::Button::with_label("Check for updates");
-    let update = gtk::Button::with_label("Update Peasy");
+    let check = gtk::Button::with_label(&tr("Check for updates"));
+    let update = gtk::Button::with_label(&tr("Update Peasy"));
     update.add_css_class("suggested-action");
     update.set_visible(false);
     row.append(&check);
@@ -42,7 +43,7 @@ pub(super) fn add_controls(body: &gtk::Box, window: &adw::ApplicationWindow, sta
         button.set_sensitive(false);
         update.set_visible(false);
         release.borrow_mut().take();
-        label.set_text("Checking for Peasy updates…");
+        label.set_text(&tr("Checking for Peasy updates…"));
         let task = context.tasks.borrow_mut().start();
         let socket = context.args.socket.clone();
         let force = !initial.replace(false);
@@ -64,22 +65,32 @@ pub(super) fn add_controls(body: &gtk::Box, window: &adw::ApplicationWindow, sta
             }
             match rx.try_recv() {
                 Ok(Ok(IpcResponse::PeasyUpdate { status })) => {
-                    label.set_text(&format!(
-                        "Installed: Peasy {}. {}",
-                        status.current_version, status.message
+                    label.set_text(&tr_args(
+                        "Installed: Peasy {version}. {message}",
+                        &[
+                            ("version", &status.current_version),
+                            ("message", &status.message),
+                        ],
                     ));
                     update.set_visible(status.release.is_some());
                     *release.borrow_mut() = status.release;
                 }
-                Ok(Ok(_)) => {
-                    label.set_text("The system service does not support update checks yet.")
-                }
-                Ok(Err(error)) => label.set_text(&format!(
-                    "Could not check for updates: {error}. You can try again later."
+                Ok(Ok(_)) => label.set_text(&tr(
+                    "The system service does not support update checks yet.",
                 )),
+                Ok(Err(error)) => label.set_text(
+                    &peasy_client::connectivity::offline_message(&error)
+                        .map(tr)
+                        .unwrap_or_else(|| {
+                            tr_args(
+                                "Could not check for updates: {error}. You can try again later.",
+                                &[("error", &error)],
+                            )
+                        }),
+                ),
                 Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    label.set_text("Update check stopped; try again.")
+                    label.set_text(&tr("Update check stopped; try again."))
                 }
             }
             button.set_sensitive(true);

@@ -92,6 +92,8 @@ in
     peas.allowedPermissions = lib.mkOption {
       type = lib.types.listOf (
         lib.types.enum [
+          "applications.read"
+          "applications.write"
           "diagnostics.read"
           "services.read"
           "services.write"
@@ -123,6 +125,8 @@ in
         ]
       );
       default = [
+        "applications.read"
+        "applications.write"
         "diagnostics.read"
         "services.read"
         "services.write"
@@ -475,8 +479,11 @@ in
         Name=Enable StatusNotifier support
         Comment=Enable GNOME compatibility for the generic Peasy tray
         Exec=${pkgs.writeShellScript "peasy-gnome-tray-compatibility" ''
-          ${pkgs.gnome-shell}/bin/gnome-extensions disable peasy@peasy-nixos.github.io || true
-          exec ${pkgs.gnome-shell}/bin/gnome-extensions enable ${appindicatorUuid}
+          extensions=${pkgs.gnome-shell}/bin/gnome-extensions
+          extension_uuid=${lib.escapeShellArg appindicatorUuid}
+          timeout=${pkgs.coreutils}/bin/timeout
+          sleep=${pkgs.coreutils}/bin/sleep
+          ${builtins.readFile ./gnome-tray-compatibility.sh}
         ''}
         Terminal=false
         OnlyShowIn=GNOME;

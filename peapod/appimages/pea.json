@@ -1,7 +1,7 @@
 {
   "id": "appimages",
-  "version": "1.4.0",
-  "host_api": 5,
+  "version": "1.5.0",
+  "host_api": 6,
   "capabilities": [
     "Discover and install pinned upstream AppImage releases"
   ],

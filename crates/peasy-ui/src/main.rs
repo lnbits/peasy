@@ -1,12 +1,15 @@
+mod chat_format;
+mod chat_ui;
+use peasy_core::i18n::{tr, tr_args};
+mod ollama_models;
 mod update;
 use adw::prelude::*;
 use anyhow::{Context, Result};
 use clap::Parser;
 use gtk::glib;
 use peasy_client::{
-    Choice, DEFAULT_OLLAMA_URL, DEFAULT_OPENAI_MODEL, KeyStore, LocalAction, LocalProposal,
-    PeasyClient, ProviderSettings, ProviderStore, Resolution, ResolveStage, list_ollama_models,
-    load_model_provider,
+    Choice, DEFAULT_OPENAI_MODEL, KeyStore, LocalAction, LocalProposal, PeasyClient,
+    ProviderSettings, ProviderStore, Resolution, ResolveStage, load_model_provider,
 };
 use peasy_core::{DiffKind, IpcRequest, IpcResponse, OperationStage, Proposal, ProposalChange};
 mod restore;
@@ -31,6 +34,8 @@ struct Args {
     settings: bool,
 }
 
+type ChatPending = Option<(String, Vec<peasy_client::chat::attachments::Attachment>)>;
+
 #[derive(Clone)]
 struct AppState {
     args: Args,
@@ -43,6 +48,11 @@ struct AppState {
     closing_apply: Rc<Cell<bool>>,
     request: Rc<RefCell<String>>,
     reviewed_change: Rc<RefCell<Option<ProposalChange>>>,
+    conversation: Rc<RefCell<peasy_client::chat::Conversation>>,
+    chat_mode: Rc<Cell<peasy_client::chat::Mode>>,
+    chat_task_reply: Rc<Cell<bool>>,
+    chat_pending: Rc<RefCell<ChatPending>>,
+    chat_attachments: Rc<RefCell<Vec<peasy_client::chat::attachments::Attachment>>>,
 }
 
 enum ResolveMessage {
@@ -80,6 +90,11 @@ fn main() -> Result<()> {
         closing_apply: Default::default(),
         request: Default::default(),
         reviewed_change: Default::default(),
+        conversation: Default::default(),
+        chat_mode: Default::default(),
+        chat_task_reply: Default::default(),
+        chat_pending: Default::default(),
+        chat_attachments: Default::default(),
     };
     let application_id = if state.args.settings {
         "io.github.peasy.Peasy.Settings"
@@ -96,6 +111,11 @@ fn main() -> Result<()> {
 }
 
 fn activate(app: &adw::Application, state: AppState) {
+    gtk::Widget::set_default_direction(if peasy_core::i18n::is_rtl() {
+        gtk::TextDirection::Rtl
+    } else {
+        gtk::TextDirection::Ltr
+    });
     if let Some(window) = app.windows().into_iter().next() {
         let window = window
             .downcast::<adw::ApplicationWindow>()
@@ -125,6 +145,7 @@ fn activate(app: &adw::Application, state: AppState) {
         if close_state.applying.get() {
             request_apply_cancellation(window, close_state.clone());
         } else {
+            close_state.chat_pending.borrow_mut().take();
             discard_pending(&close_state);
             clear_panel_status();
         }
@@ -213,8 +234,13 @@ fn page(title: &str) -> (gtk::Box, gtk::Box) {
 
 fn page_with_header(title: &str) -> (gtk::Box, gtk::Box, adw::HeaderBar) {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.set_direction(if peasy_core::i18n::is_rtl() {
+        gtk::TextDirection::Rtl
+    } else {
+        gtk::TextDirection::Ltr
+    });
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&gtk::Label::new(Some(title))));
+    header.set_title_widget(Some(&gtk::Label::new(Some(&tr(title)))));
     root.append(&header);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(24);
@@ -255,13 +281,13 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         .child(&body)
         .build();
     root.append(&scroll);
-    let heading = gtk::Label::new(Some("AI provider"));
+    let heading = gtk::Label::new(Some(&tr("AI provider")));
     heading.add_css_class("title-3");
     heading.set_halign(gtk::Align::Start);
     body.append(&heading);
     add_system_status_button(&body, window, &state);
 
-    let provider = gtk::DropDown::from_strings(&["OpenAI", "Ollama (local)"]);
+    let provider = gtk::DropDown::from_strings(&["OpenAI", &tr("Ollama (local)")]);
     let settings = state.providers.load().ok().flatten();
     let has_stored_key = state.keys.load().ok().flatten().is_some();
     provider.set_selected(initial_provider_selection(
@@ -272,45 +298,39 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
 
     let openai_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     let key_entry = gtk::PasswordEntry::builder()
-        .placeholder_text("Enter a new OpenAI API key")
+        .placeholder_text(tr("Enter a new OpenAI API key"))
         .show_peek_icon(true)
         .build();
     openai_box.append(&key_entry);
-    let key_note = gtk::Label::new(Some(if has_stored_key {
+    let key_note = gtk::Label::new(Some(&tr(if has_stored_key {
         "A key is stored privately. Leave this empty to keep it."
     } else {
         "Your key is stored privately for this desktop user."
-    }));
+    })));
     key_note.set_wrap(true);
     key_note.set_halign(gtk::Align::Start);
     openai_box.append(&key_note);
     let openai_model = gtk::Entry::builder()
-        .placeholder_text("OpenAI model")
+        .placeholder_text(tr("OpenAI model"))
         .text(DEFAULT_OPENAI_MODEL)
         .build();
     openai_box.append(&openai_model);
-    let remove_key = gtk::Button::with_label("Remove stored OpenAI key");
+    let remove_key = gtk::Button::with_label(&tr("Remove stored OpenAI key"));
     remove_key.add_css_class("destructive-action");
     remove_key.set_halign(gtk::Align::Start);
     remove_key.set_sensitive(has_stored_key);
     openai_box.append(&remove_key);
 
     let ollama_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    let endpoint = gtk::Label::new(Some("Local Ollama · http://127.0.0.1:11434"));
+    let endpoint = gtk::Label::new(Some(&tr("Local Ollama · http://127.0.0.1:11434")));
     endpoint.set_halign(gtk::Align::Start);
     ollama_box.append(&endpoint);
-    let ollama_model = gtk::DropDown::from_strings(&[]);
-    ollama_model.set_enable_search(true);
-    ollama_model.set_sensitive(false);
-    ollama_model.set_tooltip_text(Some("Choose an installed Ollama model"));
-    ollama_box.append(&ollama_model);
-    let ollama_status = gtk::Label::new(Some("Checking Ollama…"));
-    ollama_status.set_wrap(true);
-    ollama_status.set_halign(gtk::Align::Start);
-    ollama_box.append(&ollama_status);
-    let refresh = gtk::Button::with_label("Refresh installed models");
-    refresh.set_halign(gtk::Align::Start);
-    ollama_box.append(&refresh);
+    let saved_model = match settings.as_ref() {
+        Some(ProviderSettings::Ollama { model, .. }) => Some(model.clone()),
+        _ => None,
+    };
+    let ollama_selector = ollama_models::ModelSelector::new(&state, saved_model);
+    ollama_box.append(ollama_selector.widget());
 
     let stack = gtk::Stack::new();
     stack.add_named(&openai_box, Some("openai"));
@@ -320,10 +340,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     if let Some(settings) = settings {
         match settings {
             ProviderSettings::OpenAi { model } => openai_model.set_text(&model),
-            ProviderSettings::Ollama { model, .. } => {
-                ollama_model.set_model(Some(&gtk::StringList::new(&[&model])));
-                ollama_model.set_selected(0);
-            }
+            ProviderSettings::Ollama { .. } => {}
         }
     }
     stack.set_visible_child_name(if provider.selected() == OLLAMA_PROVIDER_INDEX {
@@ -348,27 +365,27 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     export_row.set_valign(gtk::Align::Center);
     let export_copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
     export_copy.set_hexpand(true);
-    let export_text = gtk::Label::new(Some(
+    let export_text = gtk::Label::new(Some(&tr(
         "Back up Peasy software and appearance settings for another NixOS machine, keeping its hardware configuration. Supports traditional and flake hosts.",
-    ));
+    )));
     export_text.set_wrap(true);
-    export_text.set_xalign(0.0);
+    export_text.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     export_copy.append(&export_text);
-    let export_note = gtk::Label::new(Some(
+    let export_note = gtk::Label::new(Some(&tr(
         "Service setups, network profiles and AppImages need review on the destination. Original host files are archived separately when readable.",
-    ));
+    )));
     export_note.set_wrap(true);
-    export_note.set_xalign(0.0);
+    export_note.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     export_note.add_css_class("dim-label");
     export_copy.append(&export_note);
     export_row.append(&export_copy);
-    let download_config = gtk::Button::with_label("Export backup");
+    let download_config = gtk::Button::with_label(&tr("Export backup"));
     download_config.set_valign(gtk::Align::Center);
     let export_actions = gtk::Box::new(gtk::Orientation::Vertical, 6);
     export_actions.set_valign(gtk::Align::Center);
     export_actions.append(&download_config);
     export_row.append(&export_actions);
-    let restore_backup = gtk::Button::with_label("Restore backup");
+    let restore_backup = gtk::Button::with_label(&tr("Restore backup"));
     restore_backup.set_valign(gtk::Align::Center);
     export_actions.append(&restore_backup);
     let restore_window = window.clone();
@@ -389,13 +406,13 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         let export = match configuration_export(&export_socket) {
             Ok(export) => export,
             Err(error) => {
-                export_status.set_text(&format!("Could not prepare config: {error:#}"));
+                export_status.set_text(&tr_args("Could not prepare config: {error}", &[("error", &format!("{error:#}"))]));
                 return;
             }
         };
         let dialog = gtk::FileDialog::builder()
-            .title("Choose where to save your Peasy backup")
-            .accept_label("Export here")
+            .title(tr("Choose where to save your Peasy backup"))
+            .accept_label(tr("Export here"))
             .build();
         let status = export_status.clone();
         dialog.select_folder(
@@ -404,27 +421,24 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
             move |result| match result {
                 Ok(folder) => match folder.path() {
                     Some(folder) => match write_configuration_export(&export, &folder) {
-                        Ok(path) => status.set_text(&format!(
-                            "Peasy backup exported to {}. Use Restore backup to review and apply it. Read README.txt for scope and archive availability.",
-                            path.display()
-                        )),
+                        Ok(path) => status.set_text(&tr_args("Peasy backup exported to {path}. Use Restore backup to review and apply it. Read README.txt for scope and archive availability.", &[("path", &path.display().to_string())])),
                         Err(error) => {
-                            status.set_text(&format!("Could not export system: {error:#}"))
+                            status.set_text(&tr_args("Could not export system: {error}", &[("error", &format!("{error:#}"))]))
                         }
                     },
-                    None => status.set_text("Choose a local folder for the system export."),
+                    None => status.set_text(&tr("Choose a local folder for the system export.")),
                 },
                 Err(error)
                     if error.matches(gtk::DialogError::Cancelled)
                         || error.matches(gtk::DialogError::Dismissed) => {}
-                Err(error) => status.set_text(&format!("Could not open Save dialog: {error}")),
+                Err(error) => status.set_text(&tr_args("Could not open Save dialog: {error}", &[("error", &format!("{error:#}"))])),
             },
         );
     });
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     buttons.set_halign(gtk::Align::End);
     if state.client.borrow().is_some() {
-        let cancel = gtk::Button::with_label("Cancel");
+        let cancel = gtk::Button::with_label(&tr("Cancel"));
         let window_clone = window.clone();
         let state_clone = state.clone();
         cancel.connect_clicked(move |_| {
@@ -436,32 +450,10 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         });
         buttons.append(&cancel);
     }
-    let save = gtk::Button::with_label("Save provider");
+    let save = gtk::Button::with_label(&tr("Save provider"));
     save.add_css_class("suggested-action");
     buttons.append(&save);
     body.append(&buttons);
-
-    let detected_models = Rc::new(RefCell::new(Vec::<String>::new()));
-    refresh_ollama_models(
-        &state,
-        ollama_status.clone(),
-        ollama_model.clone(),
-        detected_models.clone(),
-        refresh.clone(),
-    );
-    let detected_clone = detected_models.clone();
-    let ollama_status_clone = ollama_status.clone();
-    let ollama_model_clone = ollama_model.clone();
-    let refresh_state = state.clone();
-    refresh.connect_clicked(move |button| {
-        refresh_ollama_models(
-            &refresh_state,
-            ollama_status_clone.clone(),
-            ollama_model_clone.clone(),
-            detected_clone.clone(),
-            button.clone(),
-        );
-    });
 
     let keys_for_remove = state.keys.clone();
     let providers_for_remove = state.providers.clone();
@@ -476,7 +468,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
             ) {
                 *client_for_remove.borrow_mut() = None;
             }
-            status_for_remove.set_text("Stored OpenAI key removed.");
+            status_for_remove.set_text(&tr("Stored OpenAI key removed."));
         }
         Err(error) => status_for_remove.set_text(&format!("{error:#}")),
     });
@@ -485,13 +477,9 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     save.connect_clicked(move |_| {
         let result = (|| -> Result<()> {
             let settings = if provider.selected() == OLLAMA_PROVIDER_INDEX {
-                let model = selected_ollama_model(&ollama_model)
-                    .context("Choose an installed Ollama model, then save the provider.")?;
-                if !detected_models.borrow().iter().any(|found| found == &model) {
-                    anyhow::bail!(
-                        "Choose an installed Ollama model. Press Refresh after pulling a model."
-                    );
-                }
+                let model = ollama_selector.selected_model().context(tr(
+                    "Choose an installed model or wait for its download to finish.",
+                ))?;
                 ProviderSettings::ollama(model)?
             } else {
                 if !key_entry.text().trim().is_empty() {
@@ -534,152 +522,8 @@ fn engine_path(args: &Args) -> PathBuf {
 mod export;
 use export::{configuration_export, write_configuration_export};
 
-fn selected_ollama_model(dropdown: &gtk::DropDown) -> Option<String> {
-    dropdown
-        .selected_item()?
-        .downcast::<gtk::StringObject>()
-        .ok()
-        .map(|item| item.string().to_string())
-}
-
-fn refresh_ollama_models(
-    state: &AppState,
-    status: gtk::Label,
-    model_dropdown: gtk::DropDown,
-    detected: Rc<RefCell<Vec<String>>>,
-    refresh: gtk::Button,
-) {
-    let previous = selected_ollama_model(&model_dropdown);
-    model_dropdown.set_sensitive(false);
-    refresh.set_sensitive(false);
-    detected.borrow_mut().clear();
-    status.set_text("Checking local Ollama…");
-    let task = state.tasks.borrow_mut().start();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        task.work.scope(|| {
-            let _ = tx
-                .send(list_ollama_models(DEFAULT_OLLAMA_URL).map_err(|error| format!("{error:#}")));
-        })
-    });
-    glib::timeout_add_local(Duration::from_millis(50), move || {
-        if task.view.is_cancelled() {
-            return glib::ControlFlow::Break;
-        }
-        let result = rx.try_recv();
-        if !matches!(result, Err(mpsc::TryRecvError::Empty)) {
-            task.view.cancel();
-            refresh.set_sensitive(true);
-        }
-        match result {
-            Ok(Ok(models)) => {
-                let selection = match previous.as_ref() {
-                    Some(previous) => models.iter().position(|model| model == previous),
-                    None => None,
-                };
-                let names: Vec<&str> = models.iter().map(String::as_str).collect();
-                model_dropdown.set_model(Some(&gtk::StringList::new(&names)));
-                model_dropdown.set_selected(
-                    selection.map_or(gtk::INVALID_LIST_POSITION, |index| index as u32),
-                );
-                model_dropdown.set_sensitive(!models.is_empty());
-                *detected.borrow_mut() = models.clone();
-                if models.is_empty() {
-                    status.set_text(
-                    "Ollama is running but has no models. Run `ollama pull MODEL`, then press Refresh.",
-                );
-                } else {
-                    status.set_text(if previous.is_some() && selection.is_none() {
-                        "The previous model is no longer installed. Choose a model, then Save provider."
-                    } else {
-                        "Choose a model, then Save provider to use it."
-                    });
-                }
-                glib::ControlFlow::Break
-            }
-            Ok(Err(error)) => {
-                detected.borrow_mut().clear();
-                status.set_text(&format!(
-                    "{error}\nEnable services.ollama and start it, then press Refresh."
-                ));
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                status.set_text("Ollama model check stopped unexpectedly.");
-                glib::ControlFlow::Break
-            }
-        }
-    });
-}
-
 fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
-    state.tasks.borrow_mut().close();
-    discard_pending(&state);
-    let request = take_panel_request().ok().flatten();
-    if request.is_none() {
-        clear_panel_status();
-    }
-    let (root, body, header) = page_with_header("Peasy");
-    let settings = gtk::Button::builder()
-        .icon_name("applications-system-symbolic")
-        .tooltip_text("Settings")
-        .build();
-    header.pack_end(&settings);
-    let settings_window = window.clone();
-    let settings_state = state.clone();
-    settings
-        .connect_clicked(move |_| show_provider_settings(&settings_window, settings_state.clone()));
-    let tagline = gtk::Label::new(Some("Tell your computer what you want."));
-    tagline.add_css_class("title-3");
-    tagline.set_halign(gtk::Align::Start);
-    body.append(&tagline);
-    let entry = gtk::Entry::builder()
-        .placeholder_text("install telegram…")
-        .hexpand(true)
-        .build();
-    entry.set_text(&state.request.borrow());
-    body.append(&entry);
-    add_system_status_button(&body, window, &state);
-    let recovery_notice = gtk::Label::new(None);
-    recovery_notice.set_wrap(true);
-    recovery_notice.set_halign(gtk::Align::Start);
-    body.append(&recovery_notice);
-    let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
-    let (notice_tx, notice_rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = notice_tx.send(ipc.request(&IpcRequest::Inspect));
-    });
-    glib::timeout_add_local(Duration::from_millis(100), move || {
-        match notice_rx.try_recv() {
-            Ok(Ok(IpcResponse::Inspection { status })) => {
-                if let Some(info) = status.recovery {
-                    recovery_notice.set_text(&format!(
-                        "{} Open System status and recovery for details.",
-                        info.message
-                    ));
-                }
-                glib::ControlFlow::Break
-            }
-            Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-            _ => glib::ControlFlow::Break,
-        }
-    });
-
-    let status = gtk::Label::new(None);
-    status.set_halign(gtk::Align::Start);
-    status.set_wrap(true);
-    body.append(&status);
-    let send = gtk::Button::with_label("Send");
-    send.add_css_class("suggested-action");
-    send.set_halign(gtk::Align::End);
-    body.append(&send);
-    connect_request_submit(window, &state, &entry, &send, &status);
-    show_content(window, &root, 440, -1);
-    if let Some(request) = request {
-        entry.set_text(&request);
-        send.emit_clicked();
-    }
+    chat_ui::show(window, state);
 }
 
 // Main requests and inline replies use the same worker, progress and cancellation path.
@@ -705,10 +549,10 @@ fn connect_request_submit(
         *state_clone.request.borrow_mut() = request.clone();
         state_clone.reviewed_change.borrow_mut().take();
         button.set_sensitive(false);
-        status_clone.set_text("Understanding request…");
+        status_clone.set_text(&tr("Understanding request…"));
         write_panel_status("…thinking");
         let Some(client) = state_clone.client.borrow().clone() else {
-            status_clone.set_text("AI provider is not configured. Open Peasy settings.");
+            status_clone.set_text(&tr("AI provider is not configured. Open Peasy settings."));
             return;
         };
         let (tx, rx) = mpsc::channel();
@@ -752,7 +596,7 @@ fn connect_request_submit(
             }
             match result {
                 Ok(ResolveMessage::Progress(stage)) => {
-                    status.set_text(stage.message());
+                    status.set_text(&tr(stage.message()));
                     write_panel_status(stage.panel_message());
                     glib::ControlFlow::Continue
                 }
@@ -766,7 +610,7 @@ fn connect_request_submit(
                 }
                 Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    status.set_text("The request worker stopped unexpectedly.");
+                    status.set_text(&tr("The request worker stopped unexpectedly."));
                     write_panel_status("Peasy request stopped");
                     button.set_sensitive(true);
                     glib::ControlFlow::Break
@@ -785,6 +629,10 @@ fn show_resolution(window: &adw::ApplicationWindow, state: AppState, resolution:
         Resolution::Choose(choice) => show_choices(window, state, choice),
         Resolution::Explain(message) => show_message(window, state, &message),
         Resolution::Clarify(message) => {
+            if state.chat_pending.borrow().is_some() {
+                chat_ui::complete_task(window, state, &message, true);
+                return;
+            }
             clear_panel_status();
             state.reviewed_change.borrow_mut().take();
             state.request.borrow_mut().clear();
@@ -796,16 +644,13 @@ fn show_resolution(window: &adw::ApplicationWindow, state: AppState, resolution:
 
 fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice) {
     let (root, body) = page("Choose a package");
-    let intro = gtk::Label::new(Some(
-        choice
-            .intro
-            .as_deref()
-            .unwrap_or("Available on this system, with the best matches first:"),
-    ));
+    let intro = gtk::Label::new(Some(choice.intro.as_deref().unwrap_or(&tr(
+        "Available on this system, with the best matches first:",
+    ))));
     intro.set_wrap(true);
     intro.set_halign(gtk::Align::Start);
     intro.set_selectable(true);
-    intro.set_xalign(0.0);
+    intro.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     let guidance = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .max_content_height(220)
@@ -826,7 +671,7 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
         let button = gtk::Button::new();
         let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let name = gtk::Label::new(Some(&if index == 0 {
-            format!("Best match · {}", candidate.name)
+            tr_args("Best match · {name}", &[("name", &candidate.name)])
         } else {
             candidate.name.clone()
         }));
@@ -834,12 +679,16 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
         name.add_css_class("heading");
         content.append(&name);
         if !candidate.version.is_empty() {
-            let version = gtk::Label::new(Some(&format!("Version {}", candidate.version)));
+            let version = gtk::Label::new(Some(&tr_args(
+                "Version {version}",
+                &[("version", &candidate.version)],
+            )));
             version.set_halign(gtk::Align::Start);
             version.add_css_class("dim-label");
             content.append(&version);
         }
         let attribute = gtk::Label::new(Some(&candidate.attribute));
+        attribute.set_direction(gtk::TextDirection::Ltr);
         attribute.set_halign(gtk::Align::Start);
         attribute.add_css_class("monospace");
         attribute.add_css_class("dim-label");
@@ -848,7 +697,7 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
             let description = gtk::Label::new(Some(&candidate.description));
             description.set_halign(gtk::Align::Start);
             description.set_wrap(true);
-            description.set_xalign(0.0);
+            description.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
             description.add_css_class("dim-label");
             content.append(&description);
         }
@@ -939,9 +788,9 @@ fn show_choices(window: &adw::ApplicationWindow, state: AppState, choice: Choice
         .child(&choices)
         .build();
     body.append(&scroller);
-    let cancel = gtk::Button::with_label("Cancel");
+    let cancel = gtk::Button::with_label(&tr("Cancel"));
     let window_clone = window.clone();
-    cancel.connect_clicked(move |_| show_prompt(&window_clone, state.clone()));
+    cancel.connect_clicked(move |_| cancel_review(&window_clone, state.clone()));
     body.append(&cancel);
     show_content(window, &root, 480, -1);
 }
@@ -956,7 +805,7 @@ fn show_working(window: &adw::ApplicationWindow, message: &str) {
     spinner.set_size_request(20, 20);
     spinner.set_valign(gtk::Align::Center);
     progress.append(&spinner);
-    let label = gtk::Label::new(Some(message));
+    let label = gtk::Label::new(Some(&tr(message)));
     label.set_halign(gtk::Align::Center);
     label.set_valign(gtk::Align::Center);
     label.set_wrap(true);
@@ -983,22 +832,22 @@ fn show_apply_progress(
     spinner.set_size_request(24, 24);
     spinner.set_valign(gtk::Align::Center);
     progress.append(&spinner);
-    let status = gtk::Label::new(Some(OperationStage::Authorizing.message()));
+    let status = gtk::Label::new(Some(&tr(OperationStage::Authorizing.message())));
     status.set_halign(gtk::Align::Start);
     status.set_wrap(true);
     status.add_css_class("heading");
     progress.append(&status);
     body.append(&progress);
 
-    let explanation = gtk::Label::new(Some(
+    let explanation = gtk::Label::new(Some(&tr(
         "Peasy is validating, building, and activating your new system generation. Closing this window cancels the build and restores your configuration. If activation has already started, it will finish safely in the background.",
-    ));
+    )));
     explanation.set_halign(gtk::Align::Start);
     explanation.set_wrap(true);
-    explanation.set_xalign(0.0);
+    explanation.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     explanation.add_css_class("dim-label");
     body.append(&explanation);
-    let cancel = gtk::Button::with_label("Cancel change");
+    let cancel = gtk::Button::with_label(&tr("Cancel change"));
     let window_cancel = window.clone();
     cancel.connect_clicked(move |_| request_apply_cancellation(&window_cancel, state.clone()));
     body.append(&cancel);
@@ -1019,15 +868,15 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
     body.append(&diff_view(&proposal.diff));
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     actions.set_halign(gtk::Align::End);
-    let cancel = gtk::Button::with_label("Cancel");
-    let apply = gtk::Button::with_label("Apply");
+    let cancel = gtk::Button::with_label(&tr("Cancel"));
+    let apply = gtk::Button::with_label(&tr("Apply"));
     apply.add_css_class("suggested-action");
     actions.append(&cancel);
     actions.append(&apply);
     body.append(&actions);
     let window_cancel = window.clone();
     let state_cancel = state.clone();
-    cancel.connect_clicked(move |_| show_prompt(&window_cancel, state_cancel.clone()));
+    cancel.connect_clicked(move |_| cancel_review(&window_cancel, state_cancel.clone()));
     let window_apply = window.clone();
     apply.connect_clicked(move |button| {
         button.set_sensitive(false);
@@ -1107,9 +956,9 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
                 }
                 Ok(ApplyMessage::Finished(Ok(result))) => {
                     let message = if result.activated {
-                        format!(
-                            "✓ Configuration valid\n✓ Build successful\n✓ Activated\n\n{}",
-                            result.message
+                        tr_args(
+                            "✓ Configuration valid\n✓ Build successful\n✓ Activated\n\n{message}",
+                            &[("message", &result.message)],
                         )
                     } else {
                         result.message
@@ -1134,7 +983,7 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
                     glib::ControlFlow::Break
                 }
                 Ok(ApplyMessage::Progress(stage)) => {
-                    progress.set_text(stage.message());
+                    progress.set_text(&tr(stage.message()));
                     cancel_progress.set_sensitive(!matches!(
                         stage,
                         OperationStage::Activating | OperationStage::Completed
@@ -1165,6 +1014,7 @@ fn diff_view(lines: &[peasy_core::DiffLine]) -> gtk::ScrolledWindow {
             DiffKind::Remove => '-',
         };
         let label = gtk::Label::new(Some(&format!("{sign} {}", line.text)));
+        label.set_direction(gtk::TextDirection::Ltr);
         label.add_css_class("monospace");
         match line.kind {
             DiffKind::Add => label.add_css_class("success"),
@@ -1198,15 +1048,15 @@ fn show_local_proposal(window: &adw::ApplicationWindow, state: AppState, proposa
     body.append(&status);
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     actions.set_halign(gtk::Align::End);
-    let cancel = gtk::Button::with_label("Cancel");
-    let apply = gtk::Button::with_label("Continue");
+    let cancel = gtk::Button::with_label(&tr("Cancel"));
+    let apply = gtk::Button::with_label(&tr("Continue"));
     apply.add_css_class("suggested-action");
     actions.append(&cancel);
     actions.append(&apply);
     body.append(&actions);
     let window_cancel = window.clone();
     let state_cancel = state.clone();
-    cancel.connect_clicked(move |_| show_prompt(&window_cancel, state_cancel.clone()));
+    cancel.connect_clicked(move |_| cancel_review(&window_cancel, state_cancel.clone()));
     let window_apply = window.clone();
     apply.connect_clicked(move |button| {
         button.set_sensitive(false);
@@ -1227,21 +1077,21 @@ fn show_local_proposal(window: &adw::ApplicationWindow, state: AppState, proposa
 
 fn show_wifi_password(window: &adw::ApplicationWindow, state: AppState, proposal: LocalProposal) {
     let (root, body) = page("Wi-Fi password");
-    let message = gtk::Label::new(Some(
+    let message = gtk::Label::new(Some(&tr(
         "Enter the network password. It stays on this machine and is not sent to the AI provider.",
-    ));
+    )));
     message.set_wrap(true);
     message.set_halign(gtk::Align::Start);
     body.append(&message);
     let password = gtk::PasswordEntry::builder()
-        .placeholder_text("Wi-Fi password")
+        .placeholder_text(tr("Wi-Fi password"))
         .show_peek_icon(true)
         .build();
     body.append(&password);
     let status = gtk::Label::new(None);
     status.set_wrap(true);
     body.append(&status);
-    let connect = gtk::Button::with_label("Connect");
+    let connect = gtk::Button::with_label(&tr("Connect"));
     connect.add_css_class("suggested-action");
     connect.set_halign(gtk::Align::End);
     body.append(&connect);
@@ -1249,7 +1099,7 @@ fn show_wifi_password(window: &adw::ApplicationWindow, state: AppState, proposal
     connect.connect_clicked(move |button| {
         let secret = password.text().to_string();
         if secret.is_empty() {
-            status.set_text("Enter the Wi-Fi password.");
+            status.set_text(&tr("Enter the Wi-Fi password."));
             return;
         }
         button.set_sensitive(false);
@@ -1272,10 +1122,10 @@ fn apply_local(
     status: gtk::Label,
 ) {
     let Some(client) = state.client.borrow().clone() else {
-        status.set_text("AI provider is not configured. Open Peasy settings.");
+        status.set_text(&tr("AI provider is not configured. Open Peasy settings."));
         return;
     };
-    status.set_text(match &proposal.action {
+    status.set_text(&tr(match &proposal.action {
         LocalAction::Resources { .. } => "Applying the reviewed resource change…",
         LocalAction::Network { .. } => "Changing network connections…",
         LocalAction::Wifi { .. } => "…connecting to Wi-Fi",
@@ -1283,7 +1133,7 @@ fn apply_local(
         LocalAction::Calendar { .. } => "…opening calendar event",
         LocalAction::HyprlandSetting { .. } => "…changing Hyprland setting",
         LocalAction::HyprlandDispatch { .. } => "…controlling Hyprland",
-    });
+    }));
     write_panel_status(status.text().as_str());
     let (tx, rx) = mpsc::channel();
     let task = state.tasks.borrow_mut().start();
@@ -1336,10 +1186,10 @@ fn show_display_confirmation(
     trial: peasy_core::display_trial::DisplayTrial,
 ) {
     let dialog = adw::AlertDialog::builder()
-        .heading("Keep these display settings?")
+        .heading(tr("Keep these display settings?"))
         .build();
-    dialog.add_response("revert", "Revert");
-    dialog.add_response("keep", "Keep settings");
+    dialog.add_response("revert", &tr("Revert"));
+    dialog.add_response("keep", &tr("Keep settings"));
     dialog.set_default_response(Some("revert"));
     dialog.set_close_response("revert");
     dialog.set_response_appearance("keep", adw::ResponseAppearance::Suggested);
@@ -1357,8 +1207,9 @@ fn show_display_confirmation(
                 glib::ControlFlow::Break
             }
             Some(seconds) => {
-                dialog.set_body(&format!(
-                    "Previous settings will be restored in {seconds} seconds."
+                dialog.set_body(&tr_args(
+                    "Previous settings will be restored in {seconds} seconds.",
+                    &[("seconds", &seconds.to_string())],
                 ));
                 glib::ControlFlow::Continue
             }
@@ -1391,11 +1242,27 @@ fn show_display_confirmation(
             glib::ControlFlow::Break
         });
     });
-    dialog.set_body("Previous settings will be restored in 20 seconds unless you keep them.");
+    dialog.set_body(&tr(
+        "Previous settings will be restored in 20 seconds unless you keep them.",
+    ));
     dialog.present(Some(window));
 }
 
+fn cancel_review(window: &adw::ApplicationWindow, state: AppState) {
+    if state.chat_pending.borrow().is_some() {
+        state.reviewed_change.borrow_mut().take();
+        chat_ui::complete_task(window, state, "Cancelled.", false);
+    } else {
+        show_prompt(window, state);
+    }
+}
+
 fn show_message(window: &adw::ApplicationWindow, state: AppState, message: &str) {
+    if state.chat_pending.borrow().is_some() {
+        state.reviewed_change.borrow_mut().take();
+        chat_ui::complete_task(window, state, message, false);
+        return;
+    }
     clear_panel_status();
     state.reviewed_change.borrow_mut().take();
     state.request.borrow_mut().clear();
@@ -1420,11 +1287,16 @@ fn render_message(
     kind: MessageKind,
 ) {
     let (root, body) = page("Peasy");
-    let label = gtk::Label::new(Some(message));
+    let displayed = if matches!(kind, MessageKind::Error) {
+        peasy_client::connectivity::offline_message(message).unwrap_or(message)
+    } else {
+        message
+    };
+    let label = gtk::Label::new(Some(&tr(displayed)));
     label.set_wrap(true);
     label.set_halign(gtk::Align::Start);
     label.set_selectable(true);
-    label.set_xalign(0.0);
+    label.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .min_content_height(100)
@@ -1434,16 +1306,16 @@ fn render_message(
         .build();
     body.append(&scroll);
     if matches!(kind, MessageKind::Error) {
-        let copy = gtk::Button::with_label("Copy diagnostics");
+        let copy = gtk::Button::with_label(&tr("Copy diagnostics"));
         let diagnostics = message.to_owned();
         let display = gtk::prelude::WidgetExt::display(window);
         copy.connect_clicked(move |_| display.clipboard().set_text(&diagnostics));
         body.append(&copy);
-        let retry = gtk::Button::with_label(if state.reviewed_change.borrow().is_some() {
+        let retry = gtk::Button::with_label(&tr(if state.reviewed_change.borrow().is_some() {
             "Review again"
         } else {
             "Retry request"
-        });
+        }));
         let retry_window = window.clone();
         let retry_state = state.clone();
         retry.connect_clicked(move |_| review_again(&retry_window, retry_state.clone()));
@@ -1453,11 +1325,11 @@ fn render_message(
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     controls.set_halign(gtk::Align::End);
     let reply_entry = if matches!(kind, MessageKind::Reply) {
-        let reply_label = gtk::Label::new(Some("Reply"));
+        let reply_label = gtk::Label::new(Some(&tr("Reply")));
         reply_label.set_halign(gtk::Align::Start);
         body.append(&reply_label);
         let entry = gtk::Entry::builder()
-            .placeholder_text("Type your reply…")
+            .placeholder_text(tr("Type your reply…"))
             .hexpand(true)
             .build();
         body.append(&entry);
@@ -1465,7 +1337,7 @@ fn render_message(
         status.set_halign(gtk::Align::Start);
         status.set_wrap(true);
         body.append(&status);
-        let send = gtk::Button::with_label("Send reply");
+        let send = gtk::Button::with_label(&tr("Send reply"));
         send.add_css_class("suggested-action");
         connect_request_submit(window, &state, &entry, &send, &status);
         controls.append(&send);
@@ -1473,9 +1345,16 @@ fn render_message(
     } else {
         None
     };
-    let done = gtk::Button::with_label("Done");
+    let done = gtk::Button::with_label(&tr("Done"));
     let window_clone = window.clone();
-    done.connect_clicked(move |_| show_prompt(&window_clone, state.clone()));
+    let final_message = message.to_owned();
+    done.connect_clicked(move |_| {
+        if state.chat_pending.borrow().is_some() {
+            chat_ui::complete_task(&window_clone, state.clone(), &final_message, false);
+        } else {
+            show_prompt(&window_clone, state.clone());
+        }
+    });
     controls.prepend(&done);
     body.append(&controls);
     show_content(window, &root, 440, -1);
@@ -1485,7 +1364,7 @@ fn render_message(
 }
 
 fn add_system_status_button(body: &gtk::Box, window: &adw::ApplicationWindow, state: &AppState) {
-    let button = gtk::Button::with_label("System status and recovery");
+    let button = gtk::Button::with_label(&tr("System status and recovery"));
     let window = window.clone();
     let state = state.clone();
     button
@@ -1542,8 +1421,8 @@ fn choose_backup(window: &adw::ApplicationWindow, state: AppState) {
     state.reviewed_change.borrow_mut().take();
     let task = state.tasks.borrow_mut().start();
     let dialog = gtk::FileDialog::builder()
-        .title("Choose a Peasy backup folder")
-        .accept_label("Open backup")
+        .title(tr("Choose a Peasy backup folder"))
+        .accept_label(tr("Open backup"))
         .build();
     let w = window.clone();
     dialog.select_folder(
@@ -1571,7 +1450,10 @@ fn choose_backup(window: &adw::ApplicationWindow, state: AppState) {
                     show_error_message(
                         &w,
                         state.clone(),
-                        &format!("Could not open backup: {error}"),
+                        &tr_args(
+                            "Could not open backup: {error}",
+                            &[("error", &format!("{error:#}"))],
+                        ),
                     );
                     return;
                 }
@@ -1608,26 +1490,30 @@ fn choose_backup(window: &adw::ApplicationWindow, state: AppState) {
 
 fn show_restore_options(window: &adw::ApplicationWindow, state: AppState, backup: restore::Backup) {
     let (root, body) = page("Restore backup");
-    let summary = gtk::Label::new(Some(&format!(
-        "{} standalone packages, {} pea instructions and saved appearance settings. Your hardware configuration stays in place.",
-        backup.portable.packages.len(),
-        backup.portable.peas.len()
+    let summary = gtk::Label::new(Some(&tr_args(
+        "{packages} standalone packages, {peas} pea instructions and saved appearance settings. Your hardware configuration stays in place.",
+        &[
+            ("packages", &backup.portable.packages.len().to_string()),
+            ("peas", &backup.portable.peas.len().to_string()),
+        ],
     )));
     summary.set_wrap(true);
-    summary.set_xalign(0.0);
+    summary.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     body.append(&summary);
-    let mode =
-        gtk::DropDown::from_strings(&["Merge with current settings", "Replace portable settings"]);
+    let mode = gtk::DropDown::from_strings(&[
+        &tr("Merge with current settings"),
+        &tr("Replace portable settings"),
+    ]);
     body.append(&mode);
-    let explanation = gtk::Label::new(Some(
+    let explanation = gtk::Label::new(Some(&tr(
         "Merge keeps current packages and adds the saved selection; saved appearance choices take precedence. Replace uses only the backup's standalone package, appearance and pea selections. Both modes keep this machine's service setups, network profiles and AppImages.",
-    ));
+    )));
     explanation.set_wrap(true);
-    explanation.set_xalign(0.0);
+    explanation.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     body.append(&explanation);
     let deferred = gtk::Label::new(Some(&backup.deferred));
     deferred.set_wrap(true);
-    deferred.set_xalign(0.0);
+    deferred.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     deferred.set_selectable(true);
     let scroll = gtk::ScrolledWindow::builder()
         .child(&deferred)
@@ -1637,11 +1523,11 @@ fn show_restore_options(window: &adw::ApplicationWindow, state: AppState, backup
     body.append(&scroll);
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     actions.set_halign(gtk::Align::End);
-    let cancel = gtk::Button::with_label("Cancel");
+    let cancel = gtk::Button::with_label(&tr("Cancel"));
     let w = window.clone();
     let s = state.clone();
     cancel.connect_clicked(move |_| show_provider_settings(&w, s.clone()));
-    let review = gtk::Button::with_label("Review restore");
+    let review = gtk::Button::with_label(&tr("Review restore"));
     review.add_css_class("suggested-action");
     let w = window.clone();
     review.connect_clicked(move |_| {
@@ -1710,30 +1596,22 @@ fn show_system_status(
 ) {
     let (root, body) = page("System status and recovery");
     let mut message = if status.restart_pending {
-        "Peasy is finishing existing work before updating.\n\n".to_owned()
+        tr("Peasy is finishing existing work before updating.\n\n")
     } else {
         "".to_owned()
     };
-    message.push_str(&format!(
-        "Service version: {}\nProtocol: {}\nRunning executable: {}\nPackage source: {}",
-        status.version, status.protocol, status.executable, status.nixpkgs
-    ));
+    message.push_str(&tr_args("Service version: {version}\nProtocol: {protocol}\nRunning executable: {executable}\nPackage source: {source}", &[("version", &status.version), ("protocol", &status.protocol.to_string()), ("executable", &status.executable), ("source", &status.nixpkgs)]));
     if let Some(recovery) = status.recovery {
-        message.push_str(&format!(
-            "\n\n{}\nActive generation: {}\nPrevious generation: {}\nRequested packages: {}",
-            recovery.message,
-            recovery
-                .active_generation
-                .as_deref()
-                .unwrap_or("unavailable"),
-            recovery
-                .previous_generation
-                .as_deref()
-                .unwrap_or("unavailable"),
-            recovery.intended_packages.join(", ")
+        message.push_str(&tr_args(
+            "\n\n{message}\nActive generation: {active}\nPrevious generation: {previous}\nRequested packages: {packages}",
+            &[("message", &recovery.message), ("active", recovery.active_generation.as_deref().unwrap_or(&tr("unavailable"))),
+              ("previous", recovery.previous_generation.as_deref().unwrap_or(&tr("unavailable"))),
+              ("packages", &recovery.intended_packages.join(", "))],
         ));
         if !recovery.intended_change.is_empty() {
-            message.push_str("\n\nIntended configuration change (up to 100 lines):\n");
+            message.push_str(&tr(
+                "\n\nIntended configuration change (up to 100 lines):\n",
+            ));
             for line in &recovery.intended_change {
                 let prefix = match line.kind {
                     peasy_core::DiffKind::Add => "+",
@@ -1744,7 +1622,7 @@ fn show_system_status(
             }
         }
         if recovery.needs_attention && recovery.previous_generation.is_some() && !status.applying {
-            let recover = gtk::Button::with_label("Review restoring the previous generation");
+            let recover = gtk::Button::with_label(&tr("Review restoring the previous generation"));
             let w = window.clone();
             let s = state.clone();
             recover.connect_clicked(move |_| {
@@ -1753,13 +1631,13 @@ fn show_system_status(
             body.append(&recover);
         }
     } else if status.applying {
-        message.push_str("\n\nA system change is running.");
+        message.push_str(&tr("\n\nA system change is running."));
     } else {
-        message.push_str("\n\nNo interrupted operation needs recovery.");
+        message.push_str(&tr("\n\nNo interrupted operation needs recovery."));
     }
     let label = gtk::Label::new(Some(&message));
     label.set_wrap(true);
-    label.set_xalign(0.0);
+    label.set_xalign(if peasy_core::i18n::is_rtl() { 1.0 } else { 0.0 });
     label.set_selectable(true);
     let scroll = gtk::ScrolledWindow::builder()
         .min_content_height(240)
@@ -1767,12 +1645,12 @@ fn show_system_status(
         .child(&label)
         .build();
     body.append(&scroll);
-    let refresh = gtk::Button::with_label("Refresh status");
+    let refresh = gtk::Button::with_label(&tr("Refresh status"));
     let w = window.clone();
     let s = state.clone();
     refresh.connect_clicked(move |_| run_system_request(&w, s.clone(), IpcRequest::Inspect));
     body.append(&refresh);
-    let done = gtk::Button::with_label("Back");
+    let done = gtk::Button::with_label(&tr("Back"));
     let w = window.clone();
     done.connect_clicked(move |_| {
         if state.client.borrow().is_some() {
@@ -1836,7 +1714,7 @@ fn write_panel_status(message: &str) {
             .create_new(true)
             .mode(0o600)
             .open(&temporary)?;
-        let safe = message
+        let safe = tr(message)
             .chars()
             .filter(|character| !character.is_control())
             .take(180)

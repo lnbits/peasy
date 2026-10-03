@@ -63,7 +63,7 @@ impl ksni::Tray for PeasyTray {
         use ksni::menu::{MenuItem, StandardItem};
         vec![
             StandardItem {
-                label: "Open Peasy".into(),
+                label: peasy_core::i18n::tr("Open Peasy"),
                 icon_name: "io.github.peasy.Peasy".into(),
                 activate: Box::new(|tray: &mut Self| tray.open()),
                 ..Default::default()
@@ -71,7 +71,7 @@ impl ksni::Tray for PeasyTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Quit".into(),
+                label: peasy_core::i18n::tr("Quit"),
                 icon_name: "application-exit".into(),
                 activate: Box::new(|_| std::process::exit(0)),
                 ..Default::default()

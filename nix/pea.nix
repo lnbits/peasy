@@ -15,6 +15,7 @@ assert
     3
     4
     5
+    6
   ];
 runCommand "peasy-pea-${id}-${manifest.version}"
   {

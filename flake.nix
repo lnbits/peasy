@@ -92,6 +92,7 @@
               rustc
               rustfmt
               wasm-tools
+              xvfb-run
             ];
           };
         }
