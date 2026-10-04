@@ -340,6 +340,9 @@ impl PeaManifest {
                     .contains(&format!("{}.read", query.domain.id()));
         }
         if let ModelAction::ChangeResources { change } = action {
+            if change.settings_only() {
+                return false;
+            }
             if self.host_api < 6 && change.domain() == crate::ResourceDomain::Applications {
                 return false;
             }

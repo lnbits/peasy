@@ -1,12 +1,13 @@
 //! Settings-owned model inventory and downloads; dropdown labels are never IDs.
-use crate::{AppState, tasks::Task};
+use crate::{AppState, run_system_request, tasks::Task};
 use adw::prelude::*;
 use gtk::glib;
+use peasy_client::ollama_setup::{self, SetupAction};
 use peasy_client::{
     DEFAULT_OLLAMA_URL,
     ollama_models::{
-        InstalledModel, ModelCatalogue, PullProgress, list_ollama_model_details, pull_ollama_model,
-        recommended_models, remove_ollama_model,
+        InstalledModel, ModelCatalogue, PullProgress, pull_ollama_model, recommended_models,
+        remove_ollama_model,
     },
 };
 use peasy_core::i18n::{tr, tr_args};
@@ -109,8 +110,14 @@ struct Inventory {
 }
 
 enum Event {
+    Starting,
     Progress(PullProgress),
-    Finished(Result<Inventory, String>),
+    Finished(Result<Inventory, Failure>),
+}
+
+struct Failure {
+    message: String,
+    setup: Option<SetupAction>,
 }
 
 pub(super) struct ModelSelector {
@@ -121,17 +128,24 @@ pub(super) struct ModelSelector {
     refresh: gtk::Button,
     cancel: gtk::Button,
     remove: gtk::Button,
+    setup: gtk::Button,
+    setup_action: Cell<Option<SetupAction>>,
     catalogue: RefCell<ModelCatalogue>,
     rows: RefCell<Vec<Row>>,
     previous: RefCell<Option<String>>,
     updating: Cell<bool>,
     busy: Cell<bool>,
+    refresh_pending: Cell<bool>,
     task: RefCell<Option<Task>>,
     state: AppState,
 }
 
 impl ModelSelector {
-    pub fn new(state: &AppState, saved: Option<String>) -> Rc<Self> {
+    pub fn new(
+        window: &adw::ApplicationWindow,
+        state: &AppState,
+        saved: Option<String>,
+    ) -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
         let dropdown = gtk::DropDown::from_strings(&[]);
         dropdown.set_enable_search(true);
@@ -161,8 +175,13 @@ impl ModelSelector {
         cancel.set_visible(false);
         actions.append(&refresh);
         actions.append(&cancel);
-        root.append(&remove);
+        actions.append(&remove);
         root.append(&actions);
+        let setup = gtk::Button::new();
+        setup.add_css_class("suggested-action");
+        setup.set_halign(gtk::Align::Start);
+        setup.set_visible(false);
+        root.append(&setup);
         let selector = Rc::new(Self {
             root,
             dropdown,
@@ -171,13 +190,29 @@ impl ModelSelector {
             refresh,
             cancel,
             remove,
+            setup,
+            setup_action: Cell::new(None),
             catalogue: RefCell::new(ModelCatalogue::bundled()),
             rows: Default::default(),
             previous: RefCell::new(saved),
             updating: Cell::new(false),
             busy: Cell::new(false),
+            refresh_pending: Cell::new(false),
             task: Default::default(),
             state: state.clone(),
+        });
+        let weak = Rc::downgrade(&selector);
+        let owner = window.downgrade();
+        selector.setup.connect_clicked(move |_| {
+            if let Some(selector) = weak.upgrade()
+                && let Some(window) = owner.upgrade()
+                && let Some(action) = selector.setup_action.get()
+                && !selector.busy.get()
+            {
+                let mut state = selector.state.clone();
+                state.return_to_ollama_settings = true;
+                run_system_request(&window, state, action.request());
+            }
         });
         let weak = Rc::downgrade(&selector);
         selector.dropdown.connect_selected_notify(move |_| {
@@ -231,8 +266,27 @@ impl ModelSelector {
                 selector.confirm_remove();
             }
         });
-        selector.start(Operation::Refresh(false));
         selector
+    }
+
+    pub fn activate(self: &Rc<Self>) {
+        if self.busy.get() {
+            self.refresh_pending.set(
+                self.task
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|task| task.work.is_cancelled()),
+            );
+            return;
+        }
+        self.start(Operation::Refresh(false));
+    }
+
+    pub fn deactivate(&self) {
+        self.refresh_pending.set(false);
+        if let Some(task) = self.task.borrow().as_ref() {
+            task.work.cancel();
+        }
     }
 
     pub fn widget(&self) -> &gtk::Box {
@@ -320,6 +374,17 @@ impl ModelSelector {
         dialog.present(Some(&self.root));
     }
 
+    pub(super) fn set_setup(&self, action: Option<SetupAction>) {
+        self.setup_action.set(action);
+        self.setup.set_visible(action.is_some());
+        if let Some(action) = action {
+            self.setup.set_label(&tr(match action {
+                SetupAction::Install => "Install and enable Ollama",
+                SetupAction::Start => "Start Ollama",
+            }));
+        }
+    }
+
     fn start(self: &Rc<Self>, operation: Operation) {
         let download = match &operation {
             Operation::Download(name) => Some(name.clone()),
@@ -329,6 +394,7 @@ impl ModelSelector {
         if self.busy.replace(true) {
             return;
         }
+        self.set_setup(None);
         self.dropdown.set_sensitive(false);
         if download.is_none() {
             self.updating.set(true);
@@ -362,7 +428,9 @@ impl ModelSelector {
                         })?
                     }
                     Operation::Remove(model) => remove_ollama_model(DEFAULT_OLLAMA_URL, model)?,
-                    Operation::Refresh(_) => list_ollama_model_details(DEFAULT_OLLAMA_URL)?,
+                    Operation::Refresh(_) => ollama_setup::list_or_start_models(|| {
+                        let _ = tx.try_send(Event::Starting);
+                    })?,
                 };
                 let catalogue = if let Operation::Refresh(force) = operation {
                     recommended_models(force)
@@ -371,7 +439,13 @@ impl ModelSelector {
                 };
                 Ok(Inventory { models, catalogue })
             });
-            let _ = tx.send(Event::Finished(result.map_err(|e| format!("{e:#}"))));
+            let result = result.map_err(|error| Failure {
+                setup: error
+                    .downcast_ref::<ollama_setup::SetupRequired>()
+                    .map(|required| required.0),
+                message: format!("{error:#}"),
+            });
+            let _ = tx.send(Event::Finished(result));
         });
         let weak = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -384,6 +458,7 @@ impl ModelSelector {
             }
             for _ in 0..16 {
                 match rx.try_recv() {
+                    Ok(Event::Starting) => selector.status.set_text(&tr("Starting local Ollama…")),
                     Ok(Event::Progress(event)) => {
                         if let (Some(total), Some(completed), Some(model)) =
                             (event.total, event.completed, download.as_ref())
@@ -414,6 +489,10 @@ impl ModelSelector {
                         selector.progress.set_visible(false);
                         selector.task.borrow_mut().take();
                         task.view.cancel();
+                        if selector.refresh_pending.replace(false) {
+                            selector.start(Operation::Refresh(false));
+                            return glib::ControlFlow::Break;
+                        }
                         match result {
                             Ok(Inventory { models, catalogue }) => {
                                 *selector.catalogue.borrow_mut() = catalogue;
@@ -432,7 +511,13 @@ impl ModelSelector {
                                     "Choose a model, then Save provider to use it."
                                 }));
                             }
-                            Err(error) => {
+                            Err(Failure {
+                                message: error,
+                                setup,
+                            }) => {
+                                if !task.work.is_cancelled() {
+                                    selector.set_setup(setup);
+                                }
                                 // An incomplete model is never considered ready or saved.
                                 selector.updating.set(true);
                                 let index = selector.previous.borrow().as_ref().and_then(|name| {
@@ -451,6 +536,15 @@ impl ModelSelector {
                                     .set_sensitive(!selector.rows.borrow().is_empty());
                                 let message = if task.work.is_cancelled() {
                                     tr("Download cancelled.")
+                                } else if let Some(action) = setup {
+                                    tr(match action {
+                                        SetupAction::Install => {
+                                            "Ollama is not set up as a system service. Review installation below, then choose a model."
+                                        }
+                                        SetupAction::Start => {
+                                            "Ollama is installed but stopped. Review starting it below, then choose a model."
+                                        }
+                                    })
                                 } else if let Some(message) =
                                     peasy_client::connectivity::offline_message(&error)
                                 {
@@ -458,11 +552,6 @@ impl ModelSelector {
                                 } else if removing {
                                     tr_args(
                                         "Removal could not be confirmed. Refresh the model list.\n{error}",
-                                        &[("error", &error)],
-                                    )
-                                } else if download.is_none() {
-                                    tr_args(
-                                        "{error}\nEnable services.ollama and start it, then press Refresh.",
                                         &[("error", &error)],
                                     )
                                 } else {

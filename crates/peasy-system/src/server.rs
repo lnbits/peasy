@@ -699,6 +699,14 @@ mod tests {
         assert_eq!(backend.managed_module().unwrap(), before);
         let mut update = preview();
         for plan in [
+            peasy_core::ResourceChange::ServiceEnabled {
+                service: peasy_core::resources::ManagedService::Ollama,
+                enabled: true,
+            },
+            peasy_core::ResourceChange::Service {
+                unit: "ollama.service".into(),
+                action: peasy_core::resources::ServiceAction::Start,
+            },
             peasy_core::ResourceChange::Service {
                 unit: "caddy.service".into(),
                 action: peasy_core::resources::ServiceAction::Restart,

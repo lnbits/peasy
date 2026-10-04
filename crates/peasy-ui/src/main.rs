@@ -53,6 +53,7 @@ struct AppState {
     chat_task_reply: Rc<Cell<bool>>,
     chat_pending: Rc<RefCell<ChatPending>>,
     chat_attachments: Rc<RefCell<Vec<peasy_client::chat::attachments::Attachment>>>,
+    return_to_ollama_settings: bool,
 }
 
 enum ResolveMessage {
@@ -95,6 +96,7 @@ fn main() -> Result<()> {
         chat_task_reply: Default::default(),
         chat_pending: Default::default(),
         chat_attachments: Default::default(),
+        return_to_ollama_settings: false,
     };
     let application_id = if state.args.settings {
         "io.github.peasy.Peasy.Settings"
@@ -259,6 +261,8 @@ fn show_content(window: &adw::ApplicationWindow, root: &gtk::Box, width: i32, he
 
 const OPENAI_PROVIDER_INDEX: u32 = 0;
 const OLLAMA_PROVIDER_INDEX: u32 = 1;
+const MAIN_WINDOW_WIDTH: i32 = 680;
+const MAIN_WINDOW_HEIGHT: i32 = 760;
 
 fn initial_provider_selection(settings: Option<&ProviderSettings>, has_stored_key: bool) -> u32 {
     match settings {
@@ -270,22 +274,28 @@ fn initial_provider_selection(settings: Option<&ProviderSettings>, has_stored_ke
     }
 }
 
-fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
+fn show_provider_settings(window: &adw::ApplicationWindow, mut state: AppState) {
+    let return_to_ollama = state.return_to_ollama_settings;
+    state.return_to_ollama_settings = false;
     state.tasks.borrow_mut().close();
     discard_pending(&state);
     let (root, body) = page("Peasy settings");
-    root.remove(&body);
-    let scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
+    let pages = gtk::Stack::builder()
         .vexpand(true)
-        .child(&body)
+        .vhomogeneous(false)
+        .hhomogeneous(false)
         .build();
-    root.append(&scroll);
-    let heading = gtk::Label::new(Some(&tr("AI provider")));
-    heading.add_css_class("title-3");
-    heading.set_halign(gtk::Align::Start);
-    body.append(&heading);
-    add_system_status_button(&body, window, &state);
+    let switcher = gtk::StackSwitcher::builder()
+        .stack(&pages)
+        .halign(gtk::Align::Center)
+        .build();
+    body.append(&switcher);
+    body.append(&pages);
+    let provider_page = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    let system_page = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    pages.add_titled(&provider_page, Some("provider"), &tr("AI provider"));
+    pages.add_titled(&system_page, Some("system"), &tr("Backups and updates"));
+    add_system_status_button(&system_page, window, &state);
 
     let provider = gtk::DropDown::from_strings(&["OpenAI", &tr("Ollama (local)")]);
     let settings = state.providers.load().ok().flatten();
@@ -294,7 +304,10 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         settings.as_ref(),
         has_stored_key,
     ));
-    body.append(&provider);
+    if return_to_ollama {
+        provider.set_selected(1);
+    }
+    provider_page.append(&provider);
 
     let openai_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     let key_entry = gtk::PasswordEntry::builder()
@@ -329,13 +342,17 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
         Some(ProviderSettings::Ollama { model, .. }) => Some(model.clone()),
         _ => None,
     };
-    let ollama_selector = ollama_models::ModelSelector::new(&state, saved_model);
+    let ollama_selector = ollama_models::ModelSelector::new(window, &state, saved_model);
     ollama_box.append(ollama_selector.widget());
 
     let stack = gtk::Stack::new();
+    stack.set_vhomogeneous(false);
+    stack.set_hhomogeneous(false);
+    stack.set_vexpand(false);
+    stack.set_valign(gtk::Align::Start);
     stack.add_named(&openai_box, Some("openai"));
     stack.add_named(&ollama_box, Some("ollama"));
-    body.append(&stack);
+    provider_page.append(&stack);
 
     if let Some(settings) = settings {
         match settings {
@@ -348,11 +365,17 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     } else {
         "openai"
     });
+    if provider.selected() == OLLAMA_PROVIDER_INDEX {
+        ollama_selector.activate();
+    }
+    let selector_for_provider = ollama_selector.clone();
     let stack_clone = stack.clone();
     provider.connect_selected_notify(move |provider| {
         stack_clone.set_visible_child_name(if provider.selected() == OLLAMA_PROVIDER_INDEX {
+            selector_for_provider.activate();
             "ollama"
         } else {
+            selector_for_provider.deactivate();
             "openai"
         });
     });
@@ -360,7 +383,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
     separator.set_margin_top(4);
     separator.set_margin_bottom(4);
-    body.append(&separator);
+    system_page.append(&separator);
     let export_row = gtk::Box::new(gtk::Orientation::Horizontal, 14);
     export_row.set_valign(gtk::Align::Center);
     let export_copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
@@ -391,8 +414,8 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     let restore_window = window.clone();
     let restore_state = state.clone();
     restore_backup.connect_clicked(move |_| choose_backup(&restore_window, restore_state.clone()));
-    body.append(&export_row);
-    update::add_controls(&body, window, &state);
+    system_page.append(&export_row);
+    update::add_controls(&system_page, window, &state);
 
     let status = gtk::Label::new(None);
     status.set_wrap(true);
@@ -454,6 +477,10 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
     save.add_css_class("suggested-action");
     buttons.append(&save);
     body.append(&buttons);
+    let save_for_tab = save.clone();
+    pages.connect_visible_child_name_notify(move |pages| {
+        save_for_tab.set_visible(pages.visible_child_name().as_deref() == Some("provider"));
+    });
 
     let keys_for_remove = state.keys.clone();
     let providers_for_remove = state.providers.clone();
@@ -509,7 +536,7 @@ fn show_provider_settings(window: &adw::ApplicationWindow, state: AppState) {
             Err(error) => status.set_text(&format!("{error:#}")),
         }
     });
-    show_content(window, &root, 480, 570);
+    show_content(window, &root, MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT);
 }
 
 fn engine_path(args: &Args) -> PathBuf {
@@ -523,6 +550,10 @@ mod export;
 use export::{configuration_export, write_configuration_export};
 
 fn show_prompt(window: &adw::ApplicationWindow, state: AppState) {
+    if state.return_to_ollama_settings {
+        show_provider_settings(window, state);
+        return;
+    }
     chat_ui::show(window, state);
 }
 
@@ -880,7 +911,11 @@ fn show_proposal(window: &adw::ApplicationWindow, state: AppState, proposal: Pro
     let window_apply = window.clone();
     apply.connect_clicked(move |button| {
         button.set_sensitive(false);
-        let client = state.client.borrow().clone();
+        let client = if state.return_to_ollama_settings {
+            None
+        } else {
+            state.client.borrow().clone()
+        };
         let ipc = peasy_client::IpcClient::new(state.args.socket.clone());
         let (progress, cancel_progress) =
             show_apply_progress(&window_apply, &proposal.title, state.clone());

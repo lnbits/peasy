@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod ollama_models;
+pub mod ollama_setup;
 pub use ollama_models::list_ollama_models;
 pub mod connectivity;
 mod model_wire;

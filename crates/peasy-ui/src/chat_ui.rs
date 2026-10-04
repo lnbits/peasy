@@ -614,7 +614,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
     });
     entry.add_controller(keys);
     window.set_resizable(true);
-    show_content(window, &root, 680, 760);
+    show_content(window, &root, MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT);
     entry.grab_focus();
     if panel.is_some() {
         send.emit_clicked();
@@ -763,6 +763,7 @@ mod tests {
             chat_task_reply: Default::default(),
             chat_pending: Default::default(),
             chat_attachments: Default::default(),
+            return_to_ollama_settings: false,
         };
         state.conversation.borrow_mut().push(Turn{user:"Why is my computer slow?".into(),attachments:vec![],answer:Answer{message:"## Observations\nA **short sample** is not proof.\n\n```nix\nzramSwap.enable = true;\n```\n[source](https://example.com)".into(),suggested_task:Some("enable zram".into()),..Default::default()}});
         let app = adw::Application::builder()
@@ -862,6 +863,113 @@ mod tests {
         assert!(state.conversation.borrow().turns.is_empty());
         assert!(!state.chat_task_reply.get());
         assert!(state.request.borrow().is_empty());
+
+        // Settings retain the chat window size and expose both provider forms
+        // and maintenance actions without a scrolling page or clipped footer.
+        state
+            .providers
+            .save(&ProviderSettings::OpenAi {
+                model: "gpt-5-mini".into(),
+            })
+            .unwrap();
+        show_provider_settings(&window, state.clone());
+        state.tasks.borrow_mut().close();
+        let widgets = descendants(window.upcast_ref());
+        let pages = widgets
+            .iter()
+            .find_map(|w| {
+                w.clone()
+                    .downcast::<gtk::Stack>()
+                    .ok()
+                    .filter(|s| s.child_by_name("provider").is_some())
+            })
+            .unwrap();
+        let provider = widgets
+            .iter()
+            .find_map(|w| w.clone().downcast::<gtk::DropDown>().ok())
+            .unwrap();
+        let model = widgets
+            .iter()
+            .find_map(|w| {
+                w.clone()
+                    .downcast::<gtk::Entry>()
+                    .ok()
+                    .filter(|e| e.text() == "gpt-5-mini")
+            })
+            .unwrap();
+        model.set_text("draft-model");
+        for (page, selected, suffix) in [
+            ("provider", OPENAI_PROVIDER_INDEX, "openai"),
+            ("provider", OLLAMA_PROVIDER_INDEX, "ollama"),
+            ("system", OLLAMA_PROVIDER_INDEX, "system"),
+            ("provider", OPENAI_PROVIDER_INDEX, "openai-return"),
+        ] {
+            provider.set_selected(selected);
+            pages.set_visible_child_name(page);
+            for _ in 0..20 {
+                drain();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(window.default_width(), MAIN_WINDOW_WIDTH, "{suffix}");
+            assert_eq!(window.default_height(), MAIN_WINDOW_HEIGHT);
+            assert!(
+                !widgets
+                    .iter()
+                    .any(|w| w.is::<gtk::ScrolledWindow>() && w.is_mapped()),
+                "{suffix} has a scrolling settings page"
+            );
+            let content = window.content().unwrap();
+            assert!(
+                content
+                    .measure(gtk::Orientation::Vertical, MAIN_WINDOW_WIDTH)
+                    .0
+                    <= MAIN_WINDOW_HEIGHT,
+                "{suffix} settings exceed the chat height"
+            );
+            let save = button(&window, &tr("Save provider"));
+            assert_eq!(save.is_visible(), page == "provider");
+            let bottom = if page == "provider" {
+                save
+            } else {
+                button(&window, &tr("Check for updates"))
+            };
+            let bounds = bottom.compute_bounds(&window).unwrap();
+            assert!(bounds.y() + bounds.height() <= MAIN_WINDOW_HEIGHT as f32);
+            if let Ok(path) = std::env::var("PEASY_TEST_SCREENSHOT") {
+                let paintable = gtk::WidgetPaintable::new(Some(&window));
+                let snapshot = gtk::Snapshot::new();
+                paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+                let node = snapshot.to_node().unwrap();
+                window
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{path}.{suffix}.png"))
+                    .unwrap();
+            }
+        }
+        assert_eq!(model.text(), "draft-model");
+        // Bootstrap return routing stays in Ollama settings, even with a saved
+        // OpenAI provider and without a loaded AI client.
+        let mut bootstrap = state.clone();
+        bootstrap.return_to_ollama_settings = true;
+        cancel_review(&window, bootstrap.clone());
+        state.tasks.borrow_mut().close();
+        drain();
+        let selected = descendants(window.upcast_ref())
+            .into_iter()
+            .find_map(|w| w.downcast::<gtk::DropDown>().ok())
+            .unwrap();
+        assert_eq!(selected.selected(), OLLAMA_PROVIDER_INDEX);
+        show_message(&window, bootstrap, "Ollama started.");
+        button(&window, &tr("Done")).emit_clicked();
+        state.tasks.borrow_mut().close();
+        drain();
+        let selected = descendants(window.upcast_ref())
+            .into_iter()
+            .find_map(|w| w.downcast::<gtk::DropDown>().ok())
+            .unwrap();
+        assert_eq!(selected.selected(), OLLAMA_PROVIDER_INDEX);
         state.tasks.borrow_mut().close();
         window.close();
         drain();

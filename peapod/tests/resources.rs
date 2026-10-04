@@ -140,3 +140,40 @@ fn managed_resources_roundtrip_and_survive_unrelated_changes_and_portable_restor
         .is_err()
     );
 }
+
+#[test]
+fn ollama_bootstrap_is_local_persistent_and_outside_the_model_contract() {
+    let change = ResourceChange::ServiceEnabled {
+        service: ManagedService::Ollama,
+        enabled: true,
+    };
+    let mut state = PackageState::default();
+    state.resources = state.resources.changed(&change, None).unwrap();
+    let rendered = render_packages_module(&state).unwrap();
+    assert!(rendered.contains("services.ollama.enable = true;"));
+    assert!(rendered.contains("services.ollama.host = \"127.0.0.1\";"));
+    assert!(rendered.contains("services.ollama.openFirewall = false;"));
+    assert!(!rendered.contains("loadModels"));
+    assert!(!rendered.contains("mkForce"));
+    let restored: PackageState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(restored, state);
+    let envelope: ModelEnvelope =
+        serde_json::from_value(json!({"action":"change_resources", "resource_change":change}))
+            .unwrap();
+    assert!(ModelAction::try_from(envelope).is_err());
+    let manifest: pea::PeaManifest =
+        serde_json::from_str(include_str!("../services/pea.json")).unwrap();
+    assert!(!manifest.permits(&ModelAction::ChangeResources { change }));
+    state.resources = state
+        .resources
+        .changed(
+            &ResourceChange::ServiceEnabled {
+                service: ManagedService::Ollama,
+                enabled: false,
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(state, PackageState::default());
+}

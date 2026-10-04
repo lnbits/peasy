@@ -282,6 +282,11 @@ impl TryFrom<ModelEnvelope> for ModelAction {
                     ValidationError::InvalidRequest("resource change required".into())
                 })?;
                 change.validate()?;
+                if change.settings_only() {
+                    return Err(ValidationError::InvalidRequest(
+                        "use provider settings to set up Ollama".into(),
+                    ));
+                }
                 Ok(Self::ChangeResources { change })
             }
             "search_package" | "search_appimage" | "check_package" => {

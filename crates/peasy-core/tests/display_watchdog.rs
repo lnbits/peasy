@@ -24,8 +24,8 @@ fn fixture() -> (tempfile::TempDir, Value) {
     std::fs::set_permissions(tool, std::fs::Permissions::from_mode(0o755)).unwrap();
     (dir, json!({"backend":"hyprland","outputs":outputs}))
 }
-fn start(dir: &tempfile::TempDir, snapshot: Value) -> std::process::Child {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_peasy-display-guard"))
+fn spawn_guard(dir: &tempfile::TempDir) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_peasy-display-guard"))
         .env("XDG_RUNTIME_DIR", dir.path())
         .env("XDG_CURRENT_DESKTOP", "Hyprland")
         .env("DISPLAY_FIXTURE", dir.path())
@@ -33,7 +33,10 @@ fn start(dir: &tempfile::TempDir, snapshot: Value) -> std::process::Child {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .unwrap();
+        .unwrap()
+}
+fn start(dir: &tempfile::TempDir, snapshot: Value) -> std::process::Child {
+    let mut child = spawn_guard(dir);
     let request = json!({"change":{"operation":"display","connector":"DP-1","mode":"1920x1080@60","scale_percent":150,"x":-1920,"y":0,"primary":false},"snapshot":snapshot});
     writeln!(child.stdin.as_mut().unwrap(), "{request}").unwrap();
     child
@@ -55,7 +58,7 @@ fn keep_revert_disconnect_timeout_and_partial_failure() {
         if action == "failure" {
             std::fs::write(dir.path().join("fail-once"), "").unwrap();
         }
-        let mut child = start(&dir, snapshot.clone());
+        let mut child = start(&dir, snapshot);
         let mut output = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
         output.read_line(&mut line).unwrap();
@@ -64,8 +67,10 @@ fn keep_revert_disconnect_timeout_and_partial_failure() {
             assert_eq!(reply["status"], "error");
         } else {
             assert_eq!(reply["status"], "ready");
-            // A second process cannot overlap the first trial.
-            let second = start(&dir, snapshot);
+            // The lock rejects a second process before it reads a request.
+            // Writing to that process races its exit and can cause BrokenPipe.
+            // Read its rejection directly; wait_with_output closes stdin too.
+            let second = spawn_guard(&dir);
             let response = second.wait_with_output().unwrap();
             assert!(String::from_utf8_lossy(&response.stdout).contains("already active"));
             match action {

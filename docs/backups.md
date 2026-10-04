@@ -34,7 +34,7 @@ source tree is reported as unavailable; no partial archive is presented as compl
 
 ## Restore
 
-1. On the destination, open Peasy settings → **Restore backup** and select the
+1. On the destination, open Peasy settings → **Backups and updates → Restore backup** and select the
    exported folder. Peasy must already be installed and configured; no AI provider
    is needed. Use the backup's Peasy version or a newer compatible release.
 2. Choose **Merge** (default) or **Replace**. Merge adds the saved standalone

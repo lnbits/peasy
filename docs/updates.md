@@ -1,6 +1,6 @@
 # Updating Peasy
 
-Open **Settings**. Peasy checks the latest published stable release from
+Open **Settings → Backups and updates**. Peasy checks the latest published stable release from
 [lnbits/peasy](https://github.com/lnbits/peasy/releases) in the background.
 Successful checks are cached for six hours. **Check for updates** refreshes the
 result, with a 30-second minimum interval between successful checks.

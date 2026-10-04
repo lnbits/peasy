@@ -4,7 +4,7 @@ set -euo pipefail
 cargo fmt --all --check
 cargo build --locked --release -p peasy-engine --target wasm32-unknown-unknown
 export PEASY_TEST_ENGINE="$PWD/target/wasm32-unknown-unknown/release/peasy_engine.wasm"
-xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none cargo test --locked --workspace -- --test-threads=1 --include-ignored
+xvfb-run -a -s "-screen 0 1280x1024x24" env GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none cargo test --locked --workspace -- --test-threads=1 --include-ignored
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo run --locked -p peasy-core --example pea_catalogue -- --check
 python3 scripts/pea-catalogue.py --check

@@ -35,6 +35,7 @@ let
   resourceTools = {
     GIO = "${glib}/bin/gio";
     SYSTEMCTL = "${systemd}/bin/systemctl";
+    SYSTEMD_RUN = "${systemd}/bin/systemd-run";
     BUSCTL = "${systemd}/bin/busctl";
     LSBLK = "${util-linux}/bin/lsblk";
     UDISKSCTL = "${udisks}/bin/udisksctl";

@@ -81,7 +81,7 @@ choices!(AudioAction { Default => "set-default", Volume => "set-volume", Mute =>
 choices!(PowerProfile { Balanced => "balanced", PowerSaver => "power-saver", Performance => "performance" });
 choices!(LidAction { Ignore => "ignore", Suspend => "suspend", Hibernate => "hibernate" });
 choices!(PrinterAction { Add => "add", Default => "default", Test => "test" });
-choices!(ManagedService { Ssh => "services.openssh.enable", Caddy => "services.caddy.enable", Tailscale => "services.tailscale.enable", Printing => "services.printing.enable", Bluetooth => "hardware.bluetooth.enable", Docker => "virtualisation.docker.enable", Podman => "virtualisation.podman.enable", Libvirtd => "virtualisation.libvirtd.enable" });
+choices!(ManagedService { Ssh => "services.openssh.enable", Caddy => "services.caddy.enable", Tailscale => "services.tailscale.enable", Printing => "services.printing.enable", Bluetooth => "hardware.bluetooth.enable", Docker => "virtualisation.docker.enable", Podman => "virtualisation.podman.enable", Libvirtd => "virtualisation.libvirtd.enable", Ollama => "services.ollama.enable" });
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -361,6 +361,17 @@ impl ResourceChange {
         }
         Ok(())
     }
+    /// Provider bootstrapping is a settings action, outside the versioned pea API.
+    pub fn settings_only(&self) -> bool {
+        matches!(
+            self,
+            Self::ServiceEnabled {
+                service: ManagedService::Ollama,
+                ..
+            }
+        )
+    }
+
     pub fn summary(&self) -> String {
         match self {
             Self::OpenApplication { desktop_id } => format!("Open {desktop_id}"),
@@ -500,6 +511,12 @@ impl ResourceChange {
             Self::ServiceEnabled { enabled: false, .. } => {
                 "Withdraws Peasy's enablement only. Other configuration may keep the service enabled; service data is retained."
             }
+            Self::ServiceEnabled {
+                service: ManagedService::Ollama,
+                enabled: true,
+            } => {
+                "Installs and enables local Ollama now and at boot. Models are downloaded separately from settings. Uses the host Ollama package and keeps existing model data."
+            }
             Self::ServiceEnabled { .. } => {
                 "Enables the NixOS service using its defaults. Review network exposure and access; application-specific settings may still be needed."
             }
@@ -609,7 +626,7 @@ impl ResourceState {
         self == &Self::default()
     }
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.services.len() > 8
+        if self.services.len() > 9
             || self.mounts.len() > 16
             || self.users.len() > 16
             || self.groups.len() > 16
@@ -772,6 +789,11 @@ impl ResourceState {
         for service in &self.services {
             s.push_str(&format!("  {} = true;\n", service.value()));
         }
+        if self.services.contains(&ManagedService::Ollama) {
+            // Never expose the unauthenticated local API or silently override an
+            // administrator's endpoint. Conflicts go through normal Nix review.
+            s.push_str("  services.ollama.host = \"127.0.0.1\";\n  services.ollama.port = 11434;\n  services.ollama.openFirewall = false;\n");
+        }
         for m in &self.mounts {
             s.push_str(&format!("  fileSystems.{} = {{ device = {}; fsType = {}; options = [ \"nofail\" \"nodev\" \"nosuid\" ]; }};\n",nix_string(&format!("/mnt/peasy-{}",m.name)),nix_string(&format!("/dev/disk/by-uuid/{}",m.uuid)),nix_string(m.filesystem.value())));
         }
@@ -804,8 +826,11 @@ impl ResourceState {
                     .join(" ")
             ));
         }
-        if !self.groups.is_empty() {
+        if !self.groups.is_empty() || self.services.contains(&ManagedService::Ollama) {
             s.push_str("  assertions = [\n");
+            if self.services.contains(&ManagedService::Ollama) {
+                s.push_str("    { assertion = config.services.ollama.enable && config.services.ollama.host == \"127.0.0.1\" && config.services.ollama.port == 11434 && !config.services.ollama.openFirewall; message = \"Peasy Ollama setup requires the reviewed local endpoint\"; }\n");
+            }
             for g in &self.groups {
                 s.push_str(&format!("    {{ assertion = (config.users.users.{name}.isNormalUser or false) && (config.users.users.{name}.uid == null || config.users.users.{name}.uid == {uid}); message = \"Peasy caller identity changed\"; }}\n",name=nix_string(&g.name),uid=g.uid));
             }

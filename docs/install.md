@@ -209,9 +209,24 @@ contacting the model, but arbitrary pasted secrets cannot be reliably detected.
 On a manual installation, the first launch opens provider setup with **Ollama
 (local)** selected by default.
 An existing provider choice (including older OpenAI key-only setups) is preserved.
-Opening settings does not install anything. Enable Ollama using the setup below,
-then select a model to download, or select OpenAI instead. OpenAI requires an API
-key, stored for the current user in `~/.config/peasy/openai-key` with mode `0600`.
+Selecting **Ollama (local)** checks its API first. If it is stopped, Peasy detects
+an existing system service, user service, or executable in your PATH or Nix profile
+and tries to start it. A standalone executable runs as your desktop user in the
+`peasy-ollama.service` user unit, bound to `127.0.0.1:11434`, without enabling it
+at boot. It stays available after settings closes and unloads idle models after
+two minutes. Peasy does not start Ollama merely because you open OpenAI settings.
+
+If starting a system service needs administrator approval, **Start Ollama** opens
+the normal review and authorization flow. If neither a service nor an executable
+is found, **Install and enable Ollama** offers a reviewed NixOS installation.
+No AI provider is required. After applying, **Done** returns to Ollama settings
+and refreshes the models. Installation enables the local endpoint at boot,
+without downloading a model or opening a firewall port. Administrator settings
+are not forcibly overridden. Installation requires the updated Peasy system service.
+
+You can also enable Ollama using the configuration below, then select a model to
+download, or select OpenAI instead. OpenAI requires an API key, stored for the
+current user in `~/.config/peasy/openai-key` with mode `0600`.
 
 The [Peasy ISO](iso.md) bundles Ollama and Qwen3 0.6B and supplies
 `PEASY_DEFAULT_OLLAMA_MODEL=qwen3:0.6b` in the live and installed desktop sessions.
@@ -227,7 +242,7 @@ services.peasy = {
 };
 ```
 
-After rebuilding, open **Settings → Ollama (local)**. The model selector shows
+After rebuilding, open **Settings → AI provider → Ollama (local)**. The model selector shows
 installed models and a short recommendation list. Its initial download choices are:
 
 | Model | Approximate download |
@@ -367,7 +382,7 @@ and asks for another review.
 
 ## Configuration backup and restore
 
-Settings → **Export backup** creates a portable backup of active Peasy-managed
+Settings → **Backups and updates → Export backup** creates a portable backup of active Peasy-managed
 standalone packages, appearance preferences and pinned pea instructions. Both
 traditional and flake hosts are supported. Restore it into an existing NixOS
 installation while keeping the destination's disks, bootloader, drivers, user
@@ -379,7 +394,7 @@ flake files and hardware modules, are archived separately when readable and are
 never imported by the portable restore module. The backup reports unavailable
 archives and excluded files.
 
-Use Settings → **Restore backup**, select the exported folder, choose Merge or
+Use Settings → **Backups and updates → Restore backup**, select the exported folder, choose Merge or
 Replace, then review and authenticate before applying. No AI provider is required.
 The restore uses the destination's package set
 and flake lock; it is not a locked package closure or a backup of personal files
@@ -387,6 +402,6 @@ and databases. See [backup contents and restore steps](backups.md).
 
 ## Updates
 
-After installation, open **Settings** to check for a newer stable release and use
+After installation, open **Settings → Backups and updates** to check for a newer stable release and use
 **Update Peasy**. Updates preserve the host configuration and flake lock. See
 [updating Peasy](updates.md) for details and the one-time setup for older installs.
