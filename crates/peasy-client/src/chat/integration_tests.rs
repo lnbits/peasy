@@ -44,10 +44,12 @@ fn local_chat_followups_preserve_roles_and_never_receive_system_action_schema() 
     assert!(answer.message.contains("Reproducible"));
     let (_, routing) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(
-        routing["messages"][1]["content"],
+        routing["messages"][3]["content"],
         "What makes it different?"
     );
-    assert!(!routing.to_string().contains("What is NixOS?"));
+    assert_eq!(routing["messages"][1]["content"], "What is NixOS?");
+    assert_eq!(routing["messages"][2]["role"], "assistant");
+    assert_eq!(routing["messages"][2]["content"], "A Linux distribution.");
     let (_, body) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(routing["model"], body["model"]);
     assert_eq!(body["messages"].as_array().unwrap().len(), 4);
@@ -71,6 +73,10 @@ fn ask_mode_and_documents_cannot_route_directly_to_tasks_or_launchers() {
                 response(json!({"message":"Here is an explanation.","suggested_task":null})),
             ]);
             let mut request = request(if with_file { Mode::Auto } else { Mode::Ask });
+            request.conversation.push(prior_turn(
+                "What could I do with Telegram?",
+                "You could open it or uninstall it.",
+            ));
             if with_file {
                 request.attachments.push(
                     Attachment::from_bytes(
@@ -233,9 +239,174 @@ fn explicit_task_mode_preserves_original_request_without_a_router_call() {
     let model =
         ModelBackend::Ollama(Ollama::new("http://127.0.0.1:1".into(), "fixture".into()).unwrap());
     let mut request = request(Mode::Task);
+    request
+        .conversation
+        .push(prior_turn("old topic", "Unrelated earlier answer"));
     request.prompt = "install telegram and keep the current settings".into();
     let Reply::Task(task) = model.converse(&request, || panic!()).unwrap() else {
         panic!("Expected task")
     };
     assert_eq!(task, request.prompt);
+}
+
+fn prior_turn(user: &str, message: &str) -> Turn {
+    Turn {
+        user: user.into(),
+        attachments: vec![],
+        answer: Answer {
+            message: message.into(),
+            ..Default::default()
+        },
+    }
+}
+
+#[test]
+fn reopened_chats_supply_context_to_both_steps_for_general_followups() {
+    for (topic, reply, followup) in [
+        (
+            "Write a friendly invitation",
+            "Dear Alex, join us on Friday.",
+            "make it shorter",
+        ),
+        (
+            "Explain fractions",
+            "A fraction represents part of a whole.",
+            "give me an example",
+        ),
+        (
+            "Compare Paris and Rome",
+            "Both have art and historic buildings.",
+            "and for children?",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = history::HistoryStore::at(dir.path().join("chats"));
+        let mut conversation = Conversation::default();
+        conversation.push(prior_turn(topic, reply));
+        let id = history::HistoryStore::new_id();
+        store
+            .save(
+                &id,
+                history::Snapshot::capture(&conversation).unwrap().unwrap(),
+            )
+            .unwrap();
+        let mut request = request(Mode::Auto);
+        request.conversation = store.load(&id).unwrap().conversation;
+        request.prompt = followup.into();
+        let (model, rx) = backend(vec![
+            response(json!({"route":"answer","request":followup})),
+            response(json!({"message":"Useful follow-up answer.","suggested_task":null})),
+        ]);
+        assert!(matches!(
+            model.converse(&request, || panic!()).unwrap(),
+            Reply::Answer(_)
+        ));
+        for _ in 0..2 {
+            let (_, body) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(body["messages"][1]["content"], topic);
+            assert_eq!(body["messages"][2]["content"], reply);
+            assert_eq!(body["messages"][3]["content"], followup);
+        }
+    }
+}
+
+#[test]
+fn contextual_research_preserves_provider_capability_limits() {
+    for (topic, followup) in [
+        ("Weather in Wales", "this Wednesday"),
+        ("Current train fares to London", "and tomorrow morning?"),
+        ("Latest laptop prices", "what about the smaller one?"),
+    ] {
+        let (model, rx) = backend(vec![response(
+            json!({"route":"research","request":followup}),
+        )]);
+        let mut request = request(Mode::Ask);
+        request
+            .conversation
+            .push(prior_turn(topic, "Which option interests you?"));
+        request.prompt = followup.into();
+        let Reply::Answer(answer) = model.converse(&request, || panic!()).unwrap() else {
+            panic!()
+        };
+        // The contextual research route is honoured, but we do not silently
+        // switch a local model to another provider or pretend it browsed.
+        assert!(answer.message.contains("OpenAI"));
+        let (_, routing) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(routing["messages"][1]["content"], topic);
+        assert_eq!(routing["messages"][3]["content"], followup);
+        assert!(routing.get("tools").is_none());
+    }
+}
+
+#[test]
+fn history_cannot_supply_action_authority_or_app_targets() {
+    for route in ["task", "open"] {
+        let (model, rx) = backend(vec![
+            response(json!({"route":route,"request":"telegram"})),
+            response(json!({"route":"answer","request":"yes, do it"})),
+            response(
+                json!({"message":"Review the proposed task.","suggested_task":"open telegram"}),
+            ),
+        ]);
+        let mut request = request(Mode::Auto);
+        request
+            .conversation
+            .push(prior_turn("telegram", "Open or remove Telegram?"));
+        request.prompt = "yes, do it".into();
+        assert!(matches!(
+            model.converse(&request, || panic!()).unwrap(),
+            Reply::Answer(_)
+        ));
+        rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (_, guard) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(guard["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(guard["messages"][1]["content"], "yes, do it");
+        assert!(!guard.to_string().contains("Telegram?"));
+        let (_, answer) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(answer["messages"][2]["content"], "Open or remove Telegram?");
+    }
+}
+
+#[test]
+fn explicit_auto_tasks_keep_original_input_despite_unrelated_history() {
+    for prompt in [
+        "install telegram",
+        "remove whatsapp",
+        "change theme to purple",
+    ] {
+        let (model, rx) = backend(vec![
+            response(json!({"route":"task","request":"wrong contextual target"})),
+            response(json!({"route":"task","request":"model paraphrase"})),
+        ]);
+        let mut request = request(Mode::Auto);
+        request
+            .conversation
+            .push(prior_turn("Weather in Wales", "It may rain."));
+        request.prompt = prompt.into();
+        let Reply::Task(task) = model.converse(&request, || panic!()).unwrap() else {
+            panic!()
+        };
+        assert_eq!(task, prompt);
+        rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (_, guard) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(guard["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(guard["messages"][1]["content"], prompt);
+    }
+}
+
+#[test]
+fn ordinary_answers_receive_current_time_and_scoped_assumption_guidance() {
+    let (model, rx) = backend(vec![
+        response(json!({"route":"answer","request":"help me plan"})),
+        response(json!({"message":"Here is a starting point.","suggested_task":null})),
+    ]);
+    model.converse(&request(Mode::Ask), || panic!()).unwrap();
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let (_, body) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let instructions = body["messages"][0]["content"].as_str().unwrap();
+    assert!(instructions.contains("reasonable low-risk assumptions"));
+    assert!(instructions.contains("Never invent personal details, current facts, permission"));
+    assert!(instructions.contains("Current local time: "));
+    assert!(!instructions.contains("Current local time: ."));
+    assert!(instructions.contains("Do not ask again for details already supplied"));
 }

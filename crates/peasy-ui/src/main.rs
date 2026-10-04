@@ -1,4 +1,5 @@
 mod chat_format;
+mod chat_history;
 mod chat_ui;
 use peasy_core::i18n::{tr, tr_args};
 mod ollama_models;
@@ -49,6 +50,10 @@ struct AppState {
     request: Rc<RefCell<String>>,
     reviewed_change: Rc<RefCell<Option<ProposalChange>>>,
     conversation: Rc<RefCell<peasy_client::chat::Conversation>>,
+    history: chat_history::Worker,
+    history_id: Rc<RefCell<Option<String>>>,
+    history_notice: Rc<RefCell<Option<String>>>,
+    history_notice_widget: Rc<RefCell<glib::WeakRef<gtk::Label>>>,
     chat_mode: Rc<Cell<peasy_client::chat::Mode>>,
     chat_task_reply: Rc<Cell<bool>>,
     chat_pending: Rc<RefCell<ChatPending>>,
@@ -92,6 +97,10 @@ fn main() -> Result<()> {
         request: Default::default(),
         reviewed_change: Default::default(),
         conversation: Default::default(),
+        history: chat_history::Worker::new(peasy_client::chat::history::HistoryStore::discover()?),
+        history_id: Default::default(),
+        history_notice: Default::default(),
+        history_notice_widget: Default::default(),
         chat_mode: Default::default(),
         chat_task_reply: Default::default(),
         chat_pending: Default::default(),

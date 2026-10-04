@@ -84,6 +84,7 @@ pub fn complete_task(window: &adw::ApplicationWindow, state: AppState, text: &st
             },
         });
     }
+    chat_history::autosave(&state);
     state.chat_task_reply.set(reply);
     state.request.borrow_mut().clear();
     clear_panel_status();
@@ -106,6 +107,14 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
     let w = window.clone();
     let s = state.clone();
     settings.connect_clicked(move |_| show_provider_settings(&w, s.clone()));
+    let history = gtk::Button::builder()
+        .icon_name("document-open-recent-symbolic")
+        .tooltip_text(tr("Chat history"))
+        .build();
+    header.pack_start(&history);
+    let w = window.clone();
+    let s = state.clone();
+    history.connect_clicked(move |_| chat_history::show(&w, s.clone()));
     let new_chat = gtk::Button::builder()
         .icon_name("document-new-symbolic")
         .tooltip_text(tr("New conversation"))
@@ -113,17 +122,13 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
     header.pack_start(&new_chat);
     let w = window.clone();
     let s = state.clone();
-    new_chat.connect_clicked(move |_| {
-        s.conversation.borrow_mut().turns.clear();
-        s.chat_pending.borrow_mut().take();
-        s.chat_task_reply.set(false);
-        s.request.borrow_mut().clear();
-        s.chat_attachments.borrow_mut().clear();
-        if let Some(client) = s.client.borrow().as_ref() {
-            client.forget_conversation();
-        }
-        show(&w, s.clone());
-    });
+    new_chat.connect_clicked(move |_| chat_history::new_chat(&w, s.clone()));
+    let history_notice = gtk::Label::new(state.history_notice.borrow().as_deref());
+    history_notice.set_wrap(true);
+    history_notice.set_xalign(0.0);
+    history_notice.set_visible(state.history_notice.borrow().is_some());
+    *state.history_notice_widget.borrow_mut() = history_notice.downgrade();
+    body.append(&history_notice);
     let tagline = gtk::Label::new(Some(&tr("Tell your computer what you want.")));
     tagline.add_css_class("title-2");
     tagline.set_wrap(true);
@@ -325,7 +330,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
     let s = state.clone();
     let ab = attachment_box.clone();
     let st = status.clone();
-    let send_for_attach = send.clone();
+    let send_for_attach = send.downgrade();
     attach.connect_clicked(move |_| {
         let dialog = gtk::FileDialog::builder()
             .title(tr("Attach files or images"))
@@ -333,7 +338,9 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
         let s = s.clone();
         let ab = ab.clone();
         let st = st.clone();
-        let send = send_for_attach.clone();
+        let Some(send) = send_for_attach.upgrade() else {
+            return;
+        };
         dialog.open(Some(&w), None::<&gtk::gio::Cancellable>, move |result| {
             if !send.is_sensitive() {
                 return;
@@ -410,6 +417,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
     let mode_copy = modes.clone();
     let rec_copy = recovery.clone();
     let new_copy = new_chat.clone();
+    let history_copy = history.clone();
     let settings_copy = settings.clone();
     let attachments_copy = attachment_box.clone();
     send.connect_clicked(move |button| {
@@ -447,6 +455,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
         mode_copy.set_sensitive(false);
         rec_copy.set_sensitive(false);
         new_copy.set_sensitive(false);
+        history_copy.set_sensitive(false);
         settings_copy.set_sensitive(false);
         stop_copy.set_visible(true);
         stop_copy.set_sensitive(true);
@@ -499,6 +508,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
         let modes = mode_copy.clone();
         let recovery = rec_copy.clone();
         let new_chat = new_copy.clone();
+        let history = history_copy.clone();
         let settings = settings_copy.clone();
         let attachment_box = attachments_copy.clone();
         let messages = messages_copy.clone();
@@ -534,6 +544,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
                     modes.set_sensitive(true);
                     recovery.set_sensitive(true);
                     new_chat.set_sensitive(true);
+                    history.set_sensitive(true);
                     settings.set_sensitive(true);
                     match result {
                         Ok(Outcome::Task(res)) => {
@@ -549,6 +560,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
                                     answer,
                                 });
                             }
+                            chat_history::autosave(&s);
                             s.chat_attachments.borrow_mut().clear();
                             s.request.borrow_mut().clear();
                             show(&w, s.clone());
@@ -587,6 +599,7 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
                     modes.set_sensitive(true);
                     recovery.set_sensitive(true);
                     new_chat.set_sensitive(true);
+                    history.set_sensitive(true);
                     settings.set_sensitive(true);
                     status.set_text(&tr("The request stopped unexpectedly. Please try again."));
                     glib::ControlFlow::Break
@@ -600,13 +613,15 @@ pub fn show(window: &adw::ApplicationWindow, state: AppState) {
     let keys = gtk::EventControllerKey::new();
     keys.set_name(Some("peasy-composer"));
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let send_key = send.clone();
+    let send_key = send.downgrade();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
         if !composing.get()
             && key == gtk::gdk::Key::Return
             && !modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK)
         {
-            send_key.emit_clicked();
+            if let Some(send) = send_key.upgrade() {
+                send.emit_clicked();
+            }
             glib::Propagation::Stop
         } else {
             glib::Propagation::Proceed
@@ -628,12 +643,14 @@ fn populate_attachments(container: &gtk::Box, state: &AppState) {
         let button = gtk::Button::with_label(&format!("📎 {}  ×", file.name));
         button.set_halign(gtk::Align::Start);
         let state = state.clone();
-        let container_copy = container.clone();
+        let container_copy = container.downgrade();
         button.connect_clicked(move |_| {
             if index < state.chat_attachments.borrow().len() {
                 state.chat_attachments.borrow_mut().remove(index);
             }
-            populate_attachments(&container_copy, &state);
+            if let Some(container) = container_copy.upgrade() {
+                populate_attachments(&container, &state);
+            }
         });
         container.append(&button);
     }
@@ -759,6 +776,12 @@ mod tests {
             request: Default::default(),
             reviewed_change: Default::default(),
             conversation: Default::default(),
+            history: chat_history::Worker::new(peasy_client::chat::history::HistoryStore::at(
+                directory.path().join("history"),
+            )),
+            history_id: Default::default(),
+            history_notice: Default::default(),
+            history_notice_widget: Default::default(),
             chat_mode: Default::default(),
             chat_task_reply: Default::default(),
             chat_pending: Default::default(),
@@ -859,10 +882,110 @@ mod tests {
             tr("Cancelled.")
         );
         button(&window, &tr("New conversation")).emit_clicked();
-        drain();
+        for _ in 0..200 {
+            drain();
+            if state.conversation.borrow().turns.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(state.conversation.borrow().turns.is_empty());
         assert!(!state.chat_task_reply.get());
         assert!(state.request.borrow().is_empty());
+
+        // History reopens only the selected transcript, without resuming any
+        // old task or replaying attached files. Repeated navigation must drop
+        // old composers, not retain one GTK tree per historical chat.
+        for _ in 0..3 {
+            let old_composer = descendants(window.upcast_ref())
+                .into_iter()
+                .find_map(|w| w.downcast::<gtk::TextView>().ok())
+                .unwrap()
+                .downgrade();
+            button(&window, &tr("Chat history")).emit_clicked();
+            for _ in 0..500 {
+                drain();
+                if descendants(window.upcast_ref())
+                    .iter()
+                    .any(|w| w.tooltip_text().as_deref() == Some("Why is my computer slow?"))
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if let Ok(path) = std::env::var("PEASY_TEST_SCREENSHOT") {
+                for _ in 0..20 {
+                    drain();
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                let paintable = gtk::WidgetPaintable::new(Some(&window));
+                let snapshot = gtk::Snapshot::new();
+                paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
+                let node = snapshot.to_node().unwrap();
+                window
+                    .renderer()
+                    .unwrap()
+                    .render_texture(&node, None)
+                    .save_to_png(format!("{path}.history.png"))
+                    .unwrap();
+            }
+            assert!(
+                old_composer.upgrade().is_none(),
+                "old chat composer leaked across navigation"
+            );
+            button(&window, "Why is my computer slow?").emit_clicked();
+            for _ in 0..500 {
+                drain();
+                if descendants(window.upcast_ref())
+                    .iter()
+                    .any(|w| w.is::<gtk::TextView>())
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(state.conversation.borrow().turns.len(), 3);
+            assert!(state.chat_pending.borrow().is_none());
+            assert!(!state.chat_task_reply.get());
+            assert_eq!(state.chat_mode.get(), Mode::Auto);
+            assert!(state.history_id.borrow().is_some());
+        }
+
+        button(&window, &tr("Chat history")).emit_clicked();
+        for _ in 0..500 {
+            drain();
+            if descendants(window.upcast_ref())
+                .iter()
+                .any(|w| w.tooltip_text().as_deref() == Some("Why is my computer slow?"))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        button(&window, &tr("Delete all chats")).emit_clicked();
+        drain();
+        let dialog = window
+            .visible_dialog()
+            .unwrap()
+            .downcast::<adw::AlertDialog>()
+            .unwrap();
+        dialog.emit_by_name::<()>("response", &[&"delete"]);
+        dialog.close();
+        for _ in 0..500 {
+            drain();
+            if descendants(window.upcast_ref())
+                .iter()
+                .filter_map(|w| w.clone().downcast::<gtk::Label>().ok())
+                .any(|l| l.text() == tr("No saved chats yet."))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(state.conversation.borrow().turns.is_empty());
+        assert!(state.history_id.borrow().is_none());
+        button(&window, &tr("Back to chat")).emit_clicked();
+        drain();
 
         // Settings retain the chat window size and expose both provider forms
         // and maintenance actions without a scrolling page or clipped footer.
