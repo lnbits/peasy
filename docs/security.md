@@ -1,391 +1,67 @@
-# Peasy security model
+# Security
 
-Peasy treats user text and every byte returned by OpenAI or Ollama as hostile. Model
-instructions improve usability; they are not a security boundary.
+Model output and attached content are untrusted. Prompts improve behaviour;
+native checks enforce permissions.
 
-## Trust boundaries
+## Execution boundaries
 
-- A person reviews every changing proposal. The daemon independently requires
-  Polkit administrator authorization for each system apply.
-- The selected OpenAI or local Ollama model produces a closed typed value; it has no tools.
-- The Wasm engine validates typed decisions with zero ambient capability.
-- Unprivileged user programs perform confirmed NetworkManager, BlueZ, and
-  calendar handoffs under the user's normal desktop authorization, and perform
-  read-only GitHub release discovery for the external-AppImage fallback.
-- `peasy-system` performs only package search/verification, deterministic
-  managed-module generation, fixed NixOS builds, and fixed activation.
-- The Nix daemon, systemd, Nixpkgs store path, and administrator-selected host
-  configuration are trusted system components.
+- Actions use closed, bounded types. Unknown fields, shell commands and arbitrary
+  Nix expressions are rejected. Native adapters use fixed executables and arguments.
+- System changes require a reviewed, expiring, single-use proposal tied to the
+  caller and current state, plus daemon-side Polkit administrator authorization.
+- Packages are verified against the host package set. Generated Nix escapes
+  interpolation; the built generation must match the reviewed state.
+- Wasm policy has zero imports: no filesystem, network, processes or WASI.
+  Its memory, fuel and output are bounded.
+- The root daemon has restricted filesystem/device access and no Internet access.
+  Separate fixed helpers handle source verification, limited inspection and
+  activation. The activation helper necessarily has host privileges.
+- Explicit app-opening requests with one discovered match may launch immediately.
+  Ambiguous matches require selection; this grants no system-change permission.
 
-## Model threat and data boundary
+Nix, Nixpkgs, administrator configuration, native Peasy code, systemd and Polkit
+remain trusted. Installed applications run under their normal permissions, outside
+Peasy's policy sandbox.
 
-The model may hallucinate, be prompt-injected, or deliberately return a payload
-such as `{"action":"shell","command":"cat /home/user/.ssh/id_ed25519"}`.
-Strict JSON Schema and `serde(deny_unknown_fields)` reject undeclared fields.
-Unknown action names are rejected. Declared action fields are converted to
-bounded Rust strings, enums, dates, or integers before reaching the zero-import
-Wasm policy engine.
+## Data and credentials
 
-No action variant represents a command, executable, path, HTTP request,
-arbitrary Nix expression, service definition, or general configuration edit.
-The system-configuration pea is a bounded exception for **reviewed setting
-names**, not general configuration access: an install can include up to eight
-supporting packages, eight allowlisted Boolean enable options and four
-allowlisted supplementary groups. Wasm and the daemon validate the plan. The
-daemon binds groups to the Unix-socket caller's existing account and UID;
-neither the AI nor IPC can supply a target account. Group prerequisites and
-normal-account/UID checks apply, and the review warns about powerful libvirt
-access. No arbitrary service bodies, listeners, firewall/polkit/sudo settings,
-`mkForce`, scripts or account creation are exposed. See the exact
-[catalogue and ownership rules](../peapod/system_configuration/README.md).
+OpenAI receives included requests, recent chat, attachments and task-specific
+context. Ollama uses a loopback endpoint with proxies and redirects disabled.
+Chat research can use OpenAI web search. Requested diagnosis provides bounded
+read-only observations and allowlisted configuration excerpts, not arbitrary
+filesystem access. Network context may reveal SSIDs, addresses and routes.
 
-The model cannot initiate an arbitrary HTTP request: trusted client code alone
-constructs fixed `api.github.com` repository/release requests after a package
-search intent.
+API keys stay in private user files and authenticate provider requests; they are
+not prompt text or system IPC. Administrator passwords go through Polkit. Wi-Fi
+passwords belong in the separate local field and reach NetworkManager via stdin.
+Do not paste secrets into chat: detection cannot catch every secret. Root or a
+compromised same-user process can access user data.
 
-The provider request is assembled from a new JSON value. It may contain:
+[Chat history](chat.md#history) is private local text. [Backups](backups.md) may
+contain inline secrets in archived host source; review before sharing.
 
-- the current request, after a local credential-input guard;
-- current local date/time;
-- Peasy's canonical generated managed module, containing only validated package,
-  pinned AppImage/pea, network profile, appearance and setup state (including the locally bound
-  account name/UID for managed group contributions);
-- a bounded, allowlisted profile generated from the evaluated active NixOS
-  configuration: release/platform tokens, closed desktop and Peasy-variant
-  enums, and package names only;
-- validated package candidates needed for the current request; and
-- at most one recent validated package for a follow-up such as “install it”.
+## Sources and permissions
 
-Peasy does not automatically attach administrator-authored NixOS source, arbitrary Nix option
-values, files, environment variables, process information, logs, nearby Wi-Fi
-scan results, Bluetooth addresses, calendar files, or credentials. The only Nix
-source supplied is Peasy's own canonical generated module, whose value types are
-closed and validated. Free-form request text is sent to the selected model: do
-not paste secrets into it. Credential detection is a guardrail, not a guarantee
-for arbitrary text. The stored OpenAI API key is used only as the HTTPS
-Authorization header.
-The Ollama request has no key and is restricted to a loopback HTTP origin; the
-model cannot choose that origin or any request path. Redirects are disabled;
-Ollama also ignores proxy environment variables to keep loopback traffic local.
+AppImage review shows repository, release, URL and hash. Hashes pin bytes, not
+publisher trust or software safety. `services.peasy.appImages.trustedHashes` is
+`null` for source review, `{ }` to block new installs, or an exact repository/hash
+allowlist. Removal remains possible after approval is withdrawn.
 
-## Credentials
+[Downloaded peas](pea-packages.md) require official source verification, pinned
+hashes, compatible schemas and allowed permissions. They cannot load executable
+code. Installing a pea does not approve its later changes.
 
-The OpenAI key is stored per user at `$XDG_CONFIG_HOME/peasy/openai-key` (or
-`~/.config/peasy/openai-key`) with mode `0600`; its parent directory is `0700`.
-Peasy opens keys without following symlinks, checks ownership and permissions on
-the open file, bounds reads, and uses create-new plus atomic rename for writes.
-Provider debug output redacts keys; the active OpenAI client clears its key
-buffer on drop and refuses requests containing the exact stored key. Keys are
-not sent over system IPC or placed in Nix configuration. File permissions do
-not protect against root or a compromised process running as the same user.
-The selected provider and model are stored separately in `provider.json`, also
-mode `0600` with symlinks and unknown fields rejected. Replacing or removing a
-key is an explicit user action in the settings view.
+## Failure and recovery
 
-For Wi-Fi, enter the network name in the request and the password only in the
-separate local review field. Credential-looking inline requests are rejected
-before the provider is called, rather than guessing secret boundaries.
-The separately entered value is passed
-to `nmcli --ask` through stdin rather than argv. It is never included in the
-preview, panel status, system IPC, or persistent Peasy state.
+Closing Peasy cancels pending requests and pre-activation builds. Activation and
+already-started mutations finish; cancellation cannot undo effects. Provider-side
+computation or billing may continue after a disconnected request.
 
-## Validation and process execution
+Failed builds restore managed configuration. Activation can partially apply;
+use **System status and recovery** or `peasy --recover`. Rollback does not restore
+personal files, database writes or live connections. Peasy preserves concurrent
+administrator edits instead of silently overwriting them.
 
-Package attribute paths are length-bounded dot-separated segments containing
-only ASCII letters, digits, `_`, `+`, and `-`. Empty/traversal segments and shell
-punctuation are rejected. The daemon still evaluates the attribute against its
-effective host package set before proposing it.
-
-SSID, Bluetooth query, calendar title, local timestamp, duration, theme colour,
-and colour scheme each have dedicated validators. Wi-Fi names must match a real
-NetworkManager scan entry. Bluetooth names must resolve to a discovered device
-whose address has the fixed six-byte hexadecimal form. Calendar timestamps must
-be real local Gregorian date/time values and durations are 5–1440 minutes.
-
-Native code launches fixed absolute executables with separate argv values. It
-never calls `sh -c` or `bash -c`. Nix search text is regex-escaped. Model output
-cannot choose an executable or supply an argv sequence.
-
-External AppImage discovery is not a trust decision. Peasy accepts only public
-GitHub release assets reached through its fixed API client. It filters out
-drafts, prereleases, forks, archived repositories, incompatible architectures,
-non-AppImage names, zero-sized assets, and assets above 1 GiB. The typed system
-record requires an `https://github.com/OWNER/REPOSITORY/releases/download/...`
-URL matching its repository, a closed architecture enum, bounded display
-metadata, and a SHA-256 SRI hash. A mutable or replaced release asset therefore
-fails the Nix fixed-output hash instead of silently changing. A computed download
-hash alone does not authenticate a publisher. By default, external installs use
-source review followed by administrator authentication, without prior hash
-approval. The user accepts the risk of running third-party native software;
-Peasy does not establish its safety or publisher authenticity. The root-owned
-policy generated by `services.peasy.appImages.trustedHashes` is `null` for this
-mode. An optional map enforces exact repository/hash approval at both proposal
-and Apply; an empty map disables new external installs. Missing or malformed
-policy files do not enable the review-only mode. Administrators using an
-allowlist should verify hashes through an independent trusted publisher channel.
-Removal remains available even if approval is withdrawn.
-All generated Nix string literals escape interpolation, including release
-metadata and embedded state JSON. Peasy never runs
-repository install scripts or executes an AppImage while discovering it.
-
-## Confirmation boundaries
-
-System IPC is mode `0660` and group-owned by `wheel`. Read-only search has no
-system side effect. Propose verifies the change and records a random token,
-typed change, complete base state, peer UID, and five-minute expiry. Apply must
-present the token from the same UID. Tokens are one-use; a proposal is rejected
-if state changed after its diff was displayed. Wrong-user attempts cannot consume
-another user's token. Apply also checks Polkit action `io.github.peasy.apply`,
-binding the peer UID, PID and process start time. The default policy uses
-`auth_admin`, not cached authorization; cancellation consumes the proposal and
-requires reviewing a new one. Administrator-written Polkit rules remain trusted.
-
-Closing the UI cancels its HTTP requests and read-only subprocesses, discards
-unapplied proposals, and requests cancellation of an in-progress system change.
-The typed `Cancel` request requires the same proposal token and peer UID as
-`Apply`; it cannot cancel another user's work. Claimed proposals remain one-use
-while cancellation and cleanup are in progress. A disconnected IPC client also
-cancels its request. Before activation, cancellation stops the request's process
-group, restores the prior managed Nix state, removes its staging directory, and
-only then releases the apply lock. Cached Nix store outputs may remain reusable;
-cancellation does not run garbage collection or stop unrelated Nix builds.
-
-Cancellation and activation compete in a single atomic state transition. Once
-activation wins, neither `Cancel` nor a client disconnect interrupts the switch.
-The UI waits for its result without reopening a closed window. Reviewed desktop
-mutations that have started also finish, since terminating a command cannot undo
-effects already applied. Stale search/AI results cannot replace a reopened prompt.
-Aborting an AI HTTP request closes the local transport; it does not guarantee
-that the provider stops server-side computation or billing. These native lifetime
-and process helpers are excluded from the Wasm build; they add no AI capabilities.
-
-IPC is bounded to 16 active connections, four per UID, 120 requests per UID per
-minute, and 64 pending proposals (eight per UID). Expired proposals are pruned.
-Heavy Nix operations are serialized; concurrent attempts fail promptly as busy.
-Child execution has output/time limits. The service also has task, memory, swap,
-and CPU-weight limits; a cold Nixpkgs search can legitimately use several GiB.
-
-Only the GTK Apply/Continue button or CLI affirmative response calls an apply
-method. Model providers and the Wasm guest cannot call local tools or IPC. Local actions
-have a separate typed preview and do not claim NixOS rollback semantics.
-
-## Wasm sandbox
-
-The engine module must have no imports. The host checks that invariant before
-instantiation and supplies an empty linker. There are no preopened directories,
-WASI contexts, environment variables, sockets, clocks, or process interfaces.
-Tests instantiate a hostile module requesting filesystem, environment, socket,
-and process imports and prove linking fails.
-
-## System services
-
-The main service runs as root because it stages a NixOS build. Its unit uses
-`ProtectHome=tmpfs`, `ProtectSystem=strict`, narrow `ReadWritePaths`,
-`PrivateTmp`, `PrivateDevices`, `NoNewPrivileges`, `RestrictSUIDSGID`,
-`LockPersonality`, kernel/control-group protections, restricted address
-families, IP denial, and a restrictive umask. All capabilities are dropped,
-dangerous syscall groups are denied, writable/executable mappings and core
-dumps are disabled. `/home` and `/root` are hidden. Process metadata remains
-visible for PID-bound authorization; the VM tests also probe proc-root escapes.
-
-The service cannot contact a model provider or an Internet host. The separate trusted Nix
-daemon may fetch substitutes and a reviewed fixed-output GitHub release asset;
-its content must match the proposal's SHA-256 hash. The daemon cannot activate directly under
-`ProtectSystem=strict`, so activation uses a fixed one-shot service with no
-public IPC and no user-controlled arguments. NixOS activation necessarily needs
-full host filesystem, device, user-session, and kernel-setting access, so this
-helper is deliberately not filesystem/device sandboxed. It reads a private
-root-owned, size-bounded, single-use request containing only the already built store result, canonicalizes
-and validates that path, sets the system profile, and runs that result's
-`switch-to-configuration switch`. The main network-denied service remains
-sandboxed throughout package search and build.
-
-The host configuration must be readable for evaluation. By default only
-`/etc/nixos` is exposed read-only. Administrator-listed
-`configurationReadPaths` become narrow read-only binds when a trusted local
-module is below a protected home. Store-backed modules need no exception.
-
-## Filesystem ownership
-
-The root service writes only `/run/peasy` and the dedicated `.peasy` directory
-beside the trusted host configuration. Temporary expressions, proposal staging,
-and activation requests remain private under `/run`. Desired configuration lives
-in `.peasy/peasy-managed.nix`; private mode-`0600` transaction and recovery records
-live beside it. The journal is synced before the proposed source is written,
-and before activation begins. It cannot write
-`configuration.nix`, `flake.lock`, hardware configuration, or unrelated `/etc`
-files. The managed file is replaced atomically, restored after a failed build,
-and the built generation must contain its exact validated state before it can
-activate.
-
-`/etc/peasy/system-profile.json` is generated by the NixOS module from the
-evaluated active configuration. Package derivations are reduced to names; no
-option values or source text are copied. The client accepts only a closed JSON
-shape, short ASCII version/platform/package tokens, known desktop/variant enums,
-at most 256 unique package names, and at most 64 KiB total input. Invalid fields
-or oversized data cause the declared profile to be ignored.
-
-The settings backup is local and never enters a provider request. It resolves
-`/run/current-system` once, reads bounded typed state from that generation and
-renders a fresh portable module containing only standalone packages, appearance
-and pea pins. It does not import arbitrary host Nix. Service/account bindings,
-network interfaces and AppImages remain review data, requiring new proposals on
-the destination. Missing state on a new installation means an empty selection;
-malformed or oversized state fails the export.
-
-`/etc/peasy/host-configuration-path` identifies optional reference source, including
-flake hosts. The UI writes a new mode-`0700` directory and mode-`0600` regular files.
-Source copies reject escaping/unsafe symlinks, special files, excessive entries
-and trees exceeding the shared 64 MiB budget. An unavailable host archive is
-removed and explicitly reported without losing the typed-state backup. The
-mandatory Peasy source copy must succeed. `INVENTORY.json` records exclusions,
-including Git metadata, common credential names and recovery records. Inline
-secrets in arbitrary Nix remain possible: review before sharing.
-
-Restore opens bounded regular files relative to one selected directory, rejecting
-symlinks and special files. The portable module must exactly match Peasy's trusted
-renderer and agree with its typed review record. No archived Nix or executable is
-loaded. The daemon receives a closed `PortableBackup`, never a backup path or Nix
-expression. Both Merge and Replace preserve destination service/account bindings,
-network profiles and AppImages. The daemon independently checks values and limits,
-resolves destination package derivations, verifies new pea pins and creates a
-user-bound expiring proposal. Apply repeats source checks after ordinary Polkit
-authorization and uses the same stale-state guard, reviewed derivation assertions,
-journal, build and activation helper as other changes.
-
-For backup restores only, the pea verifier accepts older revisions after a bounded
-GitHub comparison proves they are ancestors of independently read official main.
-An unpublished branch/PR commit is insufficient. Catalogue membership, artifact
-hashes, host compatibility and current administrator policy remain required.
-Regular discovery still requires the current main revision. See
-[backup and restore](backups.md).
-
-The GNOME extension is only a launcher for the fixed `peasy-ui` executable. It
-does not handle request text, proposal data, provider credentials, or Wi-Fi
-passwords. `$XDG_RUNTIME_DIR/peasy-user`, mode `0700`, contains only the
-non-secret panel-ready marker and mode-`0600` calendar files. The model and Wasm
-guest never receive these paths.
-
-Live GNOME appearance synchronization is also unprivileged. The generated
-generation contains a non-secret JSON file with only `AccentColor` and
-`ColorScheme` enums. `peasy --sync-theme` deserializes it with unknown fields
-denied, checks both fixed GNOME keys are writable, and invokes the package's
-fixed `gsettings` executable with separate fixed argv fields. A model provider cannot
-choose an executable, schema, key, or free-form value. Theme keys are normal
-user preferences rather than security lockdown controls.
-
-Hyprland integration is likewise unprivileged and talks only to the invoking
-user's compositor socket through that session's `hyprctl`. Model output is
-reduced to native enums before review. Peasy can emit only fixed setting paths,
-bounded scalar values, and a small harmless dispatcher set; it cannot forward
-raw hyprctl arguments or Lua, execute programs, manage plugins, kill processes,
-shut down the compositor, or create/remove outputs. Live Hyprland changes are
-labelled as session-only and are not represented as NixOS rollback-capable
-changes.
-
-## Rollback limits
-
-NixOS generations and rollbacks protect Nixpkgs package, pinned AppImage, and
-theme system changes from failed evaluation/build and allow returning to an
-earlier generation. Activation itself, like `nixos-rebuild switch`, can partially
-change a running system before reporting failure; it is not an atomic undo of
-all services and external effects. Inspect the error and explicitly switch to a
-known-good generation if activation fails. Peasy retains a private journal when
-activation may have started, blocks further changes, and offers a fresh reviewed
-recovery proposal with the same UID binding and Polkit authorization as Apply.
-Recovery refuses to overlap an active activation helper. Startup restores only
-an owned pre-activation source write; it preserves concurrent administrator edits.
-Successful builds recheck the managed source and active generation before
-activation. The helper repeats those checks, and the target generation's Peasy
-pre-switch check runs under NixOS's switch lock to reject a competing activation.
-`peasy --status` and `peasy --recover` expose inspection and reviewed recovery on
-headless machines without requiring a model provider or Wasm engine.
-The journal records intent and recovery state, not an alternative desired-state
-database. Rollbacks do not undo external side effects: Wi-Fi,
-Bluetooth, calendar, and live Hyprland changes therefore use their native
-controls rather than being described as Nix rollbacks. Peasy never
-automatically deletes old NixOS generations.
-
-PostgreSQL setup inspects retained version directory names through the fixed
-`peasy-postgresql-inspect` oneshot. That helper has `CAP_DAC_READ_SEARCH`, a
-protected system filesystem, an explicit writable report directory, private
-temporary files, and no network access. It neither opens database contents nor
-accepts a directory from IPC.
-The main daemon keeps an empty capability bounding set and receives only the
-bounded version inventory. Existing data for another major version still blocks
-setup and requires an administrator-managed migration.
-
-The setup catalogue also permits reviewed container, device and desktop integration.
-Reviews state the effects and caller-bound permissions: Docker group membership is
-effectively root access, Wireshark grants packet capture, video includes camera
-access and I2C permits raw hardware writes. Container engines may modify networking;
-Peasy does not automatically configure remote listeners, publish container ports
-or grant rootful Podman group access. Standard device groups remain opt-in and
-require the same administrator approval. Unsupported configuration is explained
-as manual guidance, never evaluated or executed as an action. Longer explanations
-are bounded to 8,000 characters and cannot alter daemon-held proposal effects.
-
-## Package review and daemon upgrades
-
-Package identities are evaluated from the host's effective `pkgs`, including
-its overlays and configuration. Each proposal contains the attribute, name,
-version and derivation path. Its build expression asserts the reviewed derivation
-identity using the same host evaluation as `system.build.toplevel`. A source
-change that alters the derivation fails before activation.
-
-The module supplies an immutable daemon identity. Once `/run/current-system`
-points to a generation with a different identity, the daemon declines new work,
-drains existing requests, delivers results and exits. Systemd's `Restart=always`
-starts the newly loaded unit. Upgrades from older code need one explicit restart
-after work finishes. Inspection exposes the actual running store executable and
-Nixpkgs source, rather than relying on the application version alone.
-
-Build progress comes from Nix's structured activity records. Only fixed stage
-enums cross the progress IPC boundary; subprocess text does not become a command
-or a progress instruction. Authentication and activation stages come directly
-from their corresponding daemon operations. Failures retain the request and
-require a new proposal rather than reusing a consumed authorization token.
-
-## Networking and downloadable peas
-
-The networking host API accepts closed profile values and discovered connection
-identities, not a NetworkManager property dictionary or Nix source. Network snapshots
-exclude password fields, but SSIDs, connection names, addresses, DNS and routes can
-reveal private infrastructure to the selected model provider. Persisted network
-profile settings also enter the ordinary managed-state context. Live plans recheck
-reviewed resources; system plans use existing
-administrator authorization and generation transactions. Persistent sharing grants
-DNS/DHCP firewall ports only on its interface; those allowances remain while the
-profile is declared, even if it is inactive. Activation and recovery can interrupt
-connectivity; their scope and limits are described in the networking pea.
-
-Official downloadable peas are bounded data files. Their schemas must match the
-installed host API and their returned actions must fit declared permissions. Nix
-verifies pinned hashes; the fixed official-repository policy determines publisher
-trust. No remote Rust, shell, Nix module or Wasm guest executes. Administrator policy
-is checked at proposal, apply and loading. A fixed unprivileged service verifies
-current official catalogue membership and bounds downloads before the root daemon
-imports the checked bytes into Nix. The root daemon keeps its network restriction.
-Downloaded descriptions can only select an enabled pea, and deferred network
-activation requires both system and session permissions. These checks constrain
-effects; they cannot establish that publisher instructions or a schema-valid plan
-are appropriate for the user's goal. See [pea packages](pea-packages.md).
-
-## Resource domains
-
-Host API 4 adds domain-bound read/write permissions and independently captured
-resource snapshots. See the [resource protocol](resources.md) for destructive
-effects, protected resources, helper confinement, ownership and recovery limits.
-Inspections exclude raw logs, command lines, credential files and arbitrary paths.
-
-Display trials use a separate, unprivileged `peasy-display-guard` process. It
-accepts only a typed Display change and the reviewed snapshot, validates both
-against current discovery, and serializes trials with a per-user runtime lock.
-Only an explicit Keep response within 20 seconds suppresses restoration. EOF,
-timeout and failed applies restore the captured layout; the ordinary live-action
-entry point rejects display changes without this watchdog. Neither executable
-paths nor command arguments are accepted through this protocol.
-
-API 5 makes display coordinates signed and power fields independently nullable.
-Frozen API 4 manifests retain the earlier schema and native permission limits;
-partial power updates merge only specified fields into existing managed state.
+Read [resource limits and destructive operations](resources.md) before extending
+adapters. Run the [release checks](release-validation.md); automated checks do not
+replace real hardware and interactive authentication tests.

@@ -1,25 +1,14 @@
-# ISO branding contract
+# ISO branding
 
-Applies to GNOME and Plasma installation media only. Preserve upstream NixOS
-logos, installer layout and installation modules. Use pale green backgrounds,
-`#5cd698` selection colour and the “Includes Peasy” caption.
+Preserve upstream NixOS logos, installer layout and modules. Use pale green,
+`#5cd698` selections and “Includes Peasy”. `default.nix` renders bundled assets
+with pinned fonts; no runtime downloads are needed.
 
-| File | Purpose |
-| --- | --- |
-| `installer-welcome.svg` | NixOS logo and Peasy caption |
-| `grub-background.svg`, `grub-selection.svg` | GRUB colour swatches |
-| `grub-credit.txt` | Footer appended to the upstream theme |
-| `default.nix` | Render assets with pinned fonts and customize the theme |
+Branding applies to installation media only. Do not import it into the installed
+system or change its bootloader.
 
-[Boot branding](../iso-boot-branding.nix) applies to the ISO boot menu.
-[Installer integration](../installer.nix) retains upstream slides, translations,
-icons and desktop previews. Assets are resolved at build time without runtime
-network requests. Do not import ISO boot branding into the installed target or
-the ordinary Peasy module; it must not configure the installed bootloader.
-
-```console
+```sh
 nix build --no-link .#checks.x86_64-linux.installer-target .#checks.x86_64-linux.iso-config
 ```
 
-For visual acceptance, rebuild the ISO, inspect BIOS and UEFI menus, and open the
-installer. Existing ISO files are not updated in place.
+Rebuild the ISO, then visually check BIOS/UEFI menus and the installer.
