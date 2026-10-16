@@ -45,8 +45,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("ip -4 address show wlan0 | grep -q '10.42.'")
     # Exercise the exact session-profile security properties used by simple
     # Wi-Fi connections against a synthetic access point on the second radio.
-    ap_ssid = machine.succeed("nmcli -g 802-11-wireless.ssid connection show id peasy-wireless").strip()
-    ap_bssid = machine.succeed("nmcli -g GENERAL.HWADDR device show wlan0").strip()
+    # Single values are reused as arguments, so disable nmcli's terse escaping.
+    ap_ssid = machine.succeed("nmcli --escape no -g 802-11-wireless.ssid connection show id peasy-wireless").strip()
+    ap_bssid = machine.succeed("nmcli --escape no -g GENERAL.HWADDR device show wlan0").strip()
     machine.wait_until_succeeds("nmcli -t -f SSID device wifi list ifname wlan1 --rescan yes | grep -F " + shlex.quote(ap_ssid), timeout=60)
     machine.succeed(
         "nmcli connection add save no connection.id peasy-wifi-session "
@@ -67,7 +68,7 @@ pkgs.testers.runNixOSTest {
     # Open networks omit wifi-security completely (key-mgmt=none is WEP).
     machine.succeed("nmcli connection add save no connection.id peasy-open-ap connection.type 802-11-wireless connection.interface-name wlan0 connection.autoconnect false 802-11-wireless.ssid PeasyOpenFixture 802-11-wireless.mode ap ipv4.method shared ipv6.method disabled")
     machine.succeed("nmcli --wait 30 connection up id peasy-open-ap")
-    ap_bssid = machine.succeed("nmcli -g GENERAL.HWADDR device show wlan0").strip()
+    ap_bssid = machine.succeed("nmcli --escape no -g GENERAL.HWADDR device show wlan0").strip()
     machine.wait_until_succeeds("nmcli -t -f SSID device wifi list ifname wlan1 --rescan yes | grep -qx PeasyOpenFixture", timeout=60)
     machine.succeed(
         "nmcli connection add save no connection.id peasy-open-session "
