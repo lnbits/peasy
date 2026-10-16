@@ -66,6 +66,7 @@ pub(crate) fn validate_github_repository(value: &str) -> Result<String, Validati
     };
     let valid_part = |part: &str| {
         !part.is_empty()
+            && !matches!(part, "." | "..")
             && part.len() <= 100
             && part
                 .bytes()
@@ -161,29 +162,39 @@ impl AppImagePackage {
                     "external AppImages must use a GitHub HTTPS release URL".into(),
                 )
             })?;
-        if self.url.len() > 2048
-            || self.url.contains(['?', '#', '\\', '\n', '\r', '\0'])
-            || !path.to_ascii_lowercase().starts_with(&format!(
-                "{}/{}/releases/download/",
-                owner.to_ascii_lowercase(),
-                name.to_ascii_lowercase()
-            ))
-        {
+        // Check raw segments before an HTTP URL parser can normalize dot paths.
+        // Each release URL must describe exactly the data shown during review.
+        let parts: Vec<_> = path.split('/').collect();
+        let matches_release = parts.len() == 6
+            && parts[0].eq_ignore_ascii_case(owner)
+            && parts[1].eq_ignore_ascii_case(name)
+            && parts[2] == "releases"
+            && parts[3] == "download"
+            && decode_release_segment(parts[4]).as_deref() == Some(&self.release_tag)
+            && decode_release_segment(parts[5]).as_deref() == Some(&self.asset_name);
+        if self.url.len() > 2048 || !matches_release || self.asset_name.contains(['/', '\\']) {
             return Err(ValidationError::InvalidRequest(
-                "external AppImage URL does not match its GitHub repository".into(),
+                "external AppImage URL does not match its repository, release tag and asset".into(),
             ));
         }
         let digest = self.hash.strip_prefix("sha256-").unwrap_or_default();
         if digest.len() != 44
+            || !digest.ends_with('=')
             || !digest
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+                .take(43)
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+            || !b"AEIMQUYcgkosw048".contains(&digest.as_bytes()[42])
         {
             return Err(ValidationError::InvalidRequest(
                 "external AppImage must have a valid SHA-256 SRI hash".into(),
             ));
         }
         Ok(())
+    }
+
+    pub fn store_name(&self) -> String {
+        format!("peasy-{}.AppImage", self.pname())
     }
 
     pub fn pname(&self) -> String {
@@ -195,8 +206,37 @@ impl AppImagePackage {
     }
 }
 
+// Decode one path segment without normalizing it. Encoded slashes are allowed
+// in release tags (Git references), but never in the asset filename.
+fn decode_release_segment(value: &str) -> Option<String> {
+    let mut decoded = Vec::new();
+    let mut bytes = value.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' {
+            let high = (bytes.next()? as char).to_digit(16)?;
+            let low = (bytes.next()? as char).to_digit(16)?;
+            decoded.push((high * 16 + low) as u8);
+        } else if byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@".contains(&byte) {
+            decoded.push(byte);
+        } else {
+            return None;
+        }
+    }
+    let decoded = String::from_utf8(decoded).ok()?;
+    if decoded.is_empty()
+        || decoded
+            .split('/')
+            .any(|part| matches!(part, "" | "." | ".."))
+        || decoded.chars().any(|c| c.is_control() || c == '\\')
+    {
+        return None;
+    }
+    Some(decoded)
+}
+
 fn valid_github_slug(value: &str) -> bool {
     !value.is_empty()
+        && !matches!(value, "." | "..")
         && value.len() <= 100
         && value
             .bytes()
@@ -219,6 +259,21 @@ pub(crate) fn render_appimage_bindings(
     packages: &[AppImagePackage],
     indent: &str,
 ) -> Result<String, ValidationError> {
+    render_appimage_bindings_version(packages, indent, false)
+}
+
+pub(crate) fn legacy_appimage_bindings(
+    packages: &[AppImagePackage],
+    indent: &str,
+) -> Result<String, ValidationError> {
+    render_appimage_bindings_version(packages, indent, true)
+}
+
+fn render_appimage_bindings_version(
+    packages: &[AppImagePackage],
+    indent: &str,
+    legacy: bool,
+) -> Result<String, ValidationError> {
     let mut rendered = String::new();
     for package in packages {
         package.validate()?;
@@ -227,8 +282,17 @@ pub(crate) fn render_appimage_bindings(
         let display_name = nix_string(&package.display_name);
         let url = nix_string(&package.url);
         let hash = nix_string(&package.hash);
+        let limits = if legacy {
+            String::new()
+        } else {
+            format!(
+                "{indent}        name = {};\n{indent}        curlOptsList = [ \"--max-filesize\" \"{}\" ];\n",
+                nix_string(&package.store_name()),
+                package.size
+            )
+        };
         rendered.push_str(&format!(
-            "{indent}  (let\n{indent}    wrapped = pkgs.appimageTools.wrapType2 {{\n{indent}      pname = {pname};\n{indent}      version = {version};\n{indent}      src = pkgs.fetchurl {{\n{indent}        url = {url};\n{indent}        hash = {hash};\n{indent}      }};\n{indent}    }};\n{indent}    desktop = pkgs.makeDesktopItem {{\n{indent}      name = {pname};\n{indent}      desktopName = {display_name};\n{indent}      exec = {pname};\n{indent}      icon = \"application-x-executable\";\n{indent}      categories = [ \"Network\" ];\n{indent}    }};\n{indent}  in pkgs.symlinkJoin {{\n{indent}    name = {pname};\n{indent}    paths = [ wrapped desktop ];\n{indent}  }})\n"
+            "{indent}  (let\n{indent}    wrapped = pkgs.appimageTools.wrapType2 {{\n{indent}      pname = {pname};\n{indent}      version = {version};\n{indent}      src = pkgs.fetchurl {{\n{indent}        url = {url};\n{indent}        hash = {hash};\n{limits}{indent}      }};\n{indent}    }};\n{indent}    desktop = pkgs.makeDesktopItem {{\n{indent}      name = {pname};\n{indent}      desktopName = {display_name};\n{indent}      exec = {pname};\n{indent}      icon = \"application-x-executable\";\n{indent}      categories = [ \"Network\" ];\n{indent}    }};\n{indent}  in pkgs.symlinkJoin {{\n{indent}    name = {pname};\n{indent}    paths = [ wrapped desktop ];\n{indent}  }})\n"
         ));
     }
     Ok(rendered)

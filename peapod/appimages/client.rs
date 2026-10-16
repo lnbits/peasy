@@ -271,18 +271,20 @@ fn percent_encode_query(value: &str) -> String {
     encoded
 }
 
-fn nix_store_component(value: &str) -> String {
-    value
-        .to_ascii_lowercase()
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'_') {
-                byte as char
-            } else {
-                '-'
-            }
-        })
-        .collect()
+fn allowed_release_download(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port_or_known_default() == Some(443)
+        && matches!(
+            url.host_str(),
+            Some(
+                "github.com"
+                    | "release-assets.githubusercontent.com"
+                    | "objects.githubusercontent.com"
+                    | "github-releases.githubusercontent.com"
+            )
+        )
 }
 
 fn release_candidate(
@@ -448,54 +450,55 @@ impl PeasyClient {
         if candidate.size == 0 || candidate.size > MAX_APPIMAGE_BYTES {
             bail!("the selected AppImage is outside Peasy's size limit");
         }
-        let name = format!(
-            "peasy-{}-{}-{}.AppImage",
-            nix_store_component(
-                candidate
-                    .repository
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("external")
-            ),
-            nix_store_component(&candidate.version),
-            candidate.architecture
-        );
-        if name.len() > 180 {
-            bail!("the selected release produced an unsafe Nix store name");
-        }
+        let downloader = reqwest::Client::builder()
+            .https_only(true)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(600))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 5 || !allowed_release_download(attempt.url()) {
+                    attempt.error("release redirect left the GitHub download service")
+                } else {
+                    attempt.follow()
+                }
+            }))
+            .user_agent(concat!("Peasy/", env!("CARGO_PKG_VERSION")))
+            .build()?;
+        let (download, hash) = crate::http::download(
+            downloader.get(&candidate.download_url),
+            candidate.size,
+            MAX_APPIMAGE_BYTES,
+        )?;
+        // Match fetchurl's explicit name so builds reuse the validated bytes.
+        let name = record.store_name();
         let output = Command::new(&self.tools.nix)
             .args([
                 "store",
-                "prefetch-file",
-                "--json",
+                "add",
+                "--mode",
+                "flat",
+                "--hash-algo",
+                "sha256",
                 "--name",
                 &name,
-                &candidate.download_url,
             ])
+            .arg(download.path())
             .env(
                 "NIX_CONFIG",
                 "extra-experimental-features = nix-command flakes",
             )
             .cancellable_output()
-            .context("downloading the selected AppImage into the Nix store")?;
+            .context("importing the validated AppImage into the Nix store")?;
         if !output.status.success() {
             bail!(
-                "Nix could not fetch the AppImage: {}",
+                "Nix could not import the AppImage: {}",
                 safe_stderr(&output.stderr)
             );
         }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct PrefetchResult {
-            hash: String,
-            store_path: String,
-        }
-        let result: PrefetchResult = serde_json::from_slice(&output.stdout)
-            .context("Nix returned invalid AppImage prefetch metadata")?;
-        if !result.store_path.starts_with("/nix/store/") {
+        let store_path = std::str::from_utf8(&output.stdout)?.trim();
+        if !store_path.starts_with("/nix/store/") || store_path.contains('\n') {
             bail!("Nix returned an invalid AppImage store path");
         }
-        Ok(result.hash)
+        Ok(hash)
     }
 
     pub(super) fn propose_appimage(&self, package: AppImagePackage) -> Result<Resolution> {
@@ -512,6 +515,26 @@ impl PeasyClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn release_redirects_stay_on_github_https_asset_hosts() {
+        for url in [
+            "https://github.com/a/b",
+            "https://release-assets.githubusercontent.com/a?signature=123",
+        ] {
+            assert!(allowed_release_download(&reqwest::Url::parse(url).unwrap()));
+        }
+        for url in [
+            "http://github.com/a",
+            "https://github.com.evil.test/a",
+            "https://localhost/a",
+            "https://github.com:444/a",
+            "https://user:password@github.com/a",
+        ] {
+            assert!(!allowed_release_download(
+                &reqwest::Url::parse(url).unwrap()
+            ));
+        }
+    }
     fn repository() -> GitHubRepository {
         GitHubRepository {
             full_name: "example/nostr-chat".into(),

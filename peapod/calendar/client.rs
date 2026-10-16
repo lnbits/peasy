@@ -1,8 +1,6 @@
 //! calendar pea: unprivileged discovery, review and execution.
 use crate::CancellableCommand;
-use crate::{
-    LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution, safe_stderr, tool_path,
-};
+use crate::{LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution, tool_path};
 use anyhow::{Context, Result, bail};
 use peasy_core::{DiffKind, DiffLine, validate_event_title, validate_local_datetime};
 use std::{
@@ -49,15 +47,13 @@ pub(super) fn write_calendar_invite(
 pub(super) fn open_calendar_file(gio: &Path, calendar: &Path) -> Result<()> {
     // GIO uses the freedesktop MIME/default-application association, not GNOME
     // Calendar. GLib is already packaged for the GTK UI; no PIM stack is needed.
-    let output = Command::new(gio).arg("open").arg(calendar).cancellable_output()
-        .with_context(|| format!("Could not open the event; the .ics file is saved at {}. Configure a default calendar application for text/calendar.", calendar.display()))?;
-    if !output.status.success() {
-        bail!(
-            "Could not open the default calendar application: {}. The .ics file is saved at {}; open/import it manually or configure a text/calendar handler.",
-            safe_stderr(&output.stderr),
-            calendar.display()
-        );
-    }
+    // A GUI handler may inherit GIO's output descriptors for its entire lifetime.
+    // Detach those descriptors and wait only for the launcher to finish.
+    peasy_core::resource_native::applications::run_launcher(
+        gio,
+        &["open", calendar.to_str().context("invalid calendar path")?],
+    )
+    .with_context(|| format!("Could not open the event; the .ics file is saved at {}. Configure a default calendar application for text/calendar.", calendar.display()))?;
     Ok(())
 }
 
@@ -187,6 +183,33 @@ impl PeasyClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn calendar_launcher_does_not_wait_for_the_gui_to_close() {
+        let temp = tempfile::tempdir().unwrap();
+        let gio = temp.path().join("gio");
+        // The background process inherits the launcher's descriptors, like a GUI.
+        fs::write(&gio, "#!/bin/sh\nsleep 3 &\necho $! > \"$2.pid\"\nexit 0\n").unwrap();
+        fs::set_permissions(&gio, fs::Permissions::from_mode(0o700)).unwrap();
+        let calendar = temp.path().join("event.ics");
+        let start = std::time::Instant::now();
+        let result = open_calendar_file(&gio, &calendar);
+        let elapsed = start.elapsed();
+        let pid: i32 = fs::read_to_string(temp.path().join("event.ics.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let still_running = unsafe { libc::kill(pid, 0) } == 0;
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        result.unwrap();
+        assert!(elapsed < std::time::Duration::from_secs(2));
+        assert!(
+            still_running,
+            "launching must leave the calendar application running"
+        );
+    }
     #[test]
     fn calendar_invite_contains_only_validated_ics_data() {
         let temp = tempfile::tempdir().unwrap();

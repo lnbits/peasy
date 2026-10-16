@@ -9,6 +9,7 @@
     ./module.nix
     ./iso-appearance.nix
     ./iso-ollama.nix
+    ./iso-apps.nix
     ./iso-boot-branding.nix
   ];
   services.peasy.enable = true;

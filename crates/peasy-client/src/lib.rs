@@ -11,6 +11,7 @@ mod pea;
 mod prompt_plan;
 mod resources;
 pub use networking::NetworkSnapshot;
+pub use wifi::WifiNetwork;
 mod http;
 pub use peasy_core::cancellation::Cancellation;
 
@@ -1066,7 +1067,7 @@ pub enum LocalAction {
         snapshot: NetworkSnapshot,
     },
     Wifi {
-        ssid: String,
+        network: WifiNetwork,
         password: Option<String>,
         password_required: bool,
     },
@@ -1734,10 +1735,8 @@ impl PeasyClient {
                 self.apply_network(plan, snapshot, supplied_password)
             }
             LocalAction::Wifi {
-                ssid,
-                password,
-                password_required,
-            } => self.apply_wifi(ssid, password, password_required, supplied_password),
+                network, password, ..
+            } => self.apply_wifi(network, password, supplied_password),
             LocalAction::Bluetooth { name, address } => self.apply_bluetooth(name, address),
             LocalAction::Calendar {
                 title,

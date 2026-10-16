@@ -8,6 +8,14 @@ let
   plasma = configurations.peasy-iso-plasma.config;
   isoPkgs = configurations.peasy-iso-plasma.pkgs;
   artwork = import ../iso-branding { pkgs = isoPkgs; };
+  validApps =
+    cfg:
+    cfg.programs.appimage.enable
+    && cfg.programs.appimage.binfmt
+    && cfg.programs.fuse.enable
+    && builtins.elem (isoPkgs.callPackage ../anagram.nix { }) cfg.environment.systemPackages
+    && builtins.elem cfg.programs.appimage.package cfg.environment.systemPackages
+    && cfg.boot.binfmt.registrations ? appimage_type_2;
   validOllama =
     cfg:
     cfg.services.ollama.enable
@@ -34,6 +42,7 @@ let
     && cached.configuration.networking.networkmanager.enable
     && cached.configuration.hardware.bluetooth.enable
     && validOllama cached.configuration
+    && validApps cached.configuration
     && cached.configuration.boot.loader.grub.theme == null
     && cached.configuration.system.nixos.version == system.config.system.nixos.version
     && cached.configuration.services.speechd.package == pkgs.speechd
@@ -43,6 +52,7 @@ let
     cfg:
     cfg.services.peasy.enable
     && validOllama cfg
+    && validApps cfg
     && cfg.networking.networkmanager.enable
     && cfg.hardware.bluetooth.enable
     && !(builtins.elem "nixpkgs=flake:nixpkgs" cfg.nix.nixPath)

@@ -34,6 +34,7 @@
           }) (builtins.fromJSON (builtins.readFile ./peapod/catalogue.json)).peas
         )
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          anagram = pkgs.callPackage ./nix/anagram.nix { };
           iso-gnome = self.nixosConfigurations.peasy-iso-gnome.config.system.build.isoImage;
           iso-plasma = self.nixosConfigurations.peasy-iso-plasma.config.system.build.isoImage;
           iso-test-tools = pkgs.symlinkJoin {
@@ -164,6 +165,8 @@
                   ${./nix/iso-common.nix} \
                   ${./nix/iso-appearance.nix} \
                   ${./nix/iso-ollama.nix} \
+                  ${./nix/iso-apps.nix} \
+                  ${./nix/anagram.nix} \
                   ${./nix/ollama-model.nix} \
                   ${./nix/iso-boot-branding.nix} \
                   ${./nix/iso-branding/default.nix} \
@@ -295,6 +298,7 @@
           };
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          anagram = self.packages.${system}.anagram;
           installed-gnome = import ./nix/tests/installer-boot.nix {
             inherit pkgs;
             package = self.packages.${system}.default;

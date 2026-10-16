@@ -20,6 +20,7 @@ let
         ./module.nix
         ./iso-appearance.nix
         ./iso-ollama.nix
+        ./iso-apps.nix
         {
           # Start with the installed system's normal package set. Reusing the
           # live ISO's pkgs would inherit installation-device's reduced speech

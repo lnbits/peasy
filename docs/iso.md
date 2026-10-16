@@ -13,6 +13,10 @@ disk. Peasy, local Ollama and Qwen3 0.6B are included. GNOME installs offline fo
 tested configurations; optional XFCE, extra software or drivers may need Internet.
 The live desktop always runs GNOME. Only the latest release's ISO links are retained.
 
+Anagram 0.8.2 is preinstalled in the live and installed desktops, from its pinned
+AppImage. AppImage runtime support, FUSE and executable-file integration are enabled;
+downloaded AppImages can also run with `appimage-run ./Example.AppImage`.
+
 The installer adds `/etc/nixos/peasy.nix`, bundled source under `/etc/nixos/peasy/`,
 and an optional managed-state import. Installed systems require normal administrator
 authentication. Live-session credentials and settings are not transferred.

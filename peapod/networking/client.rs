@@ -1,5 +1,5 @@
 //! Fixed NetworkManager calls. Discovery is data; plans are validated twice.
-use crate::{CancellableCommand, LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution};
+use crate::{LocalAction, LocalProposal, LocalResult, PeasyClient, Resolution};
 use anyhow::{Context, Result, bail};
 use peasy_core::{
     DiffKind, DiffLine, IpcRequest, IpcResponse, NetworkKind, NetworkPlan, NetworkScope, WifiMode,
@@ -88,7 +88,7 @@ pub struct NetworkSnapshot {
 pub(super) fn instructions() -> &'static str {
     include_str!("instructions.txt").trim_end()
 }
-fn fields(line: &str) -> Result<Vec<String>> {
+pub(super) fn fields(line: &str) -> Result<Vec<String>> {
     let mut out = vec![String::new()];
     let mut escaped = false;
     for c in line.chars() {
@@ -115,12 +115,14 @@ fn fields(line: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 impl PeasyClient {
-    fn network_read(&self, args: &[&str]) -> Result<String> {
-        let output = Command::new(&self.tools.nmcli)
-            .env("LC_ALL", "C")
-            .args(args)
-            .cancellable_output()
-            .context("NetworkManager is unavailable")?;
+    pub(super) fn network_read(&self, args: &[&str]) -> Result<String> {
+        let output = peasy_core::process::run(
+            Command::new(&self.tools.nmcli)
+                .env("LC_ALL", "C")
+                .args(args),
+            std::time::Duration::from_secs(60),
+        )
+        .context("NetworkManager is unavailable")?;
         if !output.status.success() {
             bail!("NetworkManager could not inspect these resources");
         }
@@ -338,7 +340,7 @@ impl PeasyClient {
             action: LocalAction::Network { plan, snapshot },
         }))
     }
-    fn network_mutate(&self, args: &[String], password: Option<&str>) -> Result<()> {
+    pub(super) fn network_mutate(&self, args: &[String], password: Option<&str>) -> Result<()> {
         let mut command = Command::new(&self.tools.nmcli);
         command.env("LC_ALL", "C").args(["--wait", "45"]);
         if password.is_some() {
@@ -351,16 +353,32 @@ impl PeasyClient {
             .stderr(Stdio::null())
             .spawn()
             .context("starting NetworkManager")?;
-        if let Some(mut stdin) = child.stdin.take()
-            && let Some(password) = password
-        {
-            stdin.write_all(password.as_bytes())?;
-            stdin.write_all(b"\n")?;
+        let result = (|| {
+            if let Some(mut stdin) = child.stdin.take()
+                && let Some(password) = password
+            {
+                stdin.write_all(password.as_bytes())?;
+                stdin.write_all(b"\n")?;
+            }
+            let started = std::time::Instant::now();
+            loop {
+                if let Some(status) = child.try_wait()? {
+                    if !status.success() {
+                        bail!("NetworkManager rejected the change or authorization failed");
+                    }
+                    return Ok(());
+                }
+                if started.elapsed() > std::time::Duration::from_secs(60) {
+                    bail!("NetworkManager did not finish within its time limit");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        })();
+        if result.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        if !child.wait()?.success() {
-            bail!("NetworkManager rejected the change or authorization failed");
-        }
-        Ok(())
+        result
     }
     pub(super) fn apply_network(
         &self,

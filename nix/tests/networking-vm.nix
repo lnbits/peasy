@@ -29,6 +29,8 @@ pkgs.testers.runNixOSTest {
     virtualisation.memorySize = 2048;
   };
   testScript = ''
+    import shlex
+
     machine.start()
     machine.wait_for_unit("NetworkManager.service")
     machine.wait_for_unit("peasy-network-profiles.service")
@@ -41,7 +43,43 @@ pkgs.testers.runNixOSTest {
     machine.succeed("printf '%s\\n' 'fixture-password' | nmcli --wait 30 --ask connection up id peasy-wireless")
     machine.succeed("nmcli -g GENERAL.STATE device show wlan0 | grep -q '^100'")
     machine.succeed("ip -4 address show wlan0 | grep -q '10.42.'")
+    # Exercise the exact session-profile security properties used by simple
+    # Wi-Fi connections against a synthetic access point on the second radio.
+    ap_ssid = machine.succeed("nmcli -g 802-11-wireless.ssid connection show id peasy-wireless").strip()
+    ap_bssid = machine.succeed("nmcli -g GENERAL.HWADDR device show wlan0").strip()
+    machine.wait_until_succeeds("nmcli -t -f SSID device wifi list ifname wlan1 --rescan yes | grep -F " + shlex.quote(ap_ssid), timeout=60)
+    machine.succeed(
+        "nmcli connection add save no connection.id peasy-wifi-session "
+        "connection.type 802-11-wireless connection.interface-name wlan1 "
+        "connection.autoconnect false 802-11-wireless.mode infrastructure "
+        "802-11-wireless.ssid " + shlex.quote(ap_ssid) + " "
+        "802-11-wireless.bssid " + shlex.quote(ap_bssid) + " "
+        "802-11-wireless-security.key-mgmt wpa-psk "
+        "802-11-wireless-security.proto rsn 802-11-wireless-security.psk-flags 2 "
+        "ipv4.method auto ipv6.method auto"
+    )
+    machine.succeed("printf '%s\\n' 'fixture-password' | nmcli --wait 45 --ask connection up id peasy-wifi-session")
+    machine.succeed("nmcli -g GENERAL.STATE device show wlan1 | grep -q '^100'")
+    machine.succeed("nmcli -g 802-11-wireless-security.key-mgmt connection show id peasy-wifi-session | grep -qx wpa-psk")
+    machine.succeed("! grep -R -F 'fixture-password' /run/NetworkManager/system-connections /etc/NetworkManager/system-connections")
+    machine.succeed("nmcli connection delete id peasy-wifi-session")
     machine.succeed("nmcli connection down id peasy-wireless")
+    # Open networks omit wifi-security completely (key-mgmt=none is WEP).
+    machine.succeed("nmcli connection add save no connection.id peasy-open-ap connection.type 802-11-wireless connection.interface-name wlan0 connection.autoconnect false 802-11-wireless.ssid PeasyOpenFixture 802-11-wireless.mode ap ipv4.method shared ipv6.method disabled")
+    machine.succeed("nmcli --wait 30 connection up id peasy-open-ap")
+    ap_bssid = machine.succeed("nmcli -g GENERAL.HWADDR device show wlan0").strip()
+    machine.wait_until_succeeds("nmcli -t -f SSID device wifi list ifname wlan1 --rescan yes | grep -qx PeasyOpenFixture", timeout=60)
+    machine.succeed(
+        "nmcli connection add save no connection.id peasy-open-session "
+        "connection.type 802-11-wireless connection.interface-name wlan1 "
+        "connection.autoconnect false 802-11-wireless.mode infrastructure "
+        "802-11-wireless.ssid PeasyOpenFixture 802-11-wireless.bssid " + shlex.quote(ap_bssid) + " "
+        "ipv4.method auto ipv6.method auto"
+    )
+    machine.succeed("nmcli --wait 45 connection up id peasy-open-session")
+    machine.succeed("nmcli -g GENERAL.STATE device show wlan1 | grep -q '^100'")
+    machine.succeed("nmcli connection delete id peasy-open-session")
+    machine.succeed("nmcli connection delete id peasy-open-ap")
     # NixOS withdraws /etc files on removal. Reload must withdraw the inactive profile.
     machine.succeed(f"rm {path}")
     machine.succeed("systemctl restart peasy-network-profiles")

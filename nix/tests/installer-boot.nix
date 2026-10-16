@@ -32,6 +32,7 @@ let
         ../module.nix
         ../iso-appearance.nix
         ../iso-ollama.nix
+        ../iso-apps.nix
         instrumentation
         {
           networking.hostName = "peasy-installed";
@@ -196,6 +197,8 @@ pkgs.testers.runNixOSTest {
     target.wait_for_unit("ollama.service")
     target.wait_until_succeeds("ollama list | grep -F 'qwen3:0.6b'", timeout=30)
     target.succeed("ollama show qwen3:0.6b > /dev/null")
+    target.succeed("test -x /run/current-system/sw/bin/anagram; test -f /run/current-system/sw/share/applications/anagram.desktop")
+    target.succeed("test -x /run/current-system/sw/bin/appimage-run; grep -q '^enabled' /proc/sys/fs/binfmt_misc/appimage_type_2")
     target.succeed("su - peasytest -c 'test \"$PEASY_DEFAULT_OLLAMA_MODEL\" = qwen3:0.6b'")
     # GNOME normally pulls this in itself; explicitly start it for desktops
     # that do not otherwise need network-online.target during login.

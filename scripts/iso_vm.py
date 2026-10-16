@@ -269,6 +269,10 @@ class VM:
 
 def installed_checks(vm, desktop):
     vm.run('systemctl is-active peasy-system.service; test -x /run/current-system/sw/bin/peasy-ui')
+    vm.run('test -x /run/current-system/sw/bin/anagram; '
+           'test -f /run/current-system/sw/share/applications/anagram.desktop')
+    vm.run('test -x /run/current-system/sw/bin/appimage-run; '
+           "grep -q '^enabled' /proc/sys/fs/binfmt_misc/appimage_type_2")
     vm.run('systemctl is-active ollama.service; '
            'for i in $(seq 1 30); do ollama list | grep -F "qwen3:0.6b" && exit 0; sleep 1; done; exit 1')
     vm.run('ollama show qwen3:0.6b > /dev/null')

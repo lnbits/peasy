@@ -1049,13 +1049,24 @@ pub fn parse_packages_module(source: &str) -> Result<PackageState, ValidationErr
         ValidationError::InvalidRequest("Peasy managed module state is invalid".into())
     })?;
     state.normalize()?;
-    if render_packages_module(&state)? != source
-        && (state.peas.is_empty()
-            || render_packages_module(&state)?
-                .replace(&pea::render(&state.peas), &pea::legacy_render(&state.peas))
-                != source)
-        && (!state.setups.is_empty() || render_packages_module_version(&state, true)? != source)
-    {
+    let current = render_packages_module(&state)?;
+    let mut canonical = vec![current.clone()];
+    if !state.peas.is_empty() {
+        canonical
+            .push(current.replace(&pea::render(&state.peas), &pea::legacy_render(&state.peas)));
+    }
+    if state.setups.is_empty() {
+        canonical.push(render_packages_module_version(&state, true)?);
+    }
+    // Migrate only exact older renderings, retaining the tamper check. Existing
+    // fixed-output downloads gain the size limit on the next managed change.
+    let appimages = appimages::render_appimage_bindings(&state.appimages, "  ")?;
+    let old_appimages = appimages::legacy_appimage_bindings(&state.appimages, "  ")?;
+    if !canonical.iter().any(|rendered| {
+        rendered == source
+            || (!state.appimages.is_empty()
+                && rendered.replace(&appimages, &old_appimages) == source)
+    }) {
         return Err(ValidationError::InvalidRequest(
             "Peasy managed module was modified outside Peasy".into(),
         ));
@@ -1246,6 +1257,60 @@ mod tests {
             hash: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),
             architecture: AppImageArchitecture::X86_64,
             size: 42_000_000,
+        }
+    }
+
+    #[test]
+    fn appimage_release_url_must_identify_the_reviewed_asset() {
+        let original = appimage();
+        assert!(original.validate().is_ok());
+        for path in [
+            "v1.2.0/other.AppImage",
+            "v2.0/nostr-chat-1.2.0-x86_64.AppImage",
+            "../../../../attacker/payload/releases/download/v1/evil.AppImage",
+            "%2e%2e/nostr-chat-1.2.0-x86_64.AppImage",
+            "v1.2.0/nostr-chat-1.2.0-x86_64.AppImage?redirect=evil",
+            "v1.2.0/nostr-chat-1.2.0-x86_64.AppImage#ignored",
+            "v1.2.0/nostr-chat-1.2.0-x86_64.AppImage\t",
+            "v1.2.0/nostr-chat-1.2.0-x86_64.AppImage/extra",
+        ] {
+            let mut package = original.clone();
+            package.url = format!("https://github.com/example/nostr-chat/releases/download/{path}");
+            assert!(package.validate().is_err(), "accepted {path}");
+        }
+        let mut package = original;
+        package.release_tag = "release/v1.2.0".into();
+        package.asset_name = "Nostr Chat.AppImage".into();
+        package.url = "https://github.com/example/nostr-chat/releases/download/release%2Fv1.2.0/Nostr%20Chat.AppImage".into();
+        assert!(package.validate().is_ok());
+        package.asset_name = "../Nostr Chat.AppImage".into();
+        package.url = package.url.replace("Nostr%20", "..%2FNostr%20");
+        assert!(package.validate().is_err());
+    }
+
+    #[test]
+    fn appimage_download_limits_migrate_only_exact_legacy_modules() {
+        let mut state = PackageState::default();
+        state.appimages.push(appimage());
+        let rendered = render_packages_module(&state).unwrap();
+        assert!(rendered.contains("curlOptsList = [ \"--max-filesize\" \"42000000\" ];"));
+        assert!(rendered.contains("name = \"peasy-nostr-chat.AppImage\";"));
+        assert_eq!(parse_packages_module(&rendered).unwrap(), state);
+        let old = rendered.replace(
+            &appimages::render_appimage_bindings(&state.appimages, "  ").unwrap(),
+            &appimages::legacy_appimage_bindings(&state.appimages, "  ").unwrap(),
+        );
+        assert!(!old.contains("--max-filesize"));
+        assert_eq!(parse_packages_module(&old).unwrap(), state);
+        assert!(parse_packages_module(&(old + "\n# unreviewed edit")).is_err());
+        for hash in [
+            "sha256-============================================",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            let mut package = appimage();
+            package.hash = hash.into();
+            assert!(package.validate().is_err());
         }
     }
 

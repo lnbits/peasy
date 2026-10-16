@@ -34,6 +34,13 @@ filesystem access. Network context may reveal SSIDs, addresses and routes.
 API keys stay in private user files and authenticate provider requests; they are
 not prompt text or system IPC. Administrator passwords go through Polkit. Wi-Fi
 passwords belong in the separate local field and reach NetworkManager via stdin.
+Simple Wi-Fi connection reviews bind the SSID, access point, interface and
+security mode. Peasy rescans before connecting, explicitly enforces WPA2/RSN or
+WPA3/SAE, and checks that its new profile became active. These profiles last for
+the NetworkManager session, disable automatic reconnection and do not save the
+password. Open networks must be reviewed as open; WEP, enterprise and other
+unsupported modes require desktop network settings. A failed activation removes
+the temporary profile and attempts to restore the previous connection.
 Do not paste secrets into chat: detection cannot catch every secret. Root or a
 compromised same-user process can access user data.
 
@@ -46,6 +53,13 @@ AppImage review shows repository, release, URL and hash. Hashes pin bytes, not
 publisher trust or software safety. `services.peasy.appImages.trustedHashes` is
 `null` for source review, `{ }` to block new installs, or an exact repository/hash
 allowlist. Removal remains possible after approval is withdrawn.
+Release URLs must match the reviewed repository, tag and asset, without URL path
+traversal. Client downloads use private temporary files, allow only HTTPS GitHub
+release-service redirects, enforce the reviewed byte count while streaming, and
+compute the SHA-256 hash locally before importing into Nix. The maximum asset
+size is 1 GiB. Generated Nix fetches also enforce the reviewed maximum size if
+the cached file is unavailable. Exact older managed modules migrate to this
+format on their next change; modified Nix remains rejected.
 
 [Downloaded peas](pea-packages.md) require official source verification, pinned
 hashes, compatible schemas and allowed permissions. They cannot load executable

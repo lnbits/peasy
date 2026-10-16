@@ -14,7 +14,11 @@ class GnomeTrayStartupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             helper = root / 'extensions'
-            helper.write_text('''#!/usr/bin/env bash
+            # Nix build sandboxes have no /usr/bin/env. Use the same Bash
+            # executable for the fake extension command and the real script.
+            bash = shutil.which('bash')
+            self.assertIsNotNone(bash)
+            helper.write_text(f'#!{bash}\n' + '''
 printf '%s\\n' "$*" >> "$CALLS"
 if [[ "$1" == disable ]]; then exit 1; fi
 n=0
@@ -27,8 +31,9 @@ printf '%s\\n' "$n" > "$COUNT"
             env = dict(os.environ, extensions=str(helper), extension_uuid='test-tray',
                        timeout=shutil.which('timeout'), sleep=shutil.which('true'),
                        CALLS=str(root/'calls'), COUNT=str(root/'count'), FAILURES=str(failures))
-            result = subprocess.run(['bash', str(SCRIPT)], env=env, capture_output=True,
+            result = subprocess.run([bash, str(SCRIPT)], env=env, capture_output=True,
                                     text=True, timeout=5)
+            self.assertTrue((root/'calls').exists(), result.stderr)
             return result, (root/'calls').read_text().splitlines()
 
     def test_late_shell_recovers_without_repeated_legacy_disable(self):

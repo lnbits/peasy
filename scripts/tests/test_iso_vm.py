@@ -70,6 +70,10 @@ class VMTests(unittest.TestCase):
         self.assertIn('ollama list | grep -F "qwen3:0.6b"', commands)
         self.assertIn('ollama show qwen3:0.6b', commands)
         self.assertIn('PEASY_DEFAULT_OLLAMA_MODEL', commands)
+        self.assertIn('test -x /run/current-system/sw/bin/anagram;', commands)
+        self.assertIn('share/applications/anagram.desktop', commands)
+        self.assertIn('test -x /run/current-system/sw/bin/appimage-run;', commands)
+        self.assertIn('/proc/sys/fs/binfmt_misc/appimage_type_2', commands)
 
     def test_every_relevant_input_invalidates_base(self):
         identity = dict(iso_sha256='a', firmware='bios', desktop='gnome', memory_mib=8192,

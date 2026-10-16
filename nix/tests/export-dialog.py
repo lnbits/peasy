@@ -76,6 +76,8 @@ def click(name):
     assert action.nActions > 0, name
     assert action.doAction(0), name
 
+# Settings opens on the provider page; navigate as a user would.
+click("Backups and updates")
 click("Export backup")
 find("Export here")
 click("Cancel")
