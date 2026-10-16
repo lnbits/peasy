@@ -8,12 +8,14 @@ let
   plasma = configurations.peasy-iso-plasma.config;
   isoPkgs = configurations.peasy-iso-plasma.pkgs;
   artwork = import ../iso-branding { pkgs = isoPkgs; };
+  anagram = isoPkgs.callPackage ../anagram.nix { };
   validApps =
     cfg:
     cfg.programs.appimage.enable
     && cfg.programs.appimage.binfmt
     && cfg.programs.fuse.enable
-    && builtins.elem (isoPkgs.callPackage ../anagram.nix { }) cfg.environment.systemPackages
+    && anagram.allowSubstitutes
+    && builtins.elem anagram cfg.environment.systemPackages
     && builtins.elem cfg.programs.appimage.package cfg.environment.systemPackages
     && cfg.boot.binfmt.registrations ? appimage_type_2;
   validOllama =

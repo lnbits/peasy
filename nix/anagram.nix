@@ -14,7 +14,7 @@ let
   };
   contents = appimageTools.extract { inherit pname version src; };
 in
-appimageTools.wrapType2 {
+(appimageTools.wrapType2 {
   inherit pname version src;
   extraInstallCommands = ''
     install -Dm644 ${contents}/anagram.desktop $out/share/applications/anagram.desktop
@@ -32,4 +32,10 @@ appimageTools.wrapType2 {
     platforms = [ "x86_64-linux" ];
     mainProgram = "anagram";
   };
-}
+}).overrideAttrs
+  {
+    # nixos-install uses the live ISO store as a substituter for the target store.
+    # The FHS wrapper defaults to rebuilding locally, which would require the
+    # original AppImage and fetch dependencies absent from the runtime closure.
+    allowSubstitutes = true;
+  }
